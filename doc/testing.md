@@ -135,8 +135,9 @@ OOM 注入走库自身的分配器钩子（`RAFT_MALLOC` 等），并按"第 N �
 自动化的**唯一稳定入口**（agent、cron、CI 都用它，不要各自拼命令）：
 
 ```bash
-./build.sh regress quick     # 默认：build(0 告警断言) + 4 个单元 + selftest + CLI smoke   ~2.5 min
-./build.sh regress full      # 追加 raft_fuzz 20k / raft_cluster_fuzz 2000(0 延迟) / kserver_cluster_fuzz 10 / release soak 24 轮  ~20 min
+./build.sh regress quick     # 默认：build(0 告警断言) + 4 个单元 + selftest + CLI smoke            ~2.5 min
+./build.sh regress fuzz      # 再加 raft_fuzz 2000 / raft_cluster_fuzz 200 / kserver_cluster_fuzz 1  ~5 min（**CI 在每次 push/PR 跑的就是它**）
+./build.sh regress full      # fuzz 用发布级参数(20k/2000/10) 并追加 release soak 24 轮                ~20 min（nightly）
 ```
 
 - 每层输出一行 `GATE|<层>|pass|FAIL|<判定行>|<秒>`；**判定行必须出现**——空跑（exit 0 但无判定行）判 **FAIL**，

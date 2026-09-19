@@ -130,7 +130,7 @@
 |---|---|---|---|
 | **P0 版本控制基线** ✅ 已完成 | `git init`；`.gitattributes`、`.gitignore`；移出 `doc/dissertation.md`（改由文档说明获取方式）；首次提交 | `git status` 干净；`grep -c dissertation .gitignore` 命中；`./build.sh clean && ./build.sh` 后 `git status` 仍干净（证明 `build/` 被忽略） | 0.5 天 |
 | **P1 可自动化**（`AGENTS.md` ✅、`regress` ✅；余：数据路径参数化、`python` 探测） | `AGENTS.md`；`./build.sh regress`（含 `REGRESS|` 摘要）；统一 `python` 探测；数据路径参数化（`KDB_DATA`，默认 `build/data`） | `./build.sh regress --quick` 绿且末行可解析；在非 `D:\kynovo` 目录复制一份也能跑（验证无绝对路径依赖） | 1 天 |
-| **P2 GitHub + CI** | 私有仓库；`ci.yml`（build/unit/smoke/fuzz-fast）；PR 模板；nightly 工作流 | PR 触发 CI 全绿；故意引入一个告警 ⇒ CI 红（证明断言有效） | 1 天 |
+| **P2 GitHub + CI**（`ci.yml`/`nightly.yml`/PR 模板 ✅ 已就绪；待远端与认证） | 私有仓库；`ci.yml`（build/unit/smoke/fuzz-fast）；PR 模板；nightly 工作流 | PR 触发 CI 全绿；故意引入一个告警 ⇒ CI 红（证明断言有效） | 1 天 |
 | **P3 自动化闭环** | 技能三件（§3.3）；cron 夜间门禁 + 失败才报告；kanban/Issues 与 backlog 对齐 | 连续 3 个夜间任务按预期只在失败时报告；一条 backlog 卡片走完"分派 → 改 → regress → PR" | 1 天 |
 | **P4 常态维护** | 按 backlog 驱动：每任务 = 分支 → 改 → `regress` → PR → 报告（附证据） | 每周回顾：门的绿/红趋势、`doc/measurements/` 是否更新、技能是否需修订 | 持续 |
 

@@ -257,8 +257,10 @@ do_clean() {
 #   * every layer must produce a VERDICT LINE; a gate that produces no verdict is
 #     a FAILURE, not a pass ("0 failures" must never mean "0 data"),
 #   * the last line is machine-readable:  REGRESS|quick|pass=7 fail=0 duration=142s
-# Mode: quick (default, ~4 min: build + unit + CLI smoke) or full (adds fuzz,
-# cluster fuzz and the 24-round release soak, ~20 min).
+# Modes: quick (default, ~3 min: build + unit + selftest + CLI smoke),
+# fuzz (quick + the fast fuzzers - this is what CI runs on every pull request)
+# and full (fuzz with release-sized parameters + the 24-round soak; used by the
+# nightly job).
 # ---------------------------------------------------------------------------
 REG_DIR=""; REG_PASS=0; REG_FAIL=0; REG_T0=0
 reg_begin(){ REG_DIR="$BUILD_DIR/regress"; mkdir -p "$REG_DIR"; REG_PASS=0; REG_FAIL=0; REG_T0="$(date +%s)"; }
@@ -293,8 +295,11 @@ reg_build(){ # the 0-warning assertion, reported with its own numbers
     fi
 }
 do_regress(){
-    local mode="${1:-quick}" t0
-    case "$mode" in --quick) mode=quick ;; --full) mode=full ;; quick|full) ;; *) echo "regress: unknown mode '$mode' (use quick|full)" >&2; exit 2 ;; esac
+    local mode="${1:-quick}" t0 fz cf ks
+    case "$mode" in --quick) mode=quick ;; --fuzz) mode=fuzz ;; --full) mode=full ;; quick|fuzz|full) ;; *) echo "regress: unknown mode '$mode' (use quick|fuzz|full)" >&2; exit 2 ;; esac
+    # Fuzz effort: pull-request sized in `fuzz`, release sized in `full` (override with "$2".."$4").
+    fz=2000; cf=200; ks=1
+    if [ "$mode" = full ]; then fz=20000; cf=2000; ks=10; fi
     reg_begin
     echo "=== regress ($mode) - verdict lines follow; full logs in $REG_DIR/ ==="
     reg_build
@@ -304,11 +309,13 @@ do_regress(){
     reg_gate cemon_test     'SUMMARY: [0-9]+/[0-9]+ passed' "$BUILD_DIR/cemon_test.exe"
     reg_gate selftest       'selftest: PASS'                "$BUILD_DIR/selftest.exe"
     reg_gate cli_smoke      'cli_smoke: PASS'               bash tests/cli_smoke.sh
+    if [ "$mode" != quick ]; then
+        reg_gate raft_fuzz            'done: [0-9]+ iterations' "$BUILD_DIR/raft_fuzz.exe" 1 "${2:-$fz}"
+        reg_gate raft_cluster_fuzz    'done: [0-9]+ iterations' "$BUILD_DIR/raft_cluster_fuzz.exe" 1 "${3:-$cf}" 0
+        reg_gate kserver_cluster_fuzz 'clusters consistent'     "$BUILD_DIR/kserver_cluster_fuzz.exe" 1 "${4:-$ks}"
+    fi
     if [ "$mode" = full ]; then
-        reg_gate raft_fuzz          'done: [0-9]+ iterations'      "$BUILD_DIR/raft_fuzz.exe" 1 "${2:-20000}"
-        reg_gate raft_cluster_fuzz  'done: [0-9]+ iterations'      "$BUILD_DIR/raft_cluster_fuzz.exe" 1 "${3:-2000}" 0
-        reg_gate kserver_cluster_fuzz 'clusters consistent'        "$BUILD_DIR/kserver_cluster_fuzz.exe" 1 "${4:-10}"
-        reg_gate soak_release       'rounds_without_full_success=0' env RUNS="${RUNS:-24}" bash tools/harness/soak_release.sh
+        reg_gate soak_release         'rounds_without_full_success=0' env RUNS="${RUNS:-24}" bash tools/harness/soak_release.sh
     fi
     t0="$REG_T0"
     printf 'REGRESS|%s|pass=%s fail=%s duration=%ss\n' "$mode" "$REG_PASS" "$REG_FAIL" "$(( $(date +%s) - t0 ))"

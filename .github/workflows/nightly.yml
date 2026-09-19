@@ -1,0 +1,60 @@
+name: Nightly
+
+# The safety net: release-sized fuzzing, the 24-round soak, coverage and a UBSan trap build.
+# These are too slow for a pull request, so they run once a day and can be started by hand.
+
+on:
+  schedule:
+    - cron: '17 18 * * *'   # 18:17 UTC = 02:17 Asia/Shanghai
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  full-gate:
+    name: full regression + coverage + UBSan
+    runs-on: windows-latest
+    timeout-minutes: 180
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the MinGW-w64 toolchain
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-python
+
+      - name: Record the toolchain
+        run: gcc --version | head -1
+
+      - name: Full regression gate (20k fuzz iterations, 2000 candidate clusters, 24-round soak)
+        run: |
+          ./build.sh regress full 2>&1 | tee regress-full.log
+          tail -1 regress-full.log >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Coverage over every driver
+        run: |
+          ./build.sh coverage 2>&1 | tee coverage.log
+          tail -20 coverage.log >> "$GITHUB_STEP_SUMMARY"
+
+      - name: UBSan trap build and run
+        run: ./build.sh run-sanitize 2>&1 | tee sanitize.log
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightly-logs
+          path: |
+            regress-full.log
+            coverage.log
+            sanitize.log
+            build/regress/*.log
+          if-no-files-found: ignore

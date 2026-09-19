@@ -1,0 +1,66 @@
+name: CI
+
+# Every push and pull request runs the SAME gate a developer runs locally:
+# `./build.sh regress fuzz`, whose last line is machine-readable.  The gate itself
+# asserts the 0-warning build and refuses to pass a layer that produces no verdict
+# line, so a green run here means real data, not an empty run.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  gate:
+    name: build + unit + selftest + smoke + fast fuzz (MSYS2 MinGW-w64)
+    runs-on: windows-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the MinGW-w64 toolchain
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-python
+
+      # CI and the maintainer's machine use different gcc builds on purpose (the local one is
+      # pinned); record what actually ran so a failure can be attributed to a toolchain difference.
+      - name: Record the toolchain
+        run: |
+          gcc --version | head -1
+          python --version
+
+      # Hard project constraint: LF everywhere.  A CRLF file breaks the shell harnesses and shows up
+      # as a mysterious syntax error much later, so it is checked directly.
+      - name: Assert LF line endings in every tracked file
+        run: |
+          bad="$(git ls-files --eol | grep -Ei '(i|w)/crlf' || true)"
+          if [ -n "$bad" ]; then
+            echo "::error::CRLF in tracked files - this project requires LF everywhere"
+            echo "$bad"
+            exit 1
+          fi
+          echo "LF ok ($(git ls-files --eol | wc -l) tracked files checked)"
+
+      - name: Regression gate
+        run: |
+          ./build.sh regress fuzz 2>&1 | tee regress.log
+          tail -1 regress.log >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload gate logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: regress-logs
+          path: build/regress/*.log
+          if-no-files-found: ignore
