@@ -70,6 +70,8 @@ jobs:
           rm -rf ci-logs
           mkdir -p ci-logs
           cp -f build/regress/*.log ci-logs/ 2>/dev/null || true
+          # the step's stdout carries the GATE| verdict lines; without it the summary is empty
+          cp -f regress*.log ci-logs/ 2>/dev/null || true
           {
             echo "run:    $GITHUB_RUN_ID"
             echo "sha:    $GITHUB_SHA"

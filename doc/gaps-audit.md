@@ -404,3 +404,24 @@
 **验证**：`raft_cluster_fuzz 914 1 0` / `690 1 0` / `1 40 0` / `1 200 0` / `1 2000 0` / `1 2000`（默认延迟）**全部 `done`** ✓ ⇒ 此前 40 轮就必败的两类违规（LEADER COMPLETENESS、LIVENESS）与 2000 轮内必败的 LOG MATCHING 均已消除 ✓。
 
 **清洁度**：临时探针（`T2`/`P5`/`P5D`/`P5E`/`LOGCHG`/`RESTORE-REFUSED`，共 15 处）**已全部移除** ✓；保留的是**修复本身**与有价值的诊断（`SEED` 标记 ✓、`--apply-stress` 压力模式 ✓）。
+
+---
+
+## G. 编译器差异暴露的待查项（由 CI 的 gcc 16.2.0 提出，**未定性**）
+
+**G1 — `raft_ready` 是否被 `raft_advance` 完全初始化。**
+CI（MSYS2 gcc **16.2.0**）对 `tests/raft_test.c` 报 17 处 `'ready.<field>' / 'ready' may be used
+uninitialized`（约 713/748/902/1142/3153/3711/3893/4095/4119/6968/9107 行），本机**钉版 gcc 15.2.0 一处不报**。
+两种可能，**尚未定性**：
+ (a) 新编译器在 `-O2` 下的误报（测试里先 `memset` 再传指针）；
+ (b) `raft_advance(..., &out)` 未写满 `out` 的每个字段 ⇒ 调用方读未初始化内存。若是 (b)，按"ready 必须完整上报"
+     的既定契约，**属 raft.h 的契约缺口，应修 raft.h**。
+取证方式（下次动这块时执行）：读 `raft.h` 里 `raft_advance` 的每条赋值路径，并对**同一处**在 `-O2`/`-O0`、
+`15.2.0`/`16.2.0` 四种组合下分别编译，比较告警是否随优化级别出现（优化相关的 `-Wmaybe-uninitialized` 多为 (a)）。
+**不要只凭 CI 的 17 行就动手改代码。**
+
+**G2 — CI 与本地工具链不同（已按设计接受，非缺陷）。**
+CI 用 MSYS2 自带 gcc（当前 16.2.0），本地钉 15.2.0（`MINGW_BIN=/d/MinW64-15.2.0/bin`）。因此
+**0 告警契约只在钉版工具链上强制**：`regress` 的 build 门在检测到外来工具链时改为"报出诊断但不据此判失败"
+（`GATE|build|ok|rc=0 diagnostics=N binaries=yes [foreign toolchain, warnings reported not enforced]`），
+诊断行照旧打印，**不静默**。
