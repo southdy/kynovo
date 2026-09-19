@@ -3,6 +3,7 @@
 #   (1) genuine concurrent leadership  -> terms equal, all self-leader, writes diverging
 #   (2) three independent single-node clusters -> peer links broken, writes not shared
 cd "$(dirname "$0")/../.." || exit 1
+ROOT="$(pwd -W 2>/dev/null || pwd)"   # native form the disk:// backend expects
 export PATH="/d/MinW64-15.2.0/bin:$PATH"
 export MSYS2_ARG_CONV_EXCL='*'
 B=./build/bench_rate.exe
@@ -10,9 +11,9 @@ taskkill /F /IM kdbsvr.exe >/dev/null 2>&1
 taskkill /F /IM bench_rate.exe >/dev/null 2>&1
 sleep 1
 rm -rf build/cl12 && mkdir -p build/cl12
-for i in 1 2 3; do ./build/kdbsvr.exe init "disk://D:/kynovo/build/cl12/n$i" >/dev/null; done
+for i in 1 2 3; do ./build/kdbsvr.exe init "disk://$ROOT/build/cl12/n$i" >/dev/null; done
 SPEC="1@127.0.0.1:8201:8301,2@127.0.0.1:8202:8302,3@127.0.0.1:8203:8303"
-start_node(){ ./build/kdbsvr.exe server $1 $2 $3 "disk://D:/kynovo/build/cl12/n$1" "$SPEC" > build/cl12/s$1.log 2>&1 & }
+start_node(){ ./build/kdbsvr.exe server $1 $2 $3 "disk://$ROOT/build/cl12/n$1" "$SPEC" > build/cl12/s$1.log 2>&1 & }
 start_node 1 8201 8301
 start_node 2 8202 8302
 start_node 3 8203 8303

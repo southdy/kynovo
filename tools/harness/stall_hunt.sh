@@ -19,7 +19,7 @@ K=${K:-128}
 N=${N:-4000}
 DIR=build/stall
 rm -rf "$DIR"; mkdir -p "$DIR"
-BASE="disk://D:/kynovo/build/stall/n1"
+BASE="disk://$ROOT/build/stall/n1"
 ADDR="127.0.0.1:$PORT"
 ./build/kdbsvr.exe init "$BASE" > "$DIR/init.log" 2>&1 || { echo "FATAL: init failed"; cat "$DIR/init.log"; exit 1; }
 ./build/kdbsvr.exe server 1 "$PORT" "$PEER" "$BASE" "1@127.0.0.1:$PORT:$PEER" > "$DIR/server.log" 2>&1 &

@@ -5,6 +5,7 @@ set -u
 export PATH="/d/MinW64-15.2.0/bin:$PATH"
 export MSYS2_ARG_CONV_EXCL='*'
 cd "$(dirname "$0")/../.." || exit 1
+ROOT="$(pwd -W 2>/dev/null || pwd)"   # native form the disk:// backend expects
 out=build/perf
 echo "=== previous sweep's server log (what the 512/1024 runs left behind) ==="
 tail -20 $out/front-srv.log 2>/dev/null
@@ -13,8 +14,8 @@ echo "=== fresh server ==="
 taskkill /F /IM kdbsvr.exe >/dev/null 2>&1
 sleep 1
 rm -rf $out/db-deep
-./build/kdbsvr.exe init "disk://D:/kynovo/build/perf/db-deep" >/dev/null 2>&1
-./build/kdbsvr.exe server 1 9431 9432 "disk://D:/kynovo/build/perf/db-deep" "1@127.0.0.1:9431:9432" > $out/deep-srv.log 2>&1 &
+./build/kdbsvr.exe init "disk://$ROOT/build/perf/db-deep" >/dev/null 2>&1
+./build/kdbsvr.exe server 1 9431 9432 "disk://$ROOT/build/perf/db-deep" "1@127.0.0.1:9431:9432" > $out/deep-srv.log 2>&1 &
 srvshell=$!
 sleep 6
 echo "alive before: $(ps -W | grep -c -i kdbsvr)"

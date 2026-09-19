@@ -1,16 +1,17 @@
 #!/bin/bash
 # Same-host 3-process cluster probe: real peer protocol over loopback.
 cd "$(dirname "$0")/../.." || exit 1
+ROOT="$(pwd -W 2>/dev/null || pwd)"   # native form the disk:// backend expects
 export PATH="/d/MinW64-15.2.0/bin:$PATH"
 export MSYS2_ARG_CONV_EXCL='*'
 taskkill /F /IM kdbsvr.exe >/dev/null 2>&1
 sleep 1
 rm -rf build/cl3 && mkdir -p build/cl3
-for i in 1 2 3; do ./build/kdbsvr.exe init "disk://D:/kynovo/build/cl3/n$i" >/dev/null || echo "init $i FAILED"; done
+for i in 1 2 3; do ./build/kdbsvr.exe init "disk://$ROOT/build/cl3/n$i" >/dev/null || echo "init $i FAILED"; done
 SPEC="1@127.0.0.1:8101:8201,2@127.0.0.1:8102:8202,3@127.0.0.1:8103:8203"
-./build/kdbsvr.exe server 1 8101 8201 "disk://D:/kynovo/build/cl3/n1" "$SPEC" > build/cl3/s1.log 2>&1 &
-./build/kdbsvr.exe server 2 8102 8202 "disk://D:/kynovo/build/cl3/n2" "$SPEC" > build/cl3/s2.log 2>&1 &
-./build/kdbsvr.exe server 3 8103 8203 "disk://D:/kynovo/build/cl3/n3" "$SPEC" > build/cl3/s3.log 2>&1 &
+./build/kdbsvr.exe server 1 8101 8201 "disk://$ROOT/build/cl3/n1" "$SPEC" > build/cl3/s1.log 2>&1 &
+./build/kdbsvr.exe server 2 8102 8202 "disk://$ROOT/build/cl3/n2" "$SPEC" > build/cl3/s2.log 2>&1 &
+./build/kdbsvr.exe server 3 8103 8203 "disk://$ROOT/build/cl3/n3" "$SPEC" > build/cl3/s3.log 2>&1 &
 echo "started(win)=$(ps -W 2>/dev/null | grep -c kdbsvr.exe)"
 sleep 8
 LEADER=""
@@ -53,9 +54,9 @@ echo "--- post-failover throughput (2 nodes) ---"
 grep -hE "^PHASE|^LAT" build/cl3/k32b.txt
 echo "--- restart the killed node and check it catches up ---"
 case $LEADER in
-  8101) ./build/kdbsvr.exe server 1 8101 8201 "disk://D:/kynovo/build/cl3/n1" "$SPEC" > build/cl3/s1b.log 2>&1 & ;;
-  8102) ./build/kdbsvr.exe server 2 8102 8202 "disk://D:/kynovo/build/cl3/n2" "$SPEC" > build/cl3/s2b.log 2>&1 & ;;
-  8103) ./build/kdbsvr.exe server 3 8103 8203 "disk://D:/kynovo/build/cl3/n3" "$SPEC" > build/cl3/s3b.log 2>&1 & ;;
+  8101) ./build/kdbsvr.exe server 1 8101 8201 "disk://$ROOT/build/cl3/n1" "$SPEC" > build/cl3/s1b.log 2>&1 & ;;
+  8102) ./build/kdbsvr.exe server 2 8102 8202 "disk://$ROOT/build/cl3/n2" "$SPEC" > build/cl3/s2b.log 2>&1 & ;;
+  8103) ./build/kdbsvr.exe server 3 8103 8203 "disk://$ROOT/build/cl3/n3" "$SPEC" > build/cl3/s3b.log 2>&1 & ;;
 esac
 sleep 10
 ok=0

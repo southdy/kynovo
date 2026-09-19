@@ -5,6 +5,7 @@
 # in the file but NOT yet flushed (flush_batches did not advance at ack time), the client was
 # acked before durability.
 cd "$(dirname "$0")/../.." || exit 1
+ROOT="$(pwd -W 2>/dev/null || pwd)"   # native form the disk:// backend expects
 export PATH="/d/MinW64-15.2.0/bin:$PATH"
 export MSYS2_ARG_CONV_EXCL='*'
 B=./build/bench_rate.exe
@@ -12,9 +13,9 @@ taskkill /F /IM kdbsvr.exe >/dev/null 2>&1
 taskkill /F /IM bench_rate.exe >/dev/null 2>&1
 sleep 1
 rm -rf build/cl8 && mkdir -p build/cl8
-for i in 1 2 3; do ./build/kdbsvr.exe init "disk://D:/kynovo/build/cl8/n$i" >/dev/null; done
+for i in 1 2 3; do ./build/kdbsvr.exe init "disk://$ROOT/build/cl8/n$i" >/dev/null; done
 SPEC="1@127.0.0.1:8161:8261,2@127.0.0.1:8162:8262,3@127.0.0.1:8163:8263"
-start_node(){ ./build/kdbsvr.exe server $1 $2 $3 "disk://D:/kynovo/build/cl8/n$1" "$SPEC" > build/cl8/s$1.log 2>&1 & }
+start_node(){ ./build/kdbsvr.exe server $1 $2 $3 "disk://$ROOT/build/cl8/n$1" "$SPEC" > build/cl8/s$1.log 2>&1 & }
 start_node 1 8161 8261
 start_node 2 8162 8262
 start_node 3 8163 8263

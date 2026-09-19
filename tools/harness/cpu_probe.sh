@@ -5,13 +5,14 @@ set -u
 export PATH="/d/MinW64-15.2.0/bin:$PATH"
 export MSYS2_ARG_CONV_EXCL='*'
 cd "$(dirname "${0:-0}")/../.." || exit 1
+ROOT="$(pwd -W 2>/dev/null || pwd)"   # native form the disk:// backend expects
 out=build/perf
 TAG=${1:-a}
 N=${N:-4000}
 K=${K:-32}
 PORT=${PORT:-9221}
 BE=${BE:-disk}
-if [ "${BE}" = "mem" ]; then be_uri="mem://perf-$TAG"; else be_uri="disk://D:/kynovo/build/perf/db-cpu-$TAG"; fi
+if [ "${BE}" = "mem" ]; then be_uri="mem://perf-$TAG"; else be_uri="disk://$ROOT/build/perf/db-cpu-$TAG"; fi
 mkdir -p $out
 rm -rf $out/db-cpu-$TAG
 ./build/kdbsvr.exe init "${be_uri}" >/dev/null 2>&1

@@ -3,6 +3,7 @@
 # cross-node replication by running the SAME shape in a 1-node cluster and in a 3-node
 # cluster (leader 1, then leader != 1 after a failover), sweeping the in-flight depth K.
 cd "$(dirname "$0")/../.." || exit 1
+ROOT="$(pwd -W 2>/dev/null || pwd)"   # native form the disk:// backend expects
 export PATH="/d/MinW64-15.2.0/bin:$PATH"
 export MSYS2_ARG_CONV_EXCL='*'
 B=./build/bench_rate.exe
@@ -22,16 +23,16 @@ find_writer(){ # $1 = port list; echoes the first port that accepts a write
   echo "$found"
 }
 echo "=== A) single-node cluster, K sweep (no replication at all) ==="
-./build/kdbsvr.exe init "disk://D:/kynovo/build/cl7/a" >/dev/null
-(./build/kdbsvr.exe server 1 8141 8241 "disk://D:/kynovo/build/cl7/a" "1@127.0.0.1:8141:8241" > build/cl7/a.log 2>&1 &)
+./build/kdbsvr.exe init "disk://$ROOT/build/cl7/a" >/dev/null
+(./build/kdbsvr.exe server 1 8141 8241 "disk://$ROOT/build/cl7/a" "1@127.0.0.1:8141:8241" > build/cl7/a.log 2>&1 &)
 sleep 6
 for K in 8 32 128 256; do run_phase sn_K$K 8141 $K; done
 taskkill /F /IM kdbsvr.exe >/dev/null 2>&1
 sleep 1
 echo "=== B) 3-node cluster ==="
-for i in 1 2 3; do ./build/kdbsvr.exe init "disk://D:/kynovo/build/cl7/n$i" >/dev/null; done
+for i in 1 2 3; do ./build/kdbsvr.exe init "disk://$ROOT/build/cl7/n$i" >/dev/null; done
 SPEC="1@127.0.0.1:8151:8251,2@127.0.0.1:8152:8252,3@127.0.0.1:8153:8253"
-start_node(){ ./build/kdbsvr.exe server $1 $2 $3 "disk://D:/kynovo/build/cl7/n$1" "$SPEC" > build/cl7/s$1.log 2>&1 & }
+start_node(){ ./build/kdbsvr.exe server $1 $2 $3 "disk://$ROOT/build/cl7/n$1" "$SPEC" > build/cl7/s$1.log 2>&1 & }
 start_node 1 8151 8251
 start_node 2 8152 8252
 start_node 3 8153 8253

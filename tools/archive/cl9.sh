@@ -4,6 +4,7 @@
 # (flush_batches/commit advance at the same order as the writes) then the high throughput
 # is a legitimate relayed/pipelined commit, not an early ack.
 cd "$(dirname "$0")/../.." || exit 1
+ROOT="$(pwd -W 2>/dev/null || pwd)"   # native form the disk:// backend expects
 export PATH="/d/MinW64-15.2.0/bin:$PATH"
 export MSYS2_ARG_CONV_EXCL='*'
 B=./build/bench_rate.exe
@@ -11,9 +12,9 @@ taskkill /F /IM kdbsvr.exe >/dev/null 2>&1
 taskkill /F /IM bench_rate.exe >/dev/null 2>&1
 sleep 1
 rm -rf build/cl9 && mkdir -p build/cl9
-for i in 1 2 3; do ./build/kdbsvr.exe init "disk://D:/kynovo/build/cl9/n$i" >/dev/null; done
+for i in 1 2 3; do ./build/kdbsvr.exe init "disk://$ROOT/build/cl9/n$i" >/dev/null; done
 SPEC="1@127.0.0.1:8171:8271,2@127.0.0.1:8172:8272,3@127.0.0.1:8173:8273"
-start_node(){ ./build/kdbsvr.exe server $1 $2 $3 "disk://D:/kynovo/build/cl9/n$1" "$SPEC" > build/cl9/s$1.log 2>&1 & }
+start_node(){ ./build/kdbsvr.exe server $1 $2 $3 "disk://$ROOT/build/cl9/n$1" "$SPEC" > build/cl9/s$1.log 2>&1 & }
 start_node 1 8171 8271
 start_node 2 8172 8272
 start_node 3 8173 8273

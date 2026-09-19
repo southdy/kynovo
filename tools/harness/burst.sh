@@ -5,10 +5,11 @@ set -u
 export PATH="/d/MinW64-15.2.0/bin:$PATH"
 export MSYS2_ARG_CONV_EXCL='*'
 cd "$(dirname "${0:-0}")/../.." || exit 1
+ROOT="$(pwd -W 2>/dev/null || pwd)"   # native form the disk:// backend expects
 out=build/perf
 N=${N:-2000}
 PORT=${PORT:-9251}
-BE=${BE:-D:/kynovo/build/perf/db-burst}
+BE=${BE:-$ROOT/build/perf/db-burst}
 rm -rf $out/db-burst
 ./build/kdbsvr.exe init "disk://$BE" >/dev/null 2>&1
 ./build/kdbsvr.exe server 1 $PORT $((PORT+1)) "disk://$BE" "1@127.0.0.1:$PORT:$((PORT+1))" > $out/burst-srv.log 2>&1 &

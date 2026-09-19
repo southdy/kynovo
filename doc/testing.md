@@ -135,14 +135,14 @@ OOM 注入走库自身的分配器钩子（`RAFT_MALLOC` 等），并按"第 N �
 自动化的**唯一稳定入口**（agent、cron、CI 都用它，不要各自拼命令）：
 
 ```bash
-./build.sh regress quick     # 默认：build(0 告警断言) + 4 个单元 + selftest + CLI smoke            ~2.5 min
+./build.sh regress quick     # 默认：principles + build(0 告警断言) + 4 个单元 + selftest + CLI smoke   ~2.5 min
 ./build.sh regress fuzz      # 再加 raft_fuzz 2000 / raft_cluster_fuzz 200 / kserver_cluster_fuzz 1  ~5 min（**CI 在每次 push/PR 跑的就是它**）
 ./build.sh regress full      # fuzz 用发布级参数(20k/2000/10) 并追加 release soak 24 轮                ~20 min（nightly）
 ```
 
 - 每层输出一行 `GATE|<层>|pass|FAIL|<判定行>|<秒>`；**判定行必须出现**——空跑（exit 0 但无判定行）判 **FAIL**，
   这就是"0 failures 不等于 0 data"的落地；
-- **末行机器可读**：`REGRESS|quick|pass=7 fail=0 duration=150s`（agent 只读这一行即可判定）；
+- **末行机器可读**：`REGRESS|quick|pass=8 fail=0 duration=144s`（新增 `principles` 层：`python tools/check-principles.py`）（agent 只读这一行即可判定）；
 - 失败时打印该层的日志路径与末尾 12 行；日志在 `build/regress/<层>.log`；
 - 门自身的失败路径有自检：`bash tools/harness/regress_selftest.sh`（期望 `pass=1 fail=2`）。
 

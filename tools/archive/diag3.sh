@@ -1,15 +1,16 @@
 #!/bin/bash
 cd "$(dirname "$0")/../.." || exit 1
+ROOT="$(pwd -W 2>/dev/null || pwd)"   # native form the disk:// backend expects
 export PATH="/d/MinW64-15.2.0/bin:$PATH"
 export MSYS2_ARG_CONV_EXCL='*'
 taskkill /F /IM kdbsvr.exe >/dev/null 2>&1
 sleep 1
 SPEC="1@127.0.0.1:8101:8201 2@127.0.0.1:8102:8202 3@127.0.0.1:8103:8203"
-./build/kdbsvr.exe server 1 8101 8201 "disk://D:/kynovo/build/cl3/n1" "$SPEC" > build/cl3/x1.log 2>&1 &
+./build/kdbsvr.exe server 1 8101 8201 "disk://$ROOT/build/cl3/n1" "$SPEC" > build/cl3/x1.log 2>&1 &
 A=$!
-./build/kdbsvr.exe server 2 8102 8202 "disk://D:/kynovo/build/cl3/n2" "$SPEC" > build/cl3/x2.log 2>&1 &
+./build/kdbsvr.exe server 2 8102 8202 "disk://$ROOT/build/cl3/n2" "$SPEC" > build/cl3/x2.log 2>&1 &
 B=$!
-./build/kdbsvr.exe server 3 8103 8203 "disk://D:/kynovo/build/cl3/n3" "$SPEC" > build/cl3/x3.log 2>&1 &
+./build/kdbsvr.exe server 3 8103 8203 "disk://$ROOT/build/cl3/n3" "$SPEC" > build/cl3/x3.log 2>&1 &
 C=$!
 sleep 7
 echo "msys_pids=$A,$B,$C"

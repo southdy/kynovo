@@ -5,6 +5,7 @@ set -u
 export PATH="/d/MinW64-15.2.0/bin:$PATH"
 export MSYS2_ARG_CONV_EXCL='*'
 cd "$(dirname "${0:-0}")/../.." || exit 1
+ROOT="$(pwd -W 2>/dev/null || pwd)"   # native form the disk:// backend expects
 out=build/perf
 RUNS=${RUNS:-40}
 N=${N:-4000}
@@ -18,11 +19,11 @@ taskkill /F /IM kdbsvr.exe >/dev/null 2>&1
 taskkill /F /IM kdbsvr_dbg.exe >/dev/null 2>&1
 sleep 1
 rm -rf $out/db-crash
-./build/kdbsvr.exe init "disk://D:/kynovo/build/perf/db-crash" >/dev/null 2>&1
+./build/kdbsvr.exe init "disk://$ROOT/build/perf/db-crash" >/dev/null 2>&1
 : > $out/gdb-out.txt
 echo "=== starting server under gdb --batch ==="
 gdb --batch -ex "run" -ex "bt full" -ex "quit" \
-    --args ./build/kdbsvr_dbg.exe server 1 $PORT $((PORT+1)) "disk://D:/kynovo/build/perf/db-crash" "1@127.0.0.1:$PORT:$((PORT+1))" \
+    --args ./build/kdbsvr_dbg.exe server 1 $PORT $((PORT+1)) "disk://$ROOT/build/perf/db-crash" "1@127.0.0.1:$PORT:$((PORT+1))" \
     > $out/gdb-out.txt 2>&1 &
 gdbpid=$!
 sleep 10

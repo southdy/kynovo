@@ -1,0 +1,132 @@
+#!/usr/bin/env python3
+"""Mechanical enforcement of this project's principles.
+
+These rules used to live only in memory, which means they could be broken silently.  A rule is
+enforced here only if violating it produces a loud failure.
+
+Design notes (each one was learned by getting it wrong first):
+  * COMMENTS ARE STRIPPED WITH A REAL SCANNER, not with grep.  A naive "skip lines starting with
+    *" filter reported prose like "the worker inline" and a trailing "/* sync: run entry inline */"
+    as violations; a check that fires on comments is a check people learn to ignore.
+  * `long long` is NOT banned: the tree deliberately uses `unsigned long long` typedefs.  Whether
+    that satisfies the MSVC 6.0 claim is a separate, open question (doc/gaps-audit.md).
+  * ULL literals are forbidden in code/ (the shipped library) and allowed in tests/ and tools/,
+    which are gcc-only and never compiled by MSVC.
+  * KNOWN deficits use a BUDGET (ratchet): the site count may shrink, never grow.  Where a
+    violation is already a backlog card, the card is named in the message.
+  * Records under doc/measurements/ may contain CRLF - they are captured output, and reformatting
+    archived evidence would destroy it.  Only the repository index and the scripts are enforced.
+"""
+import os, re, subprocess, sys
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+os.chdir(ROOT)
+LIB = ['code/' + f for f in sorted(os.listdir('code')) if f.endswith(('.h', '.c'))]
+SRC = LIB + ['tests/' + f for f in sorted(os.listdir('tests')) if f.endswith(('.h', '.c'))]
+
+def strip_comments(text):
+    out = []
+    i, n = 0, len(text)
+    while i < n:
+        c = text[i]
+        if c == '"' or c == "'":                      # string / char literal
+            q = c; out.append(c); i += 1
+            while i < n:
+                out.append(text[i])
+                if text[i] == '\\': 
+                    i += 1
+                    if i < n: out.append(text[i])
+                elif text[i] == q:
+                    i += 1; break
+                i += 1
+            continue
+        if c == '/' and i + 1 < n and text[i+1] == '*':   # block comment
+            j = text.find('*/', i + 2)
+            seg = text[i:] if j < 0 else text[i:j+2]
+            i = n if j < 0 else j + 2
+            out.append('\n' * seg.count('\n'))            # keep line numbering intact
+            continue
+        if c == '/' and i + 1 < n and text[i+1] == '/':   # line comment
+            j = text.find('\n', i)
+            i = n if j < 0 else j
+            continue
+        out.append(c); i += 1
+    return ''.join(out)
+
+def code_text(path):
+    with open(path, 'r', encoding='utf-8', errors='replace', newline='') as fh:
+        return strip_comments(fh.read())
+
+def scan(pattern, files=None, label=None):
+    rx = re.compile(pattern)
+    hits = []
+    for path in (files or SRC):
+        for ln, line in enumerate(code_text(path).split('\n'), 1):
+            if rx.search(line):
+                hits.append('%s:%d: %s' % (path, ln, line.strip()[:110]))
+    return hits
+
+def sh_files():
+    out = subprocess.run(['git', 'ls-files', '*.sh'], capture_output=True, text=True).stdout.split()
+    return out
+
+fails = 0; rules = 0
+def report(name, hits, detail=None):
+    global fails, rules
+    rules += 1
+    if hits: fails += 1
+    print('  %-4s %s' % ('FAIL' if hits else 'ok', name))
+    for h in (hits or [])[:8]: print('        | ' + h if isinstance(h, str) else h)
+
+print('== principles ==')
+
+# 1. line endings
+eol = subprocess.run(['git', 'ls-files', '--eol'], capture_output=True, text=True).stdout.split('\n')
+report('repository stores LF (index CRLF = 0)', [l for l in eol if 'i/crlf' in l])
+report('no CRLF in shell scripts', [l for l in eol if 'w/crlf' in l and l.split()[-1].endswith(('.sh', '.bash'))])
+
+# 2. build/ purity
+tracked = subprocess.run(['git', 'ls-files', 'build/'], capture_output=True, text=True).stdout.split()
+report('build/ holds no tracked file (pure output)', tracked)
+
+# 3. no machine-specific paths in tracked scripts (URI prefixes like disk:// excluded by the boundary)
+bad = []
+for f in sh_files():
+    with open(f, 'r', encoding='utf-8', errors='replace', newline='') as fh:
+        for ln, line in enumerate(fh.read().split('\n'), 1):
+            s = line.strip()
+            if s.startswith('#') or '://' in line: continue
+            if re.search(r'(^|[^A-Za-z0-9_])[A-Za-z]:[\\/]', s): bad.append('%s:%d: %s' % (f, ln, s[:110]))
+report('no drive-letter paths in tracked shell scripts', bad)
+
+# 4. C89 / MSVC-6 language constraints
+report('no <stdint.h>', scan(r'#\s*include\s*<stdint\.h>'))
+report("no 'inline' keyword", scan(r'\binline\b'))
+report('no ULL literals in the shipped library (code/)', scan(r'[0-9]+ULL', LIB))
+report('no // comments in C sources', scan(r'(^|[^:])//[^/]'))
+
+# 5. Windows XP+ only
+report('no post-XP Windows APIs', scan(r'GetQueuedCompletionStatusEx|GetTickCount64|CreateFile2|'
+                                       r'GetFileInformationByHandleEx|SetFileInformationByHandle|'
+                                       r'GetSystemTimePreciseAsFileTime|InitializeCriticalSectionEx|WSAPoll\s*\('))
+
+# 6. no temporary instrumentation left behind
+report('no temporary instrumentation tags', scan(r'\b(TEMP-(INSTR|AB|PROBE)|INSTR-[A-Z0-9]+|XXX-|HACK-)'))
+
+# 7. layering ratchets
+sites = scan(r'->config_(new|joint|learners)', ['code/kserver.h', 'code/kdbsvr.c'])
+report('app layer does not read raft config fields (budget 3, card t_972b67e8)', sites[3:] or [])
+sites = scan(r'raft_inspect', ['code/kserver.h', 'code/kdbsvr.c', 'tests/raft_cluster_fuzz.c', 'tests/raft_test.c'])
+report('raft_inspect only in the diagnostics path (budget 1)', sites[1:] or [])
+
+# 8. contract files: changing them must be deliberate
+dirty = subprocess.run(['git', 'status', '--porcelain', 'code/raft.h', 'code/treap.h'], capture_output=True, text=True).stdout.strip()
+last = subprocess.run(['git', 'diff', '--name-only', 'HEAD~1', 'HEAD'], capture_output=True, text=True).stdout
+if dirty or re.search(r'^code/(raft|treap)\.h$', last, re.M):
+    rules += 1
+    print('  NOTE raft.h/treap.h changed: cite the semantic paragraph (doc/dissertation.md) in the message')
+else:
+    report('raft.h/treap.h untouched in this change', [])
+
+print('PRINCIPLES|%s|rules=%d fail=%d' % ('OK' if not fails else 'FAIL', rules, fails))
+sys.exit(1 if fails else 0)

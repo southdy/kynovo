@@ -6,6 +6,7 @@ set -u
 export PATH="/d/MinW64-15.2.0/bin:$PATH"
 export MSYS2_ARG_CONV_EXCL='*'
 cd "$(dirname "${0:-0}")/../.." || exit 1
+ROOT="$(pwd -W 2>/dev/null || pwd)"   # native form the disk:// backend expects
 out=build/perf
 RUNS=${RUNS:-24}
 N=${N:-4000}
@@ -15,8 +16,8 @@ mkdir -p $out
 taskkill /F /IM kdbsvr.exe >/dev/null 2>&1
 sleep 1
 rm -rf $out/db-rel
-./build/kdbsvr.exe init "disk://D:/kynovo/build/perf/db-rel" >/dev/null 2>&1
-./build/kdbsvr.exe server 1 $PORT $((PORT+1)) "disk://D:/kynovo/build/perf/db-rel" "1@127.0.0.1:$PORT:$((PORT+1))" > $out/rel-srv.log 2>&1 &
+./build/kdbsvr.exe init "disk://$ROOT/build/perf/db-rel" >/dev/null 2>&1
+./build/kdbsvr.exe server 1 $PORT $((PORT+1)) "disk://$ROOT/build/perf/db-rel" "1@127.0.0.1:$PORT:$((PORT+1))" > $out/rel-srv.log 2>&1 &
 sleep 6
 echo "alive at start: $(ps -W | grep -ci kdbsvr)"
 fails=0

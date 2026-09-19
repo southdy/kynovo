@@ -50,6 +50,7 @@ Read this first. It is deliberately short; the details live in `doc/`.
   immediately before every push; the nightly job is the safety net, not the first line.
 
 ## Entry points
+- **Principles and how each one is enforced: `doc/principles.md`** (`python tools/check-principles.py` runs as a gate layer)
 - Gates and method: `doc/testing.md` · Backlog and evidence: `doc/gaps-audit.md`
 - Harnesses: `tools/harness/` · Past investigations: `doc/investigations.md`
 - Raw measurements: `doc/measurements/` · Review: `doc/code-review-2026-09.md`

@@ -6,12 +6,13 @@ set -u
 export PATH="/d/MinW64-15.2.0/bin:$PATH"
 export MSYS2_ARG_CONV_EXCL='*'
 cd "$(dirname "${0:-0}")/../.." || exit 1
+ROOT="$(pwd -W 2>/dev/null || pwd)"   # native form the disk:// backend expects
 out=build/perf
 N=${N:-4000}
 PORT=${PORT:-9411}
 rm -rf $out/db-front
-./build/kdbsvr.exe init "disk://D:/kynovo/build/perf/db-front" >/dev/null 2>&1
-./build/kdbsvr.exe server 1 $PORT $((PORT+1)) "disk://D:/kynovo/build/perf/db-front" "1@127.0.0.1:$PORT:$((PORT+1))" > $out/front-srv.log 2>&1 &
+./build/kdbsvr.exe init "disk://$ROOT/build/perf/db-front" >/dev/null 2>&1
+./build/kdbsvr.exe server 1 $PORT $((PORT+1)) "disk://$ROOT/build/perf/db-front" "1@127.0.0.1:$PORT:$((PORT+1))" > $out/front-srv.log 2>&1 &
 sleep 6
 echo "=== disk frontier (SET, N=$N) ==="
 for k in 32 64 128 256 512 1024; do

@@ -1,6 +1,7 @@
 #!/bin/bash
 # cold vs warm on ONE 3-node cluster with the SAME leader and the SAME workload shape.
 cd "$(dirname "$0")/../.." || exit 1
+ROOT="$(pwd -W 2>/dev/null || pwd)"   # native form the disk:// backend expects
 export PATH="/d/MinW64-15.2.0/bin:$PATH"
 export MSYS2_ARG_CONV_EXCL='*'
 B=./build/bench_rate.exe
@@ -8,9 +9,9 @@ taskkill /F /IM kdbsvr.exe >/dev/null 2>&1
 taskkill /F /IM bench_rate.exe >/dev/null 2>&1
 sleep 1
 rm -rf build/cl6 && mkdir -p build/cl6
-for i in 1 2 3; do ./build/kdbsvr.exe init "disk://D:/kynovo/build/cl6/n$i" >/dev/null || echo "init $i FAILED"; done
+for i in 1 2 3; do ./build/kdbsvr.exe init "disk://$ROOT/build/cl6/n$i" >/dev/null || echo "init $i FAILED"; done
 SPEC="1@127.0.0.1:8131:8231,2@127.0.0.1:8132:8232,3@127.0.0.1:8133:8233"
-start_node(){ ./build/kdbsvr.exe server $1 $2 $3 "disk://D:/kynovo/build/cl6/n$1" "$SPEC" > build/cl6/s$1.log 2>&1 & }
+start_node(){ ./build/kdbsvr.exe server $1 $2 $3 "disk://$ROOT/build/cl6/n$1" "$SPEC" > build/cl6/s$1.log 2>&1 & }
 start_node 1 8131 8231
 start_node 2 8132 8232
 start_node 3 8133 8233

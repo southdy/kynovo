@@ -2,6 +2,7 @@
 # Honest 3-node baseline: the LEADER is resolved from STATS (state=3), never guessed, and the
 # follower case is included to show what a rejected write looks like (RESP| body + empty read).
 cd "$(dirname "$0")/../.." || exit 1
+ROOT="$(pwd -W 2>/dev/null || pwd)"   # native form the disk:// backend expects
 export PATH="/d/MinW64-15.2.0/bin:$PATH"
 export MSYS2_ARG_CONV_EXCL='*'
 B=./build/bench_rate.exe
@@ -9,9 +10,9 @@ taskkill /F /IM kdbsvr.exe >/dev/null 2>&1
 taskkill /F /IM bench_rate.exe >/dev/null 2>&1
 sleep 1
 rm -rf build/cl10 && mkdir -p build/cl10
-for i in 1 2 3; do ./build/kdbsvr.exe init "disk://D:/kynovo/build/cl10/n$i" >/dev/null; done
+for i in 1 2 3; do ./build/kdbsvr.exe init "disk://$ROOT/build/cl10/n$i" >/dev/null; done
 SPEC="1@127.0.0.1:8181:8281,2@127.0.0.1:8182:8282,3@127.0.0.1:8183:8283"
-start_node(){ ./build/kdbsvr.exe server $1 $2 $3 "disk://D:/kynovo/build/cl10/n$1" "$SPEC" > build/cl10/s$1.log 2>&1 & }
+start_node(){ ./build/kdbsvr.exe server $1 $2 $3 "disk://$ROOT/build/cl10/n$1" "$SPEC" > build/cl10/s$1.log 2>&1 & }
 start_node 1 8181 8281
 start_node 2 8182 8282
 start_node 3 8183 8283

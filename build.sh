@@ -312,6 +312,8 @@ do_regress(){
     reg_begin
     echo "=== regress ($mode) - verdict lines follow; full logs in $REG_DIR/ ==="
     reg_build
+    # Principles first: cheap, and it catches a violation while the context is still fresh.
+    reg_gate principles     '^PRINCIPLES\|OK' python tools/check-principles.py
     reg_gate raft_test      'SUMMARY: [0-9]+/[0-9]+ passed' "$BUILD_DIR/raft_test.exe"
     reg_gate kserver_test   'SUMMARY: [0-9]+/[0-9]+ passed' "$BUILD_DIR/kserver_test.exe"
     reg_gate kclient_test   'SUMMARY: [0-9]+/[0-9]+ passed' "$BUILD_DIR/kclient_test.exe"
