@@ -500,35 +500,36 @@ and 58 ops/s was never a throughput.  Fixed at the reporting layer: the verdict 
 `end=complete|cap60s|stalled`, proven both ways - a normal run prints `end=complete`, and a
 deliberate k=1 n=4000 run prints `end=cap60s` after its error line.
 
-**J-2 (located to one segment; the same shape on both platforms): an occasional ~12-16 ms
+**J-2 (located and decomposed; one earlier exclusion RETRACTED): an occasional ~13 ms
 single-request tail in an open-loop run (`bench_rate`, 2000 in flight, k=32, 1 B).**
 
-Three counters were added to make attribution possible instead of argument.  STATS now carries
-`req_age_ms_last/max` and `slow_acks` (how long the SERVER held a request, admission to terminal
-result, in the server's own injected milliseconds), `req_wait_ms_last/max` and `req_svc_ms_last/max`
-(that age split at the moment the request was handed to raft: batching wait versus durability and the
-result), and `wake_us_last/max` with `slow_wakes` (the WAL handoff itself - the worker stamps
-`wal_post_us` before posting the finished bundle and the driver compares it with its own clock once
-the round that consumed it has ended; real clocks stay in the driver, the core still sees time only
-through `k_server_advance`).
+The counters (all in STATS, all self-certifying through sample counts): `req_age_ms_last/max` with
+`slow_acks` (how long the server held a request, admission to terminal result, in injected ms),
+`req_wait_ms_last/max` and `req_svc_ms_last/max` (that age split where the request was handed to
+raft), `handoff_us_last/max`+`handoff_samples` (loop queued the bundle -> the worker started writing
+it) and `wake_us_last/max`+`wake_samples` (worker posted the finished bundle -> the loop consumed it).
+Real clocks appear only in the driver and the worker's own stamp; the core still sees time solely
+through `k_server_advance`.
 
-What the measurements now say:
-  - The server owns it.  Of 120 open-loop runs, 12 showed a client max over 8 ms and EVERY one of
-    them had server-side holds (`slow_acks` moved); no run spiked without the server holding the
-    request.  Hold and client-visible tail are the same size (13 ms against 13191 us).
-  - Not the loop's work: `slow_rounds` 0 across 9606 / 13520 / 54438 rounds, `round_us_max` 1.0-4.0 ms.
-  - Not the batch wait on the VM: `req_wait_ms_max` stayed at 4 ms for the whole 100-run batch while
-    `req_svc_ms_max` reached 12-15 ms in every spike.
-  - Not the cross-thread wake: `wake_us_max` 271 us with `slow_wakes` 0 on Windows, against a 14 ms
-    service segment in the same run.  The historical 82 us figure survives; this is not that bug.
-  - Not storage, not the poll interval, not the guest's client thread, and not VM-specific - all four
-    were excluded earlier in this section with numbers.
-  - Only sometimes the fsync: 1 of 7 VM spikes and 3 of 12 Windows spikes came with a slow sync
-    (`sync_us_max` 7-16 ms), so sync latency is a contributor, not the mechanism.
-Remaining inside the service segment: the request waiting for its batch to be written and fsynced,
-including the WAL worker picking the batch up.  That handoff - loop posts the bundle, worker starts
-writing it - is symmetric to the wake counter and is the next instrument to add; it is NOT measured
-yet, so this stays open with one segment named rather than a cause claimed.
-
-Frequency remains sporadic (0/30 to 10/30 between identical configurations), which is why each
-exclusion above rests on an instrument and not on a clean batch.
+Measured, VM, 100 runs with 7 spikes over 8 ms (client max 12033-12933 us):
+  - The server owns it: 7/7 spike runs had server-side holds, and `req_svc_ms_max` (12-13 ms) matches
+    the client-visible maximum almost exactly.
+  - Composition inside the service segment: the cross-thread wake reached **5578 us** and the loop's
+    own round (one batch apply) reached **5544 us** - together they account for the tail - while the
+    fsync was NOT slow in any of the 7 spike runs (`slow_syncs` unchanged; `sync_us_max` 13989 us came
+    from other runs) and the loop->worker handoff stayed at 1.6 ms.
+  - The batching wait (`req_wait_ms_max` 5-6 ms) is a small contributor, not the cause.
+  - Platform split: the same wake measurement reads 375 us on Windows against 5578 us in the VMware
+    guest, which is the size of a host/guest thread-scheduling difference and the reason the tail is
+    far more visible on the VM.
+  **RETRACTION.** An earlier revision of this section excluded "the cross-thread wake" on the strength
+  of `wake_us_max` reading 0 on the Linux box.  That 0 was NOT a measurement: only `code/kserver.h`
+  had been copied there, so the driver half of the wake accounting was absent from the binary while
+  the field still printed.  A counter max of 0 is indistinguishable from "never measured" - which is
+  precisely the failure mode this project's rules warn about.  Both counters now carry a sample count
+  and the Linux run aborts unless `handoff_samples` and `wake_samples` are non-zero before it starts.
+  The conclusion in the previous revision ("not the wake") is therefore WITHDRAWN.
+  Still open: the tail is a queueing latency under an extreme offered load (2000 in flight at k=32
+  means ~62 batches, and a batch's last member waits for the batch), not a correctness defect; whether
+  the guest's 5.6 ms wake can be reduced is a separate question that needs a scheduling-side
+  instrument, not another counter here.
