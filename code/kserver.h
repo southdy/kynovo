@@ -4859,31 +4859,39 @@ static void k_server_release(k_server *server){
   }
   k_snapshot_cache_free(&server->snapshot);
 }
+/* Every step of the open/restore sequence used to collapse into the caller's single "failed to start
+   server N", so a refused start named nothing (issue #7).  Each step now says which one refused and why,
+   and the store-backed failures include the base path, because that is what the operator has to look at. */
+static void k_open_fail(const char *step,const char *why,const char *base){
+  printf("fatal: cannot start server: %s failed (%s)%s%s\n",step,why,base?" at ":"",base?base:"");
+}
 static int k_server_open(k_server *server){
   k_restore restore;
   raft_config config;
   const char *runtime_be;
   int peer_ids[K_MAX_NODES];
   int restore_rc,i,local_index,wal_exists;
-  if(!server||server->id<=0||server->cluster.count<=0) return -1;
+  if(!server||server->id<=0||server->cluster.count<=0){ k_open_fail("argument check","bad server, id or empty cluster",0); return -1; }
   local_index=k_cluster_index(&server->cluster,server->id);
-  if(local_index<0) return -1;
-  if(k_cfg_open(server->base,&server->cfg)!=0) return -1;
+  if(local_index<0){ k_open_fail("cluster lookup","this node id is not in the configured cluster",0); return -1; }
+  if(k_cfg_open(server->base,&server->cfg)!=0){ k_open_fail("config open","unreadable or invalid config",server->base); return -1; }
   /* The adaptive flush window (kdbsvr's serve loop) may shrink cfg.flush_timeout_ms
      toward the measured sync cost; remember the configured ceiling so it can never
      grow past what the operator asked for. */
   server->flush_window_max_ms=server->cfg.flush_timeout_ms;
   server->wal_inflight_max=(k_u32)K_WAL_INFLIGHT_MAX;   /* the cap; the driver narrows it with a budget */
   restore_rc=k_state_load(server->base,&restore,&server->wal_meta,&wal_exists);
-  if(restore_rc<0) return -1;
+  if(restore_rc<0){ k_open_fail("state restore","unreadable store or corrupt state",server->base); return -1; }
   if(!wal_exists){
     if(k_wal_meta_init(server->base)!=0||k_wal_meta_load(server->base,&server->wal_meta)!=1){
+      k_open_fail("WAL metadata","cannot initialise or reload the WAL metadata",server->base);
       return -1;
     }
   }
   server->tree=treap_create((treap_u64)server->cfg.seed);
   if(!server->tree){
     if(restore_rc>0) k_restore_free(&restore);
+    k_open_fail("tree allocation","out of memory creating the tree",0);
     return -1;
   }
   /* A fresh tree restores to empty, so reset the applied watermark: a reopen
@@ -4962,9 +4970,9 @@ static int k_server_open(k_server *server){
   server->wal_worker.meta_sync_segment=K_U64_C(0xffffffffffffffff);
   runtime_be=server->runtime_backend?server->runtime_backend:"thread";
   server->wal_rt=runtime_create(runtime_be,1,k_wal_worker_entry,&server->wal_worker);
-  if(!server->wal_rt) return -1;
+  if(!server->wal_rt){ k_open_fail("WAL worker thread","cannot create the runtime worker",0); return -1; }
   server->snapshot_rt=runtime_create(runtime_be,1,k_snapshot_worker_entry,server);
-  if(!server->snapshot_rt) return -1;
+  if(!server->snapshot_rt){ k_open_fail("snapshot worker thread","cannot create the runtime worker",0); return -1; }
   runtime_wait_workers_ready(server->wal_rt);
   runtime_wait_workers_ready(server->snapshot_rt);
   return 0;

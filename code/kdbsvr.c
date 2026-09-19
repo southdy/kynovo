@@ -188,13 +188,20 @@ static void k_server_wal_wake(void *loop,void *ud){
 static int k_server_serve(k_server *server,cemon *loop){
   int local_index;
   local_index=k_cluster_index(&server->cluster,server->id);
-  if(local_index<0) return -1;
+  if(local_index<0){ printf("fatal: cannot start server: this node id is not in the configured cluster\n"); return -1; }
   server->loop=loop;
   server->transport=&k_transport_cemon;
   server->on_stop=k_server_on_stop_cemon;
   server->on_wal_result=k_server_wal_wake;
-  if(!cemon_tcp_listen(loop,k_numeric_host(server->cluster.nodes[local_index].host),server->peer_port,k_server_peer_io,server)) return -1;
-  if(!cemon_tcp_listen(loop,k_numeric_host(server->cluster.nodes[local_index].host),server->client_port,k_server_client_io,server)) return -1;
+  if(!cemon_tcp_listen(loop,k_numeric_host(server->cluster.nodes[local_index].host),server->peer_port,k_server_peer_io,server)){
+    /* A refused bind was the last silent startup failure: port in use, or a port this user may not bind. */
+    printf("fatal: cannot start server: peer listen on %s:%u failed (port in use or not permitted)\n",k_numeric_host(server->cluster.nodes[local_index].host),(unsigned)server->peer_port);
+    return -1;
+  }
+  if(!cemon_tcp_listen(loop,k_numeric_host(server->cluster.nodes[local_index].host),server->client_port,k_server_client_io,server)){
+    printf("fatal: cannot start server: client listen on %s:%u failed (port in use or not permitted)\n",k_numeric_host(server->cluster.nodes[local_index].host),(unsigned)server->client_port);
+    return -1;
+  }
   fprintf(stderr,"[cfg] poll_ms=%u flush_timeout_ms=%u flush_item_limit=%u flush_bytes_limit=%u (batch targets)\n",(unsigned)server->cfg.poll_ms,(unsigned)server->cfg.flush_timeout_ms,(unsigned)server->cfg.flush_item_limit,(unsigned)server->cfg.flush_bytes_limit);
   server->admission=1;
   if(k_monotonic_us(&server->last_tick_us)!=0) server->last_tick_us=0;
@@ -404,7 +411,9 @@ static int k_run_server_args(int argc,char **argv){
     printf("kdbsvr: fatal: unexpected argument '%s' (see usage)\n",argc>7?argv[7]:"");
     return -1;
   }
-  if(k_server_open(&server)!=0){ k_server_release(&server);printf("failed to start server %d\n",id);return -1; }
+  /* The specific cause is printed by the step that refused (see k_open_fail); this line only ties it to
+     the node. */
+  if(k_server_open(&server)!=0){ k_server_release(&server);printf("failed to start server %d (see the fatal line above)\n",id);return -1; }
   loop=cemon_create();
   /* bind ownership explicitly: this thread drives (polls) and tears down the loop,
      so a helper thread can never capture ownership and lock it out */
@@ -412,7 +421,7 @@ static int k_run_server_args(int argc,char **argv){
   if(!loop||k_server_serve(&server,loop)!=0){
     if(loop) cemon_destroy(loop);
     k_server_release(&server);
-    printf("failed to start server %d\n",id);
+    printf("failed to start server %d (see the fatal line above)\n",id);
     return -1;
   }
   printf("server %d client=%s:%u peer=%s:%u\n",id,cluster.nodes[node_index].host,(unsigned)client_port,cluster.nodes[node_index].host,(unsigned)peer_port);
