@@ -53,18 +53,66 @@ BUILD_DIR="${BUILD_DIR:-build}"
 BENCH_CFLAGS="-std=c89 -O2 -Wall -Wextra -Wdeclaration-after-statement -Wno-unused-function"
 RC=0
 
-# Force MinGW-w64 15.2.0 first on PATH. Prepend unconditionally: a first-chance
-# `command -v gcc` would accept a stray gcc already on PATH (e.g. the older
-# /d/MinGW 9.2.0), which then breaks the build (its mswsock.h lacks LPFN_ACCEPTEX).
-export PATH="$MINGW_BIN:$PATH"
-if ! command -v gcc >/dev/null 2>&1; then
-    echo "error: gcc not found under $MINGW_BIN" >&2
-    exit 1
+# ---------------------------------------------------------------------------
+# Platform.  The project is developed on Windows (MinGW-w64, XP+ target) and is
+# now also built on Linux; everything that differs is confined to the variables
+# below.
+#
+#   * On POSIX, glibc HIDES the POSIX declarations (clock_gettime, struct
+#     timespec, ...) while the compiler is in strict ANSI mode, which -std=c89
+#     is - so the feature macro has to come from the COMMAND LINE: a header that
+#     defines it after another header has already pulled in <time.h> is too late.
+#   * The Windows import libraries do not exist on POSIX; sockets and threads
+#     there live in libc/libpthread, and -pthread is already passed everywhere.
+#   * The pinned-toolchain check exists because older MinGW headers lack
+#     LPFN_ACCEPTEX; it is meaningless, and its notice would be noise, elsewhere.
+#   * Artifact names keep the .exe suffix on every platform, so the harnesses, the
+#     regression gate and every documented verdict line stay identical.
+# ---------------------------------------------------------------------------
+case "$(uname -s 2>/dev/null)" in
+    Linux|Darwin|FreeBSD|OpenBSD|NetBSD) PLATFORM=posix ;;
+    *)                                   PLATFORM=windows ;;
+esac
+if [ "$PLATFORM" = posix ]; then
+    PLAT_CFLAGS="-D_POSIX_C_SOURCE=200809L"
+    LIB_WS=""; LIB_MM=""; LIB_PS=""
+else
+    PLAT_CFLAGS=""
+    LIB_WS="-lws2_32"; LIB_MM="-lwinmm"; LIB_PS="-lpsapi"
 fi
-GCC_VERSION="$(gcc -dumpversion 2>/dev/null || echo unknown)"
-if [ "$GCC_VERSION" != "15.2.0" ]; then
-    echo "warning: expected gcc 15.2.0 under $MINGW_BIN, found $GCC_VERSION;" \
-         "older mingw headers may lack LPFN_ACCEPTEX" >&2
+CC="gcc $PLAT_CFLAGS"
+# Python is used by the coverage report and by the principles gate; the name differs
+# between the platforms this tree is built on (python3 on CentOS, python on Windows).
+# Python is used by the coverage report and by the principles gate; the name differs between the
+# platforms this tree is built on (python3 on CentOS, python on Windows).  The probe must EXECUTE
+# the candidate: on this Windows box `command -v python3` succeeds and points at the WindowsApps
+# stub, which then fails with "Permission denied" - being on PATH is not the same as working.
+PYTHON=""
+for cand in python3 python; do
+    if command -v "$cand" >/dev/null 2>&1 && "$cand" -c 'import sys' >/dev/null 2>&1; then
+        PYTHON="$cand"; break
+    fi
+done
+
+
+# Force MinGW-w64 15.2.0 first on PATH (Windows only). Prepend unconditionally: a
+# first-chance `command -v gcc` would accept a stray gcc already on PATH (e.g. the
+# older /d/MinGW 9.2.0), which then breaks the build (its mswsock.h lacks LPFN_ACCEPTEX).
+if [ "$PLATFORM" = windows ]; then
+    export PATH="$MINGW_BIN:$PATH"
+    if ! command -v gcc >/dev/null 2>&1; then
+        echo "error: gcc not found under $MINGW_BIN" >&2
+        exit 1
+    fi
+    GCC_VERSION="$(gcc -dumpversion 2>/dev/null || echo unknown)"
+    if [ "$GCC_VERSION" != "15.2.0" ]; then
+        echo "warning: expected gcc 15.2.0 under $MINGW_BIN, found $GCC_VERSION;" \
+             "older mingw headers may lack LPFN_ACCEPTEX" >&2
+    fi
+fi
+if ! command -v gcc >/dev/null 2>&1; then
+    echo "error: gcc not found on PATH" >&2
+    exit 1
 fi
 
 mkdir -p "$BUILD_DIR"
@@ -78,62 +126,62 @@ mkdir -p "$BUILD_DIR"
 # _test_fail_* assert printers). That is an unused-public-API false positive, not
 # dead code; every OTHER warning stays on.
 # -Wdeclaration-after-statement: MSVC 6.0's strict C89 compiler rejects a
-# declaration after a statement; gcc -std=c89 accepts it silently unless this
+# declaration after a statement; $CC -std=c89 accepts it silently unless this
 # flag is on.  Catches a whole class of MSVC-6.0-only breakage that a plain
 # -Wall -Wextra build misses.
 build_kdbsvr() {
-    gcc -std=c89 -O2 -Wall -Wextra -Wdeclaration-after-statement -Wno-unused-function -pthread code/kdbsvr.c -o "$BUILD_DIR/kdbsvr.exe" -lws2_32 -lwinmm
+    $CC -std=c89 -O2 -Wall -Wextra -Wdeclaration-after-statement -Wno-unused-function -pthread code/kdbsvr.c -o "$BUILD_DIR/kdbsvr.exe" $LIB_WS $LIB_MM
 }
 build_kdbctl() {
-    gcc -std=c89 -O2 -Wall -Wextra -Wdeclaration-after-statement -Wno-unused-function -pthread code/kdbctl.c -o "$BUILD_DIR/kdbctl.exe" -lws2_32
+    $CC -std=c89 -O2 -Wall -Wextra -Wdeclaration-after-statement -Wno-unused-function -pthread code/kdbctl.c -o "$BUILD_DIR/kdbctl.exe" $LIB_WS
 }
 build_selftest() {
-    gcc -std=c89 -O2 -Wall -Wextra -Wdeclaration-after-statement -Wno-unused-function -pthread tests/selftest.c -o "$BUILD_DIR/selftest.exe" -lws2_32
+    $CC -std=c89 -O2 -Wall -Wextra -Wdeclaration-after-statement -Wno-unused-function -pthread tests/selftest.c -o "$BUILD_DIR/selftest.exe" $LIB_WS
 }
 build_bench() {
-    gcc -std=c89 -O2 -Wall -Wextra -Wdeclaration-after-statement -Wno-unused-function -DBENCH_CFLAGS="\"$BENCH_CFLAGS\"" tools/bench_fsync.c -o "$BUILD_DIR/bench_fsync.exe"
+    $CC -std=c89 -O2 -Wall -Wextra -Wdeclaration-after-statement -Wno-unused-function -DBENCH_CFLAGS="\"$BENCH_CFLAGS\"" tools/bench_fsync.c -o "$BUILD_DIR/bench_fsync.exe"
 }
 build_bench_e2e() {
-    gcc -std=c89 -O2 -Wall -Wextra -Wdeclaration-after-statement -Wno-unused-function -pthread -DBENCH_CFLAGS="\"$BENCH_CFLAGS\"" tools/bench_e2e.c -o "$BUILD_DIR/bench_e2e.exe" -lws2_32
+    $CC -std=c89 -O2 -Wall -Wextra -Wdeclaration-after-statement -Wno-unused-function -pthread -DBENCH_CFLAGS="\"$BENCH_CFLAGS\"" tools/bench_e2e.c -o "$BUILD_DIR/bench_e2e.exe" $LIB_WS
 }
 build_bench_mt() {
-    gcc -std=c89 -O2 -Wall -Wextra -Wdeclaration-after-statement -Wno-unused-function -pthread -DBENCH_CFLAGS="\"$BENCH_CFLAGS\"" tools/bench_mt.c -o "$BUILD_DIR/bench_mt.exe" -lws2_32
+    $CC -std=c89 -O2 -Wall -Wextra -Wdeclaration-after-statement -Wno-unused-function -pthread -DBENCH_CFLAGS="\"$BENCH_CFLAGS\"" tools/bench_mt.c -o "$BUILD_DIR/bench_mt.exe" $LIB_WS
 }
 build_bench_rate() {
-    gcc -std=c89 -O2 -Wall -Wextra -Wdeclaration-after-statement -Wno-unused-function -pthread -DBENCH_CFLAGS="\"$BENCH_CFLAGS\"" tools/bench_rate.c -o "$BUILD_DIR/bench_rate.exe" -lws2_32
+    $CC -std=c89 -O2 -Wall -Wextra -Wdeclaration-after-statement -Wno-unused-function -pthread -DBENCH_CFLAGS="\"$BENCH_CFLAGS\"" tools/bench_rate.c -o "$BUILD_DIR/bench_rate.exe" $LIB_WS
 }
 build_bench_pipe() {
-    gcc -std=c89 -O2 -Wall -Wextra -Wdeclaration-after-statement -Wno-unused-function -pthread -DBENCH_CFLAGS="\"$BENCH_CFLAGS\"" tools/bench_pipe.c -o "$BUILD_DIR/bench_pipe.exe" -lws2_32
+    $CC -std=c89 -O2 -Wall -Wextra -Wdeclaration-after-statement -Wno-unused-function -pthread -DBENCH_CFLAGS="\"$BENCH_CFLAGS\"" tools/bench_pipe.c -o "$BUILD_DIR/bench_pipe.exe" $LIB_WS
 }
 build_cemon_bench() {
-    gcc -std=c89 -O2 -Wall -Wextra -Wdeclaration-after-statement -Wno-unused-function -pthread -DBENCH_CFLAGS="\"$BENCH_CFLAGS\"" tests/cemon_bench.c -o "$BUILD_DIR/cemon_bench.exe" -lws2_32 -lwinmm
+    $CC -std=c89 -O2 -Wall -Wextra -Wdeclaration-after-statement -Wno-unused-function -pthread -DBENCH_CFLAGS="\"$BENCH_CFLAGS\"" tests/cemon_bench.c -o "$BUILD_DIR/cemon_bench.exe" $LIB_WS $LIB_MM
 }
 build_bench_persist() {
-    gcc -std=c89 -O2 -Wall -Wextra -Wdeclaration-after-statement -Wno-unused-function -Wno-unused-variable -pthread -DBENCH_CFLAGS="\"$BENCH_CFLAGS\"" tests/bench_persist.c -o "$BUILD_DIR/bench_persist.exe" -lws2_32 -lwinmm
+    $CC -std=c89 -O2 -Wall -Wextra -Wdeclaration-after-statement -Wno-unused-function -Wno-unused-variable -pthread -DBENCH_CFLAGS="\"$BENCH_CFLAGS\"" tests/bench_persist.c -o "$BUILD_DIR/bench_persist.exe" $LIB_WS $LIB_MM
 }
 build_cemon_stress() {
-    gcc -std=c89 -O2 -Wall -Wextra -Wdeclaration-after-statement -Wno-unused-function -pthread -DBENCH_CFLAGS="\"$BENCH_CFLAGS\"" tests/cemon_stress.c -o "$BUILD_DIR/cemon_stress.exe" -lws2_32 -lpsapi
+    $CC -std=c89 -O2 -Wall -Wextra -Wdeclaration-after-statement -Wno-unused-function -pthread -DBENCH_CFLAGS="\"$BENCH_CFLAGS\"" tests/cemon_stress.c -o "$BUILD_DIR/cemon_stress.exe" $LIB_WS $LIB_PS
 }
 build_test() {
-    gcc -std=c89 -O2 -Wall -Wextra -Wdeclaration-after-statement -Wno-unused-function tests/raft_test.c -o "$BUILD_DIR/raft_test.exe"
+    $CC -std=c89 -O2 -Wall -Wextra -Wdeclaration-after-statement -Wno-unused-function tests/raft_test.c -o "$BUILD_DIR/raft_test.exe"
 }
 build_fuzz() {
-    gcc -std=c89 -O2 -Wall -Wextra -Wdeclaration-after-statement -Wno-unused-function tests/raft_fuzz.c -o "$BUILD_DIR/raft_fuzz.exe"
+    $CC -std=c89 -O2 -Wall -Wextra -Wdeclaration-after-statement -Wno-unused-function tests/raft_fuzz.c -o "$BUILD_DIR/raft_fuzz.exe"
 }
 build_cfuzz() {
-    gcc -std=c89 -O2 -Wall -Wextra -Wdeclaration-after-statement -Wno-unused-function tests/raft_cluster_fuzz.c -o "$BUILD_DIR/raft_cluster_fuzz.exe"
+    $CC -std=c89 -O2 -Wall -Wextra -Wdeclaration-after-statement -Wno-unused-function tests/raft_cluster_fuzz.c -o "$BUILD_DIR/raft_cluster_fuzz.exe"
 }
 build_kclient() {
-    gcc -std=c89 -O2 -Wall -Wextra -Wdeclaration-after-statement -Wno-unused-function tests/kclient_test.c -o "$BUILD_DIR/kclient_test.exe"
+    $CC -std=c89 -O2 -Wall -Wextra -Wdeclaration-after-statement -Wno-unused-function tests/kclient_test.c -o "$BUILD_DIR/kclient_test.exe"
 }
 build_kserver() {
-    gcc -std=c89 -O2 -Wall -Wextra -Wdeclaration-after-statement -Wno-unused-function tests/kserver_test.c -pthread -o "$BUILD_DIR/kserver_test.exe"
+    $CC -std=c89 -O2 -Wall -Wextra -Wdeclaration-after-statement -Wno-unused-function tests/kserver_test.c -pthread -o "$BUILD_DIR/kserver_test.exe"
 }
 build_cemon_test() {
-    gcc -std=c89 -O2 -Wall -Wextra -Wdeclaration-after-statement -Wno-unused-function -pthread tests/cemon_test.c -o "$BUILD_DIR/cemon_test.exe" -lws2_32
+    $CC -std=c89 -O2 -Wall -Wextra -Wdeclaration-after-statement -Wno-unused-function -pthread tests/cemon_test.c -o "$BUILD_DIR/cemon_test.exe" $LIB_WS
 }
 build_kclusterfuzz() {
-    gcc -std=c89 -O2 -Wall -Wextra -Wdeclaration-after-statement -Wno-unused-function tests/kserver_cluster_fuzz.c -o "$BUILD_DIR/kserver_cluster_fuzz.exe"
+    $CC -std=c89 -O2 -Wall -Wextra -Wdeclaration-after-statement -Wno-unused-function tests/kserver_cluster_fuzz.c -o "$BUILD_DIR/kserver_cluster_fuzz.exe"
 }
 # Undefined-behaviour sanitizer. MinGW-w64 ships no libasan/libubsan runtime, so
 # the runtime-linked ASan+UBSan is unavailable here (that needs Linux/clang, per
@@ -141,13 +189,13 @@ build_kclusterfuzz() {
 # instead of runtime calls, so UB -> SIGILL (exit 132) and the last printed seed
 # reproduces the crash.
 build_san() {
-    gcc -std=c89 -fsanitize=undefined -fsanitize-trap=undefined -O1 -g tests/raft_test.c          -o "$BUILD_DIR/raft_test_san.exe" \
-    && gcc -std=c89 -fsanitize=undefined -fsanitize-trap=undefined -O1 -g tests/raft_fuzz.c          -o "$BUILD_DIR/raft_fuzz_san.exe" \
-    && gcc -std=c89 -fsanitize=undefined -fsanitize-trap=undefined -O1 -g tests/raft_cluster_fuzz.c  -o "$BUILD_DIR/raft_cluster_fuzz_san.exe" \
-    && gcc -std=c89 -fsanitize=undefined -fsanitize-trap=undefined -O1 -g tests/kclient_test.c         -o "$BUILD_DIR/kclient_test_san.exe" \
-    && gcc -std=c89 -fsanitize=undefined -fsanitize-trap=undefined -O1 -g tests/kserver_test.c         -o "$BUILD_DIR/kserver_test_san.exe" \
-    && gcc -std=c89 -fsanitize=undefined -fsanitize-trap=undefined -O1 -g tests/kserver_cluster_fuzz.c -o "$BUILD_DIR/kserver_cluster_fuzz_san.exe" \
-    && gcc -std=c89 -fsanitize=undefined -fsanitize-trap=undefined -O1 -g -pthread tests/cemon_test.c -o "$BUILD_DIR/cemon_test_san.exe" -lws2_32
+    $CC -std=c89 -fsanitize=undefined -fsanitize-trap=undefined -O1 -g tests/raft_test.c          -o "$BUILD_DIR/raft_test_san.exe" \
+    && $CC -std=c89 -fsanitize=undefined -fsanitize-trap=undefined -O1 -g tests/raft_fuzz.c          -o "$BUILD_DIR/raft_fuzz_san.exe" \
+    && $CC -std=c89 -fsanitize=undefined -fsanitize-trap=undefined -O1 -g tests/raft_cluster_fuzz.c  -o "$BUILD_DIR/raft_cluster_fuzz_san.exe" \
+    && $CC -std=c89 -fsanitize=undefined -fsanitize-trap=undefined -O1 -g tests/kclient_test.c         -o "$BUILD_DIR/kclient_test_san.exe" \
+    && $CC -std=c89 -fsanitize=undefined -fsanitize-trap=undefined -O1 -g tests/kserver_test.c         -o "$BUILD_DIR/kserver_test_san.exe" \
+    && $CC -std=c89 -fsanitize=undefined -fsanitize-trap=undefined -O1 -g tests/kserver_cluster_fuzz.c -o "$BUILD_DIR/kserver_cluster_fuzz_san.exe" \
+    && $CC -std=c89 -fsanitize=undefined -fsanitize-trap=undefined -O1 -g -pthread tests/cemon_test.c -o "$BUILD_DIR/cemon_test_san.exe" $LIB_WS
 }
 # Code coverage (gcov).  Compiles every driver with --coverage, runs them, then
 # gcov each and aggregates the per-driver .gcov reports into per-file
@@ -159,18 +207,18 @@ build_san() {
 build_coverage() {
     rm -rf "$BUILD_DIR/cov"
     mkdir -p "$BUILD_DIR/cov"
-    gcc -std=c89 -O0 -g --coverage -Wall -Wextra -Wdeclaration-after-statement -Wno-unused-function -pthread tests/selftest.c -o "$BUILD_DIR/cov/selftest.exe" -lws2_32 || RC=1
-    gcc -std=c89 -O0 -g --coverage -Wall -Wextra -Wdeclaration-after-statement -Wno-unused-function tests/raft_test.c -o "$BUILD_DIR/cov/raft_test.exe" || RC=1
-    gcc -std=c89 -O0 -g --coverage -Wall -Wextra -Wdeclaration-after-statement -Wno-unused-function tests/raft_fuzz.c -o "$BUILD_DIR/cov/raft_fuzz.exe" || RC=1
-    gcc -std=c89 -O0 -g --coverage -Wall -Wextra -Wdeclaration-after-statement -Wno-unused-function tests/raft_cluster_fuzz.c -o "$BUILD_DIR/cov/raft_cluster_fuzz.exe" || RC=1
-    gcc -std=c89 -O0 -g --coverage -Wall -Wextra -Wdeclaration-after-statement -Wno-unused-function tests/kclient_test.c -o "$BUILD_DIR/cov/kclient_test.exe" || RC=1
-    gcc -std=c89 -O0 -g --coverage -Wall -Wextra -Wdeclaration-after-statement -Wno-unused-function tests/kserver_test.c -o "$BUILD_DIR/cov/kserver_test.exe" || RC=1
-    gcc -std=c89 -O0 -g --coverage -Wall -Wextra -Wdeclaration-after-statement -Wno-unused-function tests/kserver_cluster_fuzz.c -o "$BUILD_DIR/cov/kserver_cluster_fuzz.exe" || RC=1
+    $CC -std=c89 -O0 -g --coverage -Wall -Wextra -Wdeclaration-after-statement -Wno-unused-function -pthread tests/selftest.c -o "$BUILD_DIR/cov/selftest.exe" $LIB_WS || RC=1
+    $CC -std=c89 -O0 -g --coverage -Wall -Wextra -Wdeclaration-after-statement -Wno-unused-function tests/raft_test.c -o "$BUILD_DIR/cov/raft_test.exe" || RC=1
+    $CC -std=c89 -O0 -g --coverage -Wall -Wextra -Wdeclaration-after-statement -Wno-unused-function tests/raft_fuzz.c -o "$BUILD_DIR/cov/raft_fuzz.exe" || RC=1
+    $CC -std=c89 -O0 -g --coverage -Wall -Wextra -Wdeclaration-after-statement -Wno-unused-function tests/raft_cluster_fuzz.c -o "$BUILD_DIR/cov/raft_cluster_fuzz.exe" || RC=1
+    $CC -std=c89 -O0 -g --coverage -Wall -Wextra -Wdeclaration-after-statement -Wno-unused-function tests/kclient_test.c -o "$BUILD_DIR/cov/kclient_test.exe" || RC=1
+    $CC -std=c89 -O0 -g --coverage -Wall -Wextra -Wdeclaration-after-statement -Wno-unused-function tests/kserver_test.c -o "$BUILD_DIR/cov/kserver_test.exe" || RC=1
+    $CC -std=c89 -O0 -g --coverage -Wall -Wextra -Wdeclaration-after-statement -Wno-unused-function tests/kserver_cluster_fuzz.c -o "$BUILD_DIR/cov/kserver_cluster_fuzz.exe" || RC=1
     # cemon_bench is the second cemon.h driver (selftest alone left cemon.h at one
     # driver).  cemon_stress (~65s) stays out of the coverage run on purpose: it
     # has its own target and would dominate the turn-around; run `./build.sh
     # cemon-stress` when you want its cemon.h contribution.
-    gcc -std=c89 -O0 -g --coverage -Wall -Wextra -Wdeclaration-after-statement -Wno-unused-function -pthread tests/cemon_bench.c -o "$BUILD_DIR/cov/cemon_bench.exe" -lws2_32 -lwinmm || RC=1
+    $CC -std=c89 -O0 -g --coverage -Wall -Wextra -Wdeclaration-after-statement -Wno-unused-function -pthread tests/cemon_bench.c -o "$BUILD_DIR/cov/cemon_bench.exe" $LIB_WS $LIB_MM || RC=1
 }
 run_coverage_driver() {
     local name="$1"; shift
@@ -211,7 +259,7 @@ run_coverage() {
         gcov -b -c -o "$BUILD_DIR/cov" "$gcno" >/dev/null 2>&1
         mv ./*.gcov "$BUILD_DIR/cov/gcov/$d/" 2>/dev/null
     done
-    python tools/cov_report.py "$BUILD_DIR/cov/gcov" || RC=1
+    $PYTHON tools/cov_report.py "$BUILD_DIR/cov/gcov" || RC=1
     if [ "$RC" != 0 ]; then
         echo "coverage: ONE OR MORE DRIVERS FAILED -- the numbers above cover a RED build" >&2
         echo "coverage: per-driver output is in $BUILD_DIR/cov/logs/" >&2
@@ -313,7 +361,7 @@ do_regress(){
     echo "=== regress ($mode) - verdict lines follow; full logs in $REG_DIR/ ==="
     reg_build
     # Principles first: cheap, and it catches a violation while the context is still fresh.
-    reg_gate principles     '^PRINCIPLES\|OK' python tools/check-principles.py
+    reg_gate principles     '^PRINCIPLES\|OK' $PYTHON tools/check-principles.py
     reg_gate raft_test      'SUMMARY: [0-9]+/[0-9]+ passed' "$BUILD_DIR/raft_test.exe"
     reg_gate kserver_test   'SUMMARY: [0-9]+/[0-9]+ passed' "$BUILD_DIR/kserver_test.exe"
     reg_gate kclient_test   'SUMMARY: [0-9]+/[0-9]+ passed' "$BUILD_DIR/kclient_test.exe"
