@@ -56,3 +56,24 @@
 #
 # Latency side is unchanged by any of this: the tail tracks offered concurrency (K), with p50 0.65 ms
 # (mem) / 2.8 ms (disk) at K<=64 and 7.8-11 ms at K=512.
+
+# ---------------------------------------------------------------- latency-budget knob: tested, no win
+# --latency-budget-ms <N> caps how long a request may queue behind durable work: the driver sets the
+# WAL in-flight depth to N/measured-sync (clamped to the compile-time cap), and STATS exposes both the
+# budget and the resulting wal_inflight_max, so the policy is never invisible.  Default 0 = off, so
+# nothing changes unless it is asked for.
+#
+# Windows, disk://, 1 B, items 128, window 1 ms, single client, K=512, THREE alternating pairs:
+#   depth 4 (budget off)  64172 / 57090 ops/s   p99 12672 / 13546 us
+#   depth 1 (budget 1 ms) 52907 / 58218 / 44711 ops/s   p99 14341 / 13264 / 20684 us
+# The single first pair suggested depth 1 was better (52.9k vs 40.6k, p99 14341 vs 25084); the repeats
+# showed the opposite twice, so that reading was machine noise.  At K=512 on this device a shallower
+# durable queue does NOT buy tail latency and costs throughput: the queue is not what fills the tail
+# here, and the default depth of 4 is at least as good.
+# Conclusion: keep the knob off by default (it is), and do not sell it as an optimisation.  It remains
+# useful as a bounded-tail setting for a device that starts syncing far slower than it used to.
+#
+# Incidental defect fixed while adding the flag: the server's tail-argument check was `else if(argc!=7)
+# return -1;` - a SILENT refusal with no message, so a server that rejected its own arguments looked
+# like a server that failed to start (it cost a debugging round).  Unknown arguments now print their
+# name and the reason.

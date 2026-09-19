@@ -319,6 +319,19 @@ static int k_server_run(k_server *server){
         if(want!=server->cfg.flush_timeout_ms) server->cfg.flush_timeout_ms=want;
       }
     }
+    /* Latency budget: a request should not queue behind more durable work than the budget allows, so
+       depth ~= budget / measured sync.  A device that starts syncing in 10 ms therefore narrows the
+       pipeline by itself instead of letting every request wait behind four of those syncs - the tail
+       measured as depth x sync plus one batch of apply.  0 (the default) keeps the compile-time cap,
+       so this changes nothing unless asked. */
+    if(server->latency_budget_us&&server->wal_worker.sync_us_ewma>0){
+      k_u64 want=(k_u64)server->latency_budget_us/server->wal_worker.sync_us_ewma;
+      if(want<1u) want=1u;
+      if(want>(k_u64)K_WAL_INFLIGHT_MAX) want=(k_u64)K_WAL_INFLIGHT_MAX;
+      server->wal_inflight_max=(k_u32)want;
+    }else{
+      server->wal_inflight_max=(k_u32)K_WAL_INFLIGHT_MAX;
+    }
   }
   if(!server->stopped||server->fatal) rc=-1;
   return rc;
@@ -359,6 +372,19 @@ static int k_run_server_args(int argc,char **argv){
   node_index=k_cluster_index(&cluster,id);
   if(node_index<0||cluster.nodes[node_index].client_port!=(unsigned short)client_port||cluster.nodes[node_index].peer_port!=(unsigned short)peer_port) return -1;
   k_server_init(&server,id,(unsigned short)client_port,(unsigned short)peer_port,argv[5],&cluster);
+  /* --latency-budget-ms <N>: opt-in cap on how long a request may queue behind durable work. */
+  { int ai; int budget=0;
+    for(ai=7;ai<argc;ai++){
+      if(strcmp(argv[ai],"--latency-budget-ms")==0){
+        if(ai+1>=argc||k_parse_uint(argv[ai+1],60000,&budget)!=0||budget<0){
+          printf("kdbsvr: fatal: --latency-budget-ms needs 0..60000\n");
+          return -1;
+        }
+        ai++;
+      }
+    }
+    server.latency_budget_us=(k_u32)(budget*1000);
+  }
   /* optional --auto-replace <id@host:client_port:peer_port> [--auto-replace-threshold <N>] */
   if(argc>=9&&strcmp(argv[7],"--auto-replace")==0){
     if(k_cluster_parse(&replacement,argv[8])!=0||replacement.count!=1) return -1;
@@ -369,9 +395,15 @@ static int k_run_server_args(int argc,char **argv){
     server.auto_replace_new_peer_port=replacement.nodes[0].peer_port;
     if(argc==11&&strcmp(argv[9],"--auto-replace-threshold")==0){
       if(k_parse_uint(argv[10],1000000,&threshold)!=0||threshold<1) return -1;
-    }else if(argc!=9) return -1;
+    }else if(argc!=9){ printf("kdbsvr: fatal: --auto-replace-threshold needs a value\n"); return -1; }
     server.auto_replace_threshold=(unsigned int)threshold;
-  }else if(argc!=7) return -1;
+  }else if(argc!=7&&!(argc==9&&strcmp(argv[7],"--latency-budget-ms")==0)){
+    /* Options are parsed above; anything left over is refused - and SAID OUT LOUD.  This used to be a
+       bare `return -1` with no message, so a server that refused its arguments looked like a server
+       that failed to start, and that cost a debugging round. */
+    printf("kdbsvr: fatal: unexpected argument '%s' (see usage)\n",argc>7?argv[7]:"");
+    return -1;
+  }
   if(k_server_open(&server)!=0){ k_server_release(&server);printf("failed to start server %d\n",id);return -1; }
   loop=cemon_create();
   /* bind ownership explicitly: this thread drives (polls) and tears down the loop,

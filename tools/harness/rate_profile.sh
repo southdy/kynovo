@@ -21,6 +21,8 @@ ITEMS="${3:-128}"
 BYTES="${4:-262144}"
 N="${5:-2000}"
 PORT="${6:-10601}"
+CLIENTS="${7:-1}"   # >1 runs that many independent client processes; a single client paces the
+                    # server and hides what it can actually ingest (measured: 33-55k with one, 150k with four)
 BIN="$ROOT/build"
 TMP="$(mktemp -d)"
 SERVER_PID=""
@@ -44,7 +46,8 @@ else
   "$BIN/kdbsvr.exe" init "$URI" --flush-items "$ITEMS" --flush-window-ms 1 --flush-bytes "$BYTES" >/dev/null 2>&1
 fi
 echo "$PORT" > "$TMP/port"
-"$BIN/kdbsvr.exe" server 1 "$PORT" "$((PORT+1))" "$URI" "1@127.0.0.1:$PORT:$((PORT+1))" > "$TMP/server.log" 2>&1 &
+# SERVER_ARGS lets a caller exercise a server-side policy knob (e.g. --latency-budget-ms).
+"$BIN/kdbsvr.exe" server 1 "$PORT" "$((PORT+1))" "$URI" "1@127.0.0.1:$PORT:$((PORT+1))" ${SERVER_ARGS:-} > "$TMP/server.log" 2>&1 &
 SERVER_PID=$!
 
 ready=0
@@ -53,7 +56,13 @@ for _ in 1 2 3 4 5 6 7 8 9 10; do
   sleep 1
 done
 if [ "$ready" != 1 ]; then
-  echo "PROFILE|fail reason=server-never-answered (see $TMP/server.log)"; cat "$TMP/server.log"; exit 1
+  # Keep the server's own log: deleting the diagnosis while reporting the symptom is how a failure
+  # becomes unattributable.  Copy it somewhere durable before the EXIT trap cleans up.
+  KEEP="/tmp/rate_profile_server.log"
+  cp "$TMP/server.log" "$KEEP" 2>/dev/null
+  echo "PROFILE|fail reason=server-never-answered log=$KEEP"
+  cat "$KEEP" 2>/dev/null | head -5
+  exit 1
 fi
 
 # One value per field, guaranteed: sed with -n and head -1, then strip CR.  (Capturing a
@@ -77,16 +86,47 @@ cpu_ticks(){
 }
 U0="$(cpu_ticks "$SERVER_PID")"
 
-"$BIN/bench_rate.exe" "127.0.0.1:$PORT" "$N" "$K" 1 __profile unique > "$TMP/rate.txt" 2>&1
+if [ "$CLIENTS" -le 1 ]; then
+  "$BIN/bench_rate.exe" "127.0.0.1:$PORT" "$N" "$K" 1 __profile unique > "$TMP/rate.txt" 2>&1
+else
+  # Independent processes, each with its own connection and key space.  Written as a helper script
+  # because xargs needs one command with plain arguments - nesting the quoting inline invites exactly
+  # the whitespace bugs that have already cost this project a sweep.
+  {
+    echo '#!/usr/bin/env bash'
+    echo '"$1" "$2" "$3" "$4" "$5" "$6" "$7" > "$8" 2>&1'
+  } > "$TMP/client.sh"
+  chmod +x "$TMP/client.sh"
+  seq "$CLIENTS" | xargs -P "$CLIENTS" -I@ "$TMP/client.sh" \
+    "$BIN/bench_rate.exe" "127.0.0.1:$PORT" "$N" "$K" 1 "__pf@" "unique" "$TMP/c_@.out"
+  : > "$TMP/rate.txt"
+  for f in "$TMP"/c_*.out; do
+    [ -f "$f" ] || continue
+    tr -d '\r' < "$f" | grep -E '^(PHASE|LAT)\|' >> "$TMP/rate.txt"
+  done
+fi
 U1="$(cpu_ticks "$SERVER_PID")"
 S="$(statline)"
 echo "$S" > "$TMP/stats.txt"
 
-OPS="$(field "$TMP/rate.txt" ops_per_s)"
+if [ "$CLIENTS" -gt 1 ]; then
+  # Pure-shell sum: 'bc' does not exist on MSYS, and its absence made a perfectly good 4-client run
+  # report "no throughput".
+  # Summing per-client rates OVERSTATES the aggregate (each client has its own wall clock, and an
+  # early finisher reports a flattering rate): total requests over the LONGEST client window is the
+  # honest figure, and it errs low rather than high.
+  TN=0
+  for v in $(tr -d '\r' < "$TMP/rate.txt" | sed -n 's/^PHASE|n=\([0-9]*\).*/\1/p'); do TN=$((TN + v)); done
+  MW=0
+  for v in $(tr -d '\r' < "$TMP/rate.txt" | sed -n 's/.*wall_us=\([0-9]*\).*/\1/p'); do [ "$v" -gt "$MW" ] && MW=$v; done
+  if [ "$MW" -gt 0 ]; then OPS=$((TN * 1000000 / MW)); else OPS=0; fi
+else
+  OPS="$(field "$TMP/rate.txt" ops_per_s)"
+fi
 WALL="$(field "$TMP/rate.txt" wall_us)"
 # The latency line is the ONLY place p50/p99/max describe a request; STATS also carries *_us_max
 # fields, so parse them off the LAT line rather than off "the last max= in the file".
-LATLINE="$(tr -d '\r' < "$TMP/rate.txt" | grep '^LAT|' | head -1)"
+LATLINE="$(tr -d '\r' < "$TMP/rate.txt" | grep '^LAT|' | head -1)   # parallel: the first client 's latencies"
 lat_field(){ printf '%s' "$LATLINE" | sed -n "s/.*[ |]$1=\([0-9]*\).*/\1/p"; }
 P50="$(lat_field p50)"
 P99="$(lat_field p99)"
@@ -101,6 +141,8 @@ DRIVE_US="$(field "$TMP/stats.txt" round_us_ewma)"
 [ -n "$POLL_US" ] || POLL_US=0
 [ -n "$DRIVE_US" ] || DRIVE_US=0
 WM="$(field "$TMP/stats.txt" window_ms)"
+WIM="$(field "$TMP/stats.txt" wal_inflight_max)"
+[ -n "$WIM" ] || WIM=0
 [ -n "$FB" ] || FB=0
 [ -n "$FW" ] || FW=0
 [ -n "$RD" ] || RD=0
@@ -126,4 +168,4 @@ case "$U0" in ''|*[!0-9]*) CPU_PER_OP=-1 ;; *) CPU_PER_OP=$(( (U1-U0) * 10000 / 
 # priced per batch.
 PER_FRAME=0
 if [ "$PER_ROUND" -gt 0 ]; then PER_FRAME=$(( (POLL_US + DRIVE_US) / PER_ROUND )); fi
-echo "PROFILE|backend=${URI%%:*} k=$K items=$ITEMS bytes=$BYTES ops_s=$OPS p50=$P50 p99=$P99 max=$MAX batch=$BATCH per_round=$PER_ROUND sync_per_s=$SYNC_RATE window_ms=$WM sync_ewma_us=$SE cpu_us_per_op=$CPU_PER_OP rounds=$RD client_requests=$CR poll_us_ewma=$POLL_US drive_us_ewma=$DRIVE_US us_per_frame=$PER_FRAME"
+echo "PROFILE|clients=$CLIENTS backend=${URI%%:*} k=$K items=$ITEMS bytes=$BYTES ops_s=$OPS p50=$P50 p99=$P99 max=$MAX batch=$BATCH per_round=$PER_ROUND sync_per_s=$SYNC_RATE window_ms=$WM wal_inflight_max=$WIM sync_ewma_us=$SE cpu_us_per_op=$CPU_PER_OP rounds=$RD client_requests=$CR poll_us_ewma=$POLL_US drive_us_ewma=$DRIVE_US us_per_frame=$PER_FRAME"
