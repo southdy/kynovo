@@ -7,9 +7,12 @@ on:
   schedule:
     - cron: '17 18 * * *'   # 18:17 UTC = 02:17 Asia/Shanghai
   workflow_dispatch:
+  push:
+    tags: ['v*']            # pushing a tag asks for a full cloud gate: works over SSH, no token
 
 permissions:
   contents: write   # only so the failure-log publisher below can push
+  issues: write     # only so a red run can open/update its own issue
 
 jobs:
   full-gate:
@@ -73,6 +76,26 @@ jobs:
           git add -f nightly-logs
           git commit -m "Nightly failure logs for ${GITHUB_SHA}" || exit 0
           git push -f origin ci-logs-nightly
+
+      - name: Open or update an issue for this failure
+        if: failure()
+        continue-on-error: true
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          title="Nightly red at ${GITHUB_SHA:0:7}"
+          {
+            printf 'Workflow: `%s`\nRun: %s/%s/actions/runs/%s\nCommit: `%s`\n\n' \
+              "$GITHUB_WORKFLOW" "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID" "$GITHUB_SHA"
+            printf 'Gate verdict lines:\n\n```\n'
+            grep -h '^GATE|' regress-full.log 2>/dev/null | tail -30 || true
+            grep -h '^REGRESS|' regress-full.log 2>/dev/null | tail -1 || true
+            printf '```\n\nDiagnostics branch: `ci-logs-nightly`.\n'
+          } > issue-body.md
+          existing="$(gh issue list --state open --search "$title in:title" --json number --jq '.[0].number' 2>/dev/null || true)"
+          if [ -n "$existing" ]; then gh issue comment "$existing" --body-file issue-body.md; else gh issue create --title "$title" --body-file issue-body.md; fi
 
       - name: Upload logs
         if: always()

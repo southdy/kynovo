@@ -13,6 +13,7 @@ on:
 
 permissions:
   contents: write   # only so the failure-log publisher below can push to ci-logs
+  issues: write     # only so a red run can open/update its own issue
 
 jobs:
   gate:
@@ -88,6 +89,33 @@ jobs:
           git add -f ci-logs
           git commit -m "CI failure logs for ${GITHUB_SHA} [skip ci]" || exit 0
           git push -f origin ci-logs
+
+      # A red run reports itself into the issue tracker.  The cloud owns this so it works when the
+      # maintainer's machine is off, and it uses the job's own GITHUB_TOKEN so no personal token has
+      # to exist anywhere.  continue-on-error: a reporting failure must never mask the real one.
+      - name: Open or update an issue for this failure
+        if: failure()
+        continue-on-error: true
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          title="CI red on main at ${GITHUB_SHA:0:7}"
+          {
+            printf 'Workflow: `%s`\nRun: %s/%s/actions/runs/%s\nCommit: `%s`\n\n' \
+              "$GITHUB_WORKFLOW" "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID" "$GITHUB_SHA"
+            printf 'Gate verdict lines:\n\n```\n'
+            grep -h '^GATE|' regress.log 2>/dev/null | tail -20 || true
+            grep -h '^REGRESS|' regress.log 2>/dev/null | tail -1 || true
+            printf '```\n\nDiagnostics branch: `ci-logs` (`git fetch origin ci-logs`; see ci-logs/SUMMARY.txt).\n'
+          } > issue-body.md
+          existing="$(gh issue list --state open --search "$title in:title" --json number --jq '.[0].number' 2>/dev/null || true)"
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --body-file issue-body.md
+          else
+            gh issue create --title "$title" --body-file issue-body.md
+          fi
 
       - name: Upload gate logs
         if: failure()
