@@ -500,34 +500,35 @@ and 58 ops/s was never a throughput.  Fixed at the reporting layer: the verdict 
 `end=complete|cap60s|stalled`, proven both ways - a normal run prints `end=complete`, and a
 deliberate k=1 n=4000 run prints `end=cap60s` after its error line.
 
-**J-2 (open: five exclusions with evidence, no attribution yet): an occasional ~12-16 ms
-single-request tail in an open-loop run (`bench_rate`, 2000 in flight, k=32, 1 B).**  Two permanent
-diagnostics were added to answer "did the server stall?", and they are what makes the exclusions
-possible: STATS now carries `round_us_last/round_us_max/round_us_ewma/slow_rounds` (work inside one
-driver round, from the poll returning to the batch being submitted) and `sync_us_max/slow_syncs`
-(the slowest single record write+sync, beside the min-biased `sync_us_ewma` that tracks the fast end
-by design and therefore hides outliers).
+**J-2 (located to one segment; the same shape on both platforms): an occasional ~12-16 ms
+single-request tail in an open-loop run (`bench_rate`, 2000 in flight, k=32, 1 B).**
 
-  - **Not the event loop's work.**  Across 9606 rounds (20 runs) `slow_rounds` stayed 0 and
-    `round_us_max` was 1076 us; across 13520 rounds (30 runs) still 0 and 1973 us - while the client
-    saw 12104 / 12193 / 12209 us in three of those runs.
-  - **Not a slow fsync in those runs.**  `slow_syncs` was 0 in every run that showed a spike.  One
-    genuine 13178 us sync did occur (delta 1 in run 1) and produced no client spike at all.
-  - **Not storage.**  `mem://` shows the same class of spike (p99 10805 us with `sync_us_ewma` 6 us).
-  - **Not the poll interval.**  That looked like the answer - 12 ms against `poll_ms=10` - so it was
-    tested as a two-point A/B on a scratch copy of the tree: `poll_ms=1` gave 0/30 runs over 8 ms
-    (largest 6114 us) and `poll_ms=50` also gave 0/30 (largest 4457 us).  A poll-timeout tail would
-    have grown to ~50 ms.  It did not, so the wake path is working and 10 ms was a coincidental
-    magnitude.  With a ~10 % effect, 30-run batches cannot separate causes; a magnitude match is not
-    a mechanism.
-  - **Not the guest's client thread.**  Moving the client to the host (Windows -> VM over TCP,
-    10/30 runs over 8 ms, largest 16126 us) made it MORE frequent, not less.
-  - **And it is not VM-specific.**  Three open-loop runs against the native Windows server, local
-    client, had shown p99 3057 / 14447 / 3218 us before any of this - the same animal on a bare
-    Windows host.
-  Frequency is sporadic and the batches swing (0/30 to 10/30 across identical configurations), which
-  is itself the finding: a single clean batch is not evidence of absence.
-  Next instrument (not built): a per-request server-side timeline - receive, ack-queued, send-posted,
-  plus the "the worker posted / the loop saw it" wake latency - so a spike can be attributed to one
-  side; and a >=200-run sample to give the frequency error bars.  Until then this stays OPEN.
+Three counters were added to make attribution possible instead of argument.  STATS now carries
+`req_age_ms_last/max` and `slow_acks` (how long the SERVER held a request, admission to terminal
+result, in the server's own injected milliseconds), `req_wait_ms_last/max` and `req_svc_ms_last/max`
+(that age split at the moment the request was handed to raft: batching wait versus durability and the
+result), and `wake_us_last/max` with `slow_wakes` (the WAL handoff itself - the worker stamps
+`wal_post_us` before posting the finished bundle and the driver compares it with its own clock once
+the round that consumed it has ended; real clocks stay in the driver, the core still sees time only
+through `k_server_advance`).
 
+What the measurements now say:
+  - The server owns it.  Of 120 open-loop runs, 12 showed a client max over 8 ms and EVERY one of
+    them had server-side holds (`slow_acks` moved); no run spiked without the server holding the
+    request.  Hold and client-visible tail are the same size (13 ms against 13191 us).
+  - Not the loop's work: `slow_rounds` 0 across 9606 / 13520 / 54438 rounds, `round_us_max` 1.0-4.0 ms.
+  - Not the batch wait on the VM: `req_wait_ms_max` stayed at 4 ms for the whole 100-run batch while
+    `req_svc_ms_max` reached 12-15 ms in every spike.
+  - Not the cross-thread wake: `wake_us_max` 271 us with `slow_wakes` 0 on Windows, against a 14 ms
+    service segment in the same run.  The historical 82 us figure survives; this is not that bug.
+  - Not storage, not the poll interval, not the guest's client thread, and not VM-specific - all four
+    were excluded earlier in this section with numbers.
+  - Only sometimes the fsync: 1 of 7 VM spikes and 3 of 12 Windows spikes came with a slow sync
+    (`sync_us_max` 7-16 ms), so sync latency is a contributor, not the mechanism.
+Remaining inside the service segment: the request waiting for its batch to be written and fsynced,
+including the WAL worker picking the batch up.  That handoff - loop posts the bundle, worker starts
+writing it - is symmetric to the wake counter and is the next instrument to add; it is NOT measured
+yet, so this stays open with one segment named rather than a cause claimed.
+
+Frequency remains sporadic (0/30 to 10/30 between identical configurations), which is why each
+exclusion above rests on an instrument and not on a clean batch.

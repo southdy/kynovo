@@ -255,6 +255,19 @@ static int k_server_run(k_server *server){
        (one write per batch).  Advance the Raft clock first (it really did pass
        in wall time), then start the batch's own age. */
     k_server_flush_if_ready(server,server->writes_arrived>arrived_before);
+    /* Wake handoff: the worker stamped wal_post_us when it posted a finished bundle; the round that
+       just ended is the round that could have consumed it, so the gap is how long the loop took to be
+       told.  Real clock on purpose - this is a diagnostic in the driver, not a core time input. */
+    if(server->wal_post_us&&server->wal_post_us!=server->wake_us_seen){
+      k_u64 wake_now=0;
+      server->wake_us_seen=server->wal_post_us;
+      if(k_monotonic_us(&wake_now)==0&&wake_now>=server->wal_post_us){
+        k_u64 wake_us=wake_now-server->wal_post_us;
+        server->wake_us_last=wake_us;
+        if(wake_us>server->wake_us_max) server->wake_us_max=wake_us;
+        if(wake_us>K_SLOW_WAKE_US) server->slow_wakes++;
+      }
+    }
     if(round_t0&&k_monotonic_us(&round_t1)==0){
       k_u64 round_us=round_t1-round_t0;
       server->round_us_last=round_us;

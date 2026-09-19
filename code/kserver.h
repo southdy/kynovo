@@ -393,6 +393,7 @@ struct k_server{
   k_u64 flush_by_bytes;         /* batch submitted on the byte target */
 #define K_SLOW_ROUND_US 5000u  /* a round whose work exceeds this is counted in slow_rounds */
 #define K_SLOW_ACK_MS   5u     /* a request the server held longer than this is counted in slow_acks */
+#define K_SLOW_WAKE_US  5000u  /* a WAL-post to loop-consumed handoff slower than this is counted */
 #define K_SLOW_SYNC_US  5000u  /* a record write+sync slower than this is counted in slow_syncs */
   k_u64 flush_by_barrier;       /* submitted on demand: a read/FCALL needed the queue drained */
   k_u64 flush_by_stop;          /* submitted while stopping (the queue must not be stranded) */
@@ -419,8 +420,17 @@ struct k_server{
   k_u64 slow_acks;              /* requests held longer than K_SLOW_ACK_MS */
   k_u64 req_wait_ms_last;       /* admission -> handed to raft (batch window, WAL slot, backpressure) */
   k_u64 req_wait_ms_max;
-  k_u64 req_svc_ms_last;        /* handed to raft -> terminal result (durability plus the wake) */
+  k_u64 req_svc_ms_last;       /* handed to raft -> terminal result (durability plus the wake) */
   k_u64 req_svc_ms_max;
+  /* Wake handoff, in real microseconds and diagnostics-only: the WAL worker stamps wal_post_us just
+     before it posts the finished bundle, and the driver compares it with its own clock once the round
+     that consumed it has finished.  This is the one segment the injected-time accounting cannot see -
+     the loop does no work while it waits to be told - and it is where a cross-thread wake shows up. */
+  k_u64 wal_post_us;
+  k_u64 wake_us_last;
+  k_u64 wake_us_max;
+  k_u64 slow_wakes;             /* handoffs that took longer than K_SLOW_WAKE_US */
+  k_u64 wake_us_seen;
   k_u64 client_requests;
   k_u64 request_bytes;
   k_u64 rx_buffer_bytes;
@@ -3357,8 +3367,8 @@ static int k_server_client_frame(void *ud,k_u8 type,const k_u8 *payload,k_u32 si
     int len;
     memset(&info,0,sizeof(info));
     if(reader.off!=reader.len||raft_inspect(server->raft,&info)!=0||treap_inspect(server->tree,&tree_info)!=0) return -1;
-    len=sprintf(text,"id=%d state=%d leader=%d term=%" K_I64_FMT " commit=%" K_I64_FMT " applied=%" K_I64_FMT " snapshot=%" K_I64_FMT " log=%" K_I64_FMT " count=%" K_U64_FMT " height=%u bytes=%" K_U64_FMT " pending_frees=%" K_U64_FMT " pending_bytes=%" K_U64_FMT " persist_generation=%" K_U64_FMT " wal_segment=%" K_U64_FMT " wal_offset=%" K_U64_FMT " wal_size=%" K_U64_FMT " wal_next_segment=%" K_U64_FMT " wal_next_offset=%" K_U64_FMT " wal_pending=%" K_U64_FMT " wal_events=%" K_U64_FMT " wal_records=%" K_U64_FMT " wal_open_files=%d wal_post_failed=%" K_U64_FMT " sync_us_ewma=%" K_U64_FMT " sync_us_max=%" K_U64_FMT " slow_syncs=%" K_U64_FMT " window_ms=%" K_U64_FMT " flush_by_target=%" K_U64_FMT " flush_by_drain=%" K_U64_FMT " flush_by_window=%" K_U64_FMT " flush_by_bytes=%" K_U64_FMT " flush_by_barrier=%" K_U64_FMT " flush_by_stop=%" K_U64_FMT " write_bytes=%" K_U64_FMT " batch_bytes_limit=%u rounds=%" K_U64_FMT " client_requests=%" K_U64_FMT " snapshot_inflight=%d snapshot_failed=%d snapshot_cleanup_busy=%d cleanup_failed=%d flush_batches=%" K_U64_FMT " flush_writes=%" K_U64_FMT " peer_send_drops=%" K_U64_FMT " round_us_last=%" K_U64_FMT " round_us_max=%" K_U64_FMT " round_us_ewma=%" K_U64_FMT " slow_rounds=%" K_U64_FMT " req_age_ms_last=%" K_U64_FMT " req_age_ms_max=%" K_U64_FMT " slow_acks=%" K_U64_FMT " req_wait_ms_last=%" K_U64_FMT " req_wait_ms_max=%" K_U64_FMT " req_svc_ms_last=%" K_U64_FMT " req_svc_ms_max=%" K_U64_FMT " ",
-      info.id,info.state,info.leader_id,(k_i64)info.term,(k_i64)info.commit_index,(k_i64)info.last_applied,(k_i64)info.last_included_index,(k_i64)info.log_entry_count,(k_u64)tree_info.count,tree_info.height,(k_u64)tree_info.tree_bytes,(k_u64)tree_info.pending_free_count,(k_u64)tree_info.pending_free_bytes,server->persist_generation,server->wal_meta.record.segment,server->wal_meta.record.offset,server->wal_meta.record_size,server->wal_meta.next.segment,server->wal_meta.next.offset,server->wal_pending_items,server->wal_accumulated_events,server->wal_records,server->wal_worker.open_files,server->wal_post_failed,server->wal_worker.sync_us_ewma,server->wal_worker.sync_us_max,server->wal_worker.slow_syncs,(k_u64)server->cfg.flush_timeout_ms,server->flush_by_target,server->flush_by_drain,server->flush_by_window,server->flush_by_bytes,server->flush_by_barrier,server->flush_by_stop,server->write_bytes,(unsigned)server->cfg.flush_bytes_limit,server->rounds,server->client_requests,server->snapshot_inflight,server->snapshot_failed,server->snapshot_cleanup_busy,server->snapshot_cleanup_failed,server->flush_batches,server->flush_writes_total,server->peer_send_drops,server->round_us_last,server->round_us_max,server->round_us_ewma,server->slow_rounds,server->req_age_ms_last,server->req_age_ms_max,server->slow_acks,server->req_wait_ms_last,server->req_wait_ms_max,server->req_svc_ms_last,server->req_svc_ms_max);
+    len=sprintf(text,"id=%d state=%d leader=%d term=%" K_I64_FMT " commit=%" K_I64_FMT " applied=%" K_I64_FMT " snapshot=%" K_I64_FMT " log=%" K_I64_FMT " count=%" K_U64_FMT " height=%u bytes=%" K_U64_FMT " pending_frees=%" K_U64_FMT " pending_bytes=%" K_U64_FMT " persist_generation=%" K_U64_FMT " wal_segment=%" K_U64_FMT " wal_offset=%" K_U64_FMT " wal_size=%" K_U64_FMT " wal_next_segment=%" K_U64_FMT " wal_next_offset=%" K_U64_FMT " wal_pending=%" K_U64_FMT " wal_events=%" K_U64_FMT " wal_records=%" K_U64_FMT " wal_open_files=%d wal_post_failed=%" K_U64_FMT " sync_us_ewma=%" K_U64_FMT " sync_us_max=%" K_U64_FMT " slow_syncs=%" K_U64_FMT " window_ms=%" K_U64_FMT " flush_by_target=%" K_U64_FMT " flush_by_drain=%" K_U64_FMT " flush_by_window=%" K_U64_FMT " flush_by_bytes=%" K_U64_FMT " flush_by_barrier=%" K_U64_FMT " flush_by_stop=%" K_U64_FMT " write_bytes=%" K_U64_FMT " batch_bytes_limit=%u rounds=%" K_U64_FMT " client_requests=%" K_U64_FMT " snapshot_inflight=%d snapshot_failed=%d snapshot_cleanup_busy=%d cleanup_failed=%d flush_batches=%" K_U64_FMT " flush_writes=%" K_U64_FMT " peer_send_drops=%" K_U64_FMT " round_us_last=%" K_U64_FMT " round_us_max=%" K_U64_FMT " round_us_ewma=%" K_U64_FMT " slow_rounds=%" K_U64_FMT " req_age_ms_last=%" K_U64_FMT " req_age_ms_max=%" K_U64_FMT " slow_acks=%" K_U64_FMT " req_wait_ms_last=%" K_U64_FMT " req_wait_ms_max=%" K_U64_FMT " req_svc_ms_last=%" K_U64_FMT " req_svc_ms_max=%" K_U64_FMT " wake_us_last=%" K_U64_FMT " wake_us_max=%" K_U64_FMT " slow_wakes=%" K_U64_FMT " ",
+      info.id,info.state,info.leader_id,(k_i64)info.term,(k_i64)info.commit_index,(k_i64)info.last_applied,(k_i64)info.last_included_index,(k_i64)info.log_entry_count,(k_u64)tree_info.count,tree_info.height,(k_u64)tree_info.tree_bytes,(k_u64)tree_info.pending_free_count,(k_u64)tree_info.pending_free_bytes,server->persist_generation,server->wal_meta.record.segment,server->wal_meta.record.offset,server->wal_meta.record_size,server->wal_meta.next.segment,server->wal_meta.next.offset,server->wal_pending_items,server->wal_accumulated_events,server->wal_records,server->wal_worker.open_files,server->wal_post_failed,server->wal_worker.sync_us_ewma,server->wal_worker.sync_us_max,server->wal_worker.slow_syncs,(k_u64)server->cfg.flush_timeout_ms,server->flush_by_target,server->flush_by_drain,server->flush_by_window,server->flush_by_bytes,server->flush_by_barrier,server->flush_by_stop,server->write_bytes,(unsigned)server->cfg.flush_bytes_limit,server->rounds,server->client_requests,server->snapshot_inflight,server->snapshot_failed,server->snapshot_cleanup_busy,server->snapshot_cleanup_failed,server->flush_batches,server->flush_writes_total,server->peer_send_drops,server->round_us_last,server->round_us_max,server->round_us_ewma,server->slow_rounds,server->req_age_ms_last,server->req_age_ms_max,server->slow_acks,server->req_wait_ms_last,server->req_wait_ms_max,server->req_svc_ms_last,server->req_svc_ms_max,server->wake_us_last,server->wake_us_max,server->slow_wakes);
     len+=sprintf(text+len,"wal_inflight=%d client_connections=%u client_connection_limit=%u pending_requests=%u pending_request_limit=%u pending_request_bytes=%" K_U64_FMT " pending_request_bytes_limit=%" K_U64_FMT,
       server->wal_inflight_count,(unsigned)server->client_connection_count,(unsigned)K_CLIENT_CONNECTION_MAX,(unsigned)server->request_count,(unsigned)K_REQUEST_INFLIGHT_MAX,server->request_bytes,(k_u64)K_REQUEST_BYTES_MAX);
     len+=sprintf(text+len," rx_buffer_bytes=%" K_U64_FMT " rx_buffer_bytes_limit=%" K_U64_FMT,server->rx_buffer_bytes,(k_u64)K_RX_BYTES_MAX);
@@ -3979,6 +3989,7 @@ static void k_wal_worker_entry(runtime_ctx *runtime,void *arg){
         if(dur>worker->sync_us_max) worker->sync_us_max=dur;
         if(dur>K_SLOW_SYNC_US) worker->slow_syncs++;
       }
+      if(worker->server) worker->server->wal_post_us=k_wal_sync_now();   /* diagnostic stamp only */
       if(runtime_result_post(runtime,0,bundle)!=0){
         /* The loop incremented wal_inflight_count for this bundle and only a DELIVERED result can
            decrement it.  A silently dropped result leaks one of the K_WAL_INFLIGHT_MAX slots, and
