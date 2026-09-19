@@ -500,36 +500,39 @@ and 58 ops/s was never a throughput.  Fixed at the reporting layer: the verdict 
 `end=complete|cap60s|stalled`, proven both ways - a normal run prints `end=complete`, and a
 deliberate k=1 n=4000 run prints `end=cap60s` after its error line.
 
-**J-2 (located and decomposed; one earlier exclusion RETRACTED): an occasional ~13 ms
-single-request tail in an open-loop run (`bench_rate`, 2000 in flight, k=32, 1 B).**
+**J-2 (located; it is queueing, not a defect; two earlier claims retracted along the way): an
+occasional ~13 ms single-request tail in an open-loop run (`bench_rate`, 2000 in flight, k=32, 1 B).**
 
-The counters (all in STATS, all self-certifying through sample counts): `req_age_ms_last/max` with
-`slow_acks` (how long the server held a request, admission to terminal result, in injected ms),
-`req_wait_ms_last/max` and `req_svc_ms_last/max` (that age split where the request was handed to
-raft), `handoff_us_last/max`+`handoff_samples` (loop queued the bundle -> the worker started writing
-it) and `wake_us_last/max`+`wake_samples` (worker posted the finished bundle -> the loop consumed it).
-Real clocks appear only in the driver and the worker's own stamp; the core still sees time solely
-through `k_server_advance`.
+Counters (all in STATS, all carrying sample counts so a maximum of 0 can never be read as "fast"):
+`req_age_ms_last/max`+`slow_acks` (how long the server held a request, admission to terminal result,
+in the server's injected milliseconds); `req_wait_ms_last/max` and `req_svc_ms_last/max` (that age
+split where the request was handed to raft); `handoff_us_*`+`handoff_samples` (loop queued the bundle
+-> the worker started writing it); `wake_pre_us_*`+`wake_pre_samples` (worker posted -> the loop's next
+round STARTED - the scheduler question) and `wake_us_*`+`wake_samples` (the same, measured to the END
+of the round that consumed it, so it also contains that round's work).  Real clocks appear only in the
+driver and the workers' own stamps; the core still sees time solely through `k_server_advance`.
 
-Measured, VM, 100 runs with 7 spikes over 8 ms (client max 12033-12933 us):
-  - The server owns it: 7/7 spike runs had server-side holds, and `req_svc_ms_max` (12-13 ms) matches
-    the client-visible maximum almost exactly.
-  - Composition inside the service segment: the cross-thread wake reached **5578 us** and the loop's
-    own round (one batch apply) reached **5544 us** - together they account for the tail - while the
-    fsync was NOT slow in any of the 7 spike runs (`slow_syncs` unchanged; `sync_us_max` 13989 us came
-    from other runs) and the loop->worker handoff stayed at 1.6 ms.
-  - The batching wait (`req_wait_ms_max` 5-6 ms) is a small contributor, not the cause.
-  - Platform split: the same wake measurement reads 375 us on Windows against 5578 us in the VMware
-    guest, which is the size of a host/guest thread-scheduling difference and the reason the tail is
-    far more visible on the VM.
-  **RETRACTION.** An earlier revision of this section excluded "the cross-thread wake" on the strength
-  of `wake_us_max` reading 0 on the Linux box.  That 0 was NOT a measurement: only `code/kserver.h`
-  had been copied there, so the driver half of the wake accounting was absent from the binary while
-  the field still printed.  A counter max of 0 is indistinguishable from "never measured" - which is
-  precisely the failure mode this project's rules warn about.  Both counters now carry a sample count
-  and the Linux run aborts unless `handoff_samples` and `wake_samples` are non-zero before it starts.
-  The conclusion in the previous revision ("not the wake") is therefore WITHDRAWN.
-  Still open: the tail is a queueing latency under an extreme offered load (2000 in flight at k=32
-  means ~62 batches, and a batch's last member waits for the batch), not a correctness defect; whether
-  the guest's 5.6 ms wake can be reduced is a separate question that needs a scheduling-side
-  instrument, not another counter here.
+VM, 100 runs, 11 spikes over 8 ms (client maxima 8068-12759 us):
+  - The server owns it.  11 of 11 spike runs had server-side holds, and `req_svc_ms_max` (12-13 ms)
+    matches the client-visible maximum (12.7 ms) essentially exactly.
+  - No single flagged event explains it.  Across those 11 spikes a slow sync fired once, a slow
+    loop->worker handoff once, a slow pre-wake never, and the loop's own work stayed at or below
+    1.1 ms (`slow_rounds` 0).  Individually each component is small; what is left is the request
+    queueing behind other batches, which is the inherent cost of group commit at this offered load
+    (2000 in flight at k=32 is ~62 batches, and a batch's last member waits for the whole batch).
+  - Holds are rare: 362 of 200000 requests (0.18%) were held longer than 5 ms, and the spikes arrive in
+    bursts of consecutive runs (48-54, 72-84) with the cumulative maxima unchanged across a burst -
+    i.e. the machine was in a slow phase, not the engine in a bad state.
+  - Platform: the same handoff measurements read sub-millisecond on Windows and up to 5.8 ms in this
+    VMware guest, consistent with a loaded 4-vCPU guest rather than with an engine defect.
+  Practical consequence: the tail tracks offered concurrency, not the storage path.  Where it matters,
+    lower k / lower in-flight depth (measured medians: `mem://` k=64 -> 653 us; disk k=16 -> 2.8 ms).
+  **RETRACTIONS.**  (1) An earlier revision excluded "the cross-thread wake" on the strength of
+  `wake_us_max` reading 0 on the Linux box - but that 0 was never a measurement: only `code/kserver.h`
+  had been copied there, so the driver half of the accounting was absent from the binary while the
+  field still printed.  Both counters now carry sample counts and a run aborts unless they are
+  non-zero.  (2) A revision after that blamed the wake ("5578 us") - that number came from an
+  instrument that ran to the end of the consuming round, so it contained the round's own work; the
+  corrected `wake_pre_us_max` reads 1.3 ms, and the wake is NOT the mechanism.
+  Still open: how much of the queueing can be shaved without giving up group commit (a scheduling-side
+  instrument, not another counter here).
