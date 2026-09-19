@@ -202,7 +202,7 @@ static int k_server_serve(k_server *server,cemon *loop){
     printf("fatal: cannot start server: client listen on %s:%u failed (port in use or not permitted)\n",k_numeric_host(server->cluster.nodes[local_index].host),(unsigned)server->client_port);
     return -1;
   }
-  fprintf(stderr,"[cfg] poll_ms=%u flush_timeout_ms=%u flush_item_limit=%u flush_bytes_limit=%u (batch targets)\n",(unsigned)server->cfg.poll_ms,(unsigned)server->cfg.flush_timeout_ms,(unsigned)server->cfg.flush_item_limit,(unsigned)server->cfg.flush_bytes_limit);
+  fprintf(stderr,"[cfg] poll_ms=%u flush_timeout_ms=%u flush_item_limit=%u flush_bytes_limit=%u wal_seg_size=%" K_U64_FMT " (batch targets)\n",(unsigned)server->cfg.poll_ms,(unsigned)server->cfg.flush_timeout_ms,(unsigned)server->cfg.flush_item_limit,(unsigned)server->cfg.flush_bytes_limit,server->cfg.wal_seg_size);
   server->admission=1;
   if(k_monotonic_us(&server->last_tick_us)!=0) server->last_tick_us=0;
   k_server_reconnect(server);
@@ -467,6 +467,11 @@ static int k_run_init_args(int argc,char **argv){
     }else if(strcmp(argv[i],"--flush-bytes")==0){
       if(k_parse_uint(argv[i+1],268435456,&value)!=0||value<1){ printf("kdbsvr: fatal: --flush-bytes must be 1..268435456\n"); return -1; }
       cfg.flush_bytes_limit=(unsigned int)value;
+    }else if(strcmp(argv[i],"--wal-seg-size")==0){
+      /* A small segment is what makes segment-rollover recovery paths testable end to end; the default
+         is 64 MiB, which no test store ever reaches. */
+      if(k_parse_uint(argv[i+1],1073741824,&value)!=0||value<4096){ printf("kdbsvr: fatal: --wal-seg-size must be 4096..1073741824\n"); return -1; }
+      cfg.wal_seg_size=(k_u64)value;
     }else{
       printf("kdbsvr: fatal: unknown init option '%s'\n",argv[i]);
       return -1;

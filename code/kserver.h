@@ -1528,6 +1528,9 @@ static int k_wal_state_load(const char *base,k_restore *restore,k_wal_meta_state
   k_u8 *payload;
   k_u32 payload_size,crc;
   k_u64 offset,gen,prev_gen,seg,last_seg;
+  k_u64 prev_seg,prev_seg_gen;   /* cross-segment continuity (issue #15) */
+  int prev_seg_clean;
+  int clean_end;
   vfs_file *file;
   int meta_rc,have,pick_base;
   k_u64 n_gen,n_seg,n_off,n_size,bad_gen;
@@ -1552,6 +1555,7 @@ static int k_wal_state_load(const char *base,k_restore *restore,k_wal_meta_state
   bseg=0; boff=0; bsize=0;
   vseg=0; voff=0; vsize=0;
   prev_base=0;
+  prev_seg=0; prev_seg_gen=0; prev_seg_clean=0;
   for(seg=0;seg<=last_seg;seg++){
     if(k_path_wal_segment(path,base,seg)!=0) return -1;
     file=vfs_open(path);
@@ -1559,10 +1563,18 @@ static int k_wal_state_load(const char *base,k_restore *restore,k_wal_meta_state
     offset=0;
     have=0;
     prev_gen=0;
+    clean_end=0;
     for(;;){
+      /* Cross-segment continuity (issue #15).  The generation counter is global and increases by one
+         per record, so the first complete record of a segment must continue the last complete record of
+         the previous EXISTING segment.  This used to be unchecked: prev_gen was reset to 0 here, so a
+         stale, foreign or mis-ordered segment was accepted and could be treated as the newest state.
+         Only enforced when the previous segment ended cleanly - a torn tail means the last record was
+         never acked and the next record's generation may legitimately skip, so insisting on +1 there
+         would reject a healthy store after a crash. */
       if(vfs_read(file,offset,header,sizeof(header))!=0){
         k_u8 probe;
-        if(vfs_read(file,offset,&probe,1u)!=0) break;        /* clean end of segment */
+        if(vfs_read(file,offset,&probe,1u)!=0){ clean_end=1; break; }   /* clean end: no byte at all */
         printf("wal: segment %" K_U64_FMT " ends with an incomplete tail at offset %" K_U64_FMT
                " (that record was never completed, so it was never acked)\n",seg,offset);
         break;
@@ -1571,6 +1583,13 @@ static int k_wal_state_load(const char *base,k_restore *restore,k_wal_meta_state
       payload_size=k_read_u32(header+16);
       gen=k_read_u64(header+8);
       if(!payload_size||payload_size>K_STATE_MAX||gen==0) break;
+      if(!have&&prev_seg_clean&&prev_seg_gen&&gen!=prev_seg_gen+1u){
+        printf("wal: segment %" K_U64_FMT " starts at generation %" K_U64_FMT " but segment %" K_U64_FMT
+               " ended at %" K_U64_FMT " (missing or foreign segment; ignoring this segment's records)\n",
+               seg,gen,prev_seg,prev_seg_gen);
+        if(!have_bad){ have_bad=1; bad_gen=prev_seg_gen+1u; }
+        break;
+      }
       if(have&&gen!=prev_gen+1u){
         if(!have_bad){ have_bad=1; bad_gen=prev_gen+1u; }    /* a record is missing */
         break;
@@ -1616,6 +1635,7 @@ static int k_wal_state_load(const char *base,k_restore *restore,k_wal_meta_state
       offset+=n_size;
     }
     vfs_close(file);
+    if(have){ prev_seg=seg; prev_seg_gen=prev_gen; prev_seg_clean=clean_end; }
   }
   if(!records){
     printf("wal: no usable record found in segments 0..%" K_U64_FMT ": refusing to recover\n",last_seg);
