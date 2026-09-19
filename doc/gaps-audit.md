@@ -101,7 +101,7 @@ The checked and **gap-free** parts and the **settled trade-offs** are at the end
 | **C3** | Generation continuity of the first record in a WAL segment is not checked ⇒ **FIXED (377dc4f)**: enforced across segments, detected, reported with both generations, and fail-stopped; demonstrated on a real 3-segment store |
 | C4 | `[verified]` | Startup failure causes are invisible (cfg/WAL meta/allocation/thread failures all print only `failed to start server N`) | `kserver.h:4594-4600,4602,4642,4682`; `kdbsvr.c:300` |
 | C5 | `[verified]` | Header comment disagrees with the implementation: it claims a v1 data directory is "refused and re-initialized", but only refusal happens | `kserver.h:23-26` |
-| C6 | `[verified]` | Layer boundary: the application layer reads `raft->config_new/config_joint/config_learners` directly to decide policy | `kserver.h:4411-4413` |
+| C6 | `[verified]` → **FIXED (52c002e)** | Layer boundary: the application layer reads `raft->config_new/config_joint/config_learners` directly to decide policy (raft now reports these facts on the ready bundle; the ratchet is at 0) | `kserver.h:4411-4413` |
 | C7 | `[verified]` | INFO/STATS text is written with unbounded `sprintf` into `char text[2048]` (adding a field overflows) | `kserver.h:3254,3258,3260,3262` |
 | C8 | `[verified]` | When the snapshot worker's post fails it frees(task) itself while the main thread still holds the pointer ⇒ `snapshot_inflight` stays 1 forever | `3957` vs `3992,4351` |
 | C9 | `[verified]` | On the `UNIX` branch one arming can deliver `CEMON_DATA` several times (contrary to the header contract); the callback is re-entered synchronously when `callback_depth==0` | `2452-2461`, `3432-3435` |
