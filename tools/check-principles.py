@@ -17,7 +17,23 @@ Design notes (each one was learned by getting it wrong first):
   * Records under doc/measurements/ may contain CRLF - they are captured output, and reformatting
     archived evidence would destroy it.  Only the repository index and the scripts are enforced.
 """
-import os, re, subprocess, sys
+import os, re, shutil, subprocess, sys
+
+def find_git():
+    """Resolve git to an ABSOLUTE path.  A bare 'git' in subprocess fails on Windows whenever the
+    interpreter cannot resolve the MSYS-provided entry (CreateProcess error 2) - the same trap as
+    spawning 'grep' from Python here.  A missing git is reported loudly, never skipped silently."""
+    cand = [shutil.which('git'), shutil.which('git.exe'),
+            'C:/Program Files/Git/cmd/git.exe', 'C:/Program Files/Git/bin/git.exe',
+            'C:/Program Files/Git/mingw64/bin/git.exe', 'C:/Program Files (x86)/Git/cmd/git.exe']
+    for c in cand:
+        if c and os.path.isfile(c): return c
+    return None
+
+GIT = find_git()
+def git_out(*args):
+    if not GIT: return None
+    return subprocess.run([GIT] + list(args), capture_output=True, text=True).stdout
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 os.chdir(ROOT)
@@ -67,8 +83,7 @@ def scan(pattern, files=None, label=None):
     return hits
 
 def sh_files():
-    out = subprocess.run(['git', 'ls-files', '*.sh'], capture_output=True, text=True).stdout.split()
-    return out
+    return (git_out('ls-files', '*.sh') or '').split()
 
 fails = 0; rules = 0
 def report(name, hits, detail=None):
@@ -79,14 +94,18 @@ def report(name, hits, detail=None):
     for h in (hits or [])[:8]: print('        | ' + h if isinstance(h, str) else h)
 
 print('== principles ==')
+if not GIT:
+    print('  FAIL  cannot locate git (absolute path); git-dependent rules cannot be judged')
+    print('PRINCIPLES|FAIL|rules=0 fail=1')
+    sys.exit(1)
 
 # 1. line endings
-eol = subprocess.run(['git', 'ls-files', '--eol'], capture_output=True, text=True).stdout.split('\n')
+eol = (git_out('ls-files', '--eol') or '').split('\n')
 report('repository stores LF (index CRLF = 0)', [l for l in eol if 'i/crlf' in l])
 report('no CRLF in shell scripts', [l for l in eol if 'w/crlf' in l and l.split()[-1].endswith(('.sh', '.bash'))])
 
 # 2. build/ purity
-tracked = subprocess.run(['git', 'ls-files', 'build/'], capture_output=True, text=True).stdout.split()
+tracked = (git_out('ls-files', 'build/') or '').split()
 report('build/ holds no tracked file (pure output)', tracked)
 
 # 3. no machine-specific paths in tracked scripts (URI prefixes like disk:// excluded by the boundary)
@@ -132,8 +151,8 @@ sites = scan(r'raft_inspect', ['code/kserver.h', 'code/kdbsvr.c', 'tests/raft_cl
 report('raft_inspect only in the diagnostics path (budget 1)', sites[1:] or [])
 
 # 8. contract files: changing them must be deliberate
-dirty = subprocess.run(['git', 'status', '--porcelain', 'code/raft.h', 'code/treap.h'], capture_output=True, text=True).stdout.strip()
-last = subprocess.run(['git', 'diff', '--name-only', 'HEAD~1', 'HEAD'], capture_output=True, text=True).stdout
+dirty = (git_out('status', '--porcelain', 'code/raft.h', 'code/treap.h') or '').strip()
+last = git_out('diff', '--name-only', 'HEAD~1', 'HEAD') or ''
 if dirty or re.search(r'^code/(raft|treap)\.h$', last, re.M):
     rules += 1
     print('  NOTE raft.h/treap.h changed: cite the semantic paragraph (doc/dissertation.md) in the message')

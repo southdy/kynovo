@@ -101,7 +101,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -e
-          title="CI red on main at ${GITHUB_SHA:0:7}"
+          title="CI red on main"
           {
             printf 'Workflow: `%s`\nRun: %s/%s/actions/runs/%s\nCommit: `%s`\n\n' \
               "$GITHUB_WORKFLOW" "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID" "$GITHUB_SHA"
@@ -115,6 +115,21 @@ jobs:
             gh issue comment "$existing" --body-file issue-body.md
           else
             gh issue create --title "$title" --body-file issue-body.md
+          fi
+
+      # One issue per kind of failure, not one per commit: the title is stable (the SHA lives in the
+      # body), so repeated reds comment on the same issue, and a green run on main closes it again.
+      - name: Close the failure issue when main is green again
+        if: success() && github.ref == 'refs/heads/main'
+        continue-on-error: true
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          num="$(gh issue list --state open --search "CI red on main in:title" --json number --jq '.[0].number' 2>/dev/null || true)"
+          if [ -n "$num" ]; then
+            gh issue close "$num" --comment "Green again at ${GITHUB_SHA:0:7} (run $GITHUB_RUN_ID)."
           fi
 
       - name: Upload gate logs
