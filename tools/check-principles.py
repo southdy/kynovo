@@ -149,8 +149,12 @@ report('every 64-bit header has __int64 and long long forms under _MSC_VER', pro
 report('no literal %lld/%llu in code/ (use the header format macro)', scan(r'%ll[du]', LIB + ['code/kdbctl.c', 'code/kdbsvr.c']))
 
 # 7. layering ratchets
-sites = scan(r'->config_(new|joint|learners)', ['code/kserver.h', 'code/kdbsvr.c'])
-report('app layer does not read raft config fields (budget 3, card t_972b67e8)', sites[3:] or [])
+# The application must not read raft_ctx's configuration fields for its own policy (card t_972b67e8,
+# issue #14/C6): raft.h reports the facts on the ready bundle and the application caches them.  The pattern
+# targets raft-internal reads (`raft->config_*`), NOT the sanctioned `ready->config_joint` the application
+# copies the fact from.  Budget is ZERO now: the three original sites are gone, and this may never grow.
+sites = scan(r'raft->config_(new|joint|learners)', ['code/kserver.h', 'code/kdbsvr.c'])
+report('app layer reads no raft config fields (budget 0, card t_972b67e8)', sites)
 sites = scan(r'raft_inspect', ['code/kserver.h', 'code/kdbsvr.c', 'tests/raft_cluster_fuzz.c', 'tests/raft_test.c'])
 report('raft_inspect only in the diagnostics path (budget 1)', sites[1:] or [])
 

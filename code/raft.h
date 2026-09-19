@@ -366,6 +366,12 @@ typedef struct raft_ready{
   raft_i64 commit_index;
   int leader_change;
   int is_leader;
+  /* Membership as FACTS the application needs for its own policy (issue #14, C6): the application used to
+     read raft_ctx's config_joint/config_new/config_learners directly, which is policy reaching into
+     mechanism.  raft.h states what is true; what to DO about it stays in the application. */
+  int config_joint;      /* a joint (C_old,C_new) configuration is currently in force */
+  int self_is_voter;     /* this node is in the current configuration's voters */
+  int self_is_learner;   /* this node is in the learners list */
   int leader_id;
   const raft_peer_health *peer_health; /* per-peer liveness (leader only), valid until next raft_advance */
   int peer_health_count;
@@ -782,6 +788,12 @@ static int raft_set_copy(raft_set *dst,const raft_set *src){
 }
 static int raft_phase_ge(const raft_ctx *r,int p){
   return r!=0&&r->phase>=p;
+}
+static int raft_set_has(const raft_set *set,int id){
+  int i;
+  if(!set||!set->ids||set->id_count<=0) return 0;
+  for(i=0;i<set->id_count;i++) if(set->ids[i]==id) return 1;
+  return 0;
 }
 static int raft_is_learner(const raft_set *learners,int id){
   int i;
@@ -3271,6 +3283,13 @@ output:
   if(lc) r->ready_leader_change=1;
   if(r->persist_needed) r->ready_persist_pending=1;
   ready->has_work=(r->apply_count>0||r->result_count>0||r->msg_count>0||r->snap_read_count>0||r->ready_persist_pending||r->ready_leader_change||(r->snapshot_pending_dirty&&r->snapshot_data_ready_flag)||r->snapshot_install_pending||ready->phase_stopped);
+  /* Membership FACTS, reported on EVERY advance (issue #14, C6).  They must not sit beside the
+     leader-change event flags above: those are only filled when that event fires, and the application's
+     policy needs these continuously - a stale copy reads as "no joint configuration", which silently
+     disables the silent-standby rule (selftest caught exactly that). */
+  ready->config_joint=r->config_joint;
+  ready->self_is_voter=raft_set_has(&r->config_new,r->cfg.id);
+  ready->self_is_learner=raft_set_has(&r->config_learners,r->cfg.id);
   /* ---- view assembly: pointer assignments to internal buffers ---- */
   if(r->apply_count>0){
     ready->apply_entries=r->apply_buf;

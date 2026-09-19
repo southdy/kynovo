@@ -360,6 +360,11 @@ struct k_server{
   /* dynamic membership snapshot (voters/learners), driven by CONFIG apply */
   int voters[K_MAX_NODES];
   int voter_count;
+  /* Last membership FACTS raft reported in a ready bundle (issue #14): the application caches what it is
+     told instead of reading raft_ctx's config fields itself. */
+  int cfg_joint;
+  int self_is_voter;
+  int self_is_learner;
   int learners[K_MAX_NODES];
   int learner_count;
   int pending[K_MAX_NODES];  /* in-flight catch-up targets, not yet in config */
@@ -3940,6 +3945,9 @@ static k_ready_bundle *k_ready_bundle_copy(k_server *server,const raft_ready *re
   bundle->snapshot_install_needed=ready->snapshot_install_needed;
   bundle->snapshot_install_index=ready->snapshot_last_index;
   bundle->is_leader=ready->is_leader;
+  server->cfg_joint=ready->config_joint;
+  server->self_is_voter=ready->self_is_voter;
+  server->self_is_learner=ready->self_is_learner;
   bundle->leader_id=ready->leader_id;
   if(ready->message_count<0||ready->apply_count<0||ready->client_result_count<0||ready->snapshot_read_count<0) goto fail;
   if(ready->message_count){
@@ -4692,9 +4700,9 @@ static int k_server_silent_standby(const k_server *server){
      NOT be read as removed - or it drops its up-dial and strands the catch-up
      if the leader's down-dial ever fails.  Learners live in config_learners
      (not config_new), so the learner gate is preserved. */
-  if(server->raft->config_joint
-     &&!k_membership_has(server->raft->config_new.ids,server->raft->config_new.id_count,server->id)
-     &&!k_membership_has(server->raft->config_learners.ids,server->raft->config_learners.id_count,server->id)) return 1;
+  /* These three facts arrive through raft_ready (issue #14): the application must not read raft_ctx's
+     config_* fields for a policy decision, and the checker's ratchet for that is now at zero. */
+  if(server->cfg_joint&&!server->self_is_voter&&!server->self_is_learner) return 1;
   return 0;
 }
 static void k_server_reconnect(k_server *server){

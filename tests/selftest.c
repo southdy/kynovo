@@ -688,30 +688,24 @@ static int k_selftest_strtou64(void){
    be read as removed (dropping the config_joint gate would misread it). */
 static int k_selftest_silent_standby(void){
   k_server server;
-  raft_ctx raft;
-  int new_ids[3];
-  int learn_ids[1];
   memset(&server,0,sizeof(server));
-  memset(&raft,0,sizeof(raft));
   server.id=1;
-  server.raft=&raft;
   server.voter_count=1;
   server.voters[0]=1;            /* applied membership still contains self */
-  new_ids[0]=3; new_ids[1]=4; new_ids[2]=5;
-  raft.config_new.ids=new_ids; raft.config_new.id_count=3;
-  /* bootstrap being ADDED: config_joint==0, config_new excludes self */
-  raft.config_joint=0;
+  /* The membership facts below arrive through raft_ready (issue #14, C6).  The predicate is unchanged;
+     what changed is where its inputs come from - this test now drives exactly the inputs the server
+     caches from the ready bundle, instead of reaching into raft_ctx's config fields the way it used to. */
+  /* bootstrap being ADDED: not joint, and the new configuration excludes self */
+  server.cfg_joint=0; server.self_is_voter=0; server.self_is_learner=0;
   if(k_server_silent_standby(&server)!=0){ printf("selftest: silent-standby bootstrap misread\n"); return -1; }
-  /* removed node mid-joint: config_joint==1, config_new excludes self */
-  raft.config_joint=1;
+  /* removed node mid-joint: joint, and the new configuration excludes self */
+  server.cfg_joint=1;
   if(k_server_silent_standby(&server)!=1){ printf("selftest: silent-standby removed missed\n"); return -1; }
-  /* learner: config_new excludes self but config_learners includes it */
-  learn_ids[0]=1;
-  raft.config_learners.ids=learn_ids; raft.config_learners.id_count=1;
+  /* learner: excluded from the voters but present in the learners list */
+  server.self_is_learner=1;
   if(k_server_silent_standby(&server)!=0){ printf("selftest: silent-standby learner misread\n"); return -1; }
-  /* normal member: config_new includes self */
-  raft.config_learners.ids=0; raft.config_learners.id_count=0;
-  new_ids[0]=1;
+  /* normal member: present in the voters */
+  server.self_is_learner=0; server.self_is_voter=1;
   if(k_server_silent_standby(&server)!=0){ printf("selftest: silent-standby member misread\n"); return -1; }
   return 0;
 }
