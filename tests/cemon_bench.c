@@ -33,7 +33,9 @@
 #include <string.h>
 
 #ifdef _WIN32
+#if defined(_WIN32)
 #include <windows.h>
+#endif
 #include <mmsystem.h>
 #define BENCH_YIELD() SwitchToThread()
 #else

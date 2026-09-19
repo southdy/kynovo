@@ -21,7 +21,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#if defined(_WIN32)
 #include <winsock2.h>
+#endif
 #include <pthread.h>
 #include <windows.h>
 #include "test.h"

@@ -35,7 +35,9 @@
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
+#if defined(_WIN32)
 #include <windows.h>
+#endif
 #else
 #ifndef _GNU_SOURCE
 #define _GNU_SOURCE

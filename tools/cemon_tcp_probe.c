@@ -16,7 +16,9 @@
 #include <string.h>
 #include <stdlib.h>
 #if defined(_WIN32)
+#if defined(_WIN32)
 #include <windows.h>
+#endif
 #endif
 #include "../code/kbase.h"
 #include "../code/kproto.h"

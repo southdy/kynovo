@@ -125,7 +125,7 @@ static int k_cli_member(cli_ctx *cli,int argc,char **argv){
     }
   }
   if(id_count<1){ cli_print(cli,"usage: MEMBER ADD|REMOVE|RECONFIG <id,id,...>");return 0; }
-  if(k_client_queue_member(app,subcmd,ids,id_count,hosts,client_ports,peer_ports)!=0) cli_print(cli,"error: could not queue request");
+  if(k_client_queue_member(app,subcmd,ids,id_count,(const char (*)[K_HOST_MAX])hosts,client_ports,peer_ports)!=0) cli_print(cli,"error: could not queue request");
   return 0;
 }
 static int k_cli_help(cli_ctx *cli,int argc,char **argv){

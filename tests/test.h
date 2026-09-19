@@ -256,7 +256,9 @@ static void _test_fail_mem(const char *file,int line,const char *a_str,const cha
   fprintf(stderr,"--------------------------------------------------\n\n");
 }
 #if defined(_WIN32)
+#if defined(_WIN32)
 #include <windows.h>
+#endif
 static unsigned long _test_now_us(void){
   LARGE_INTEGER f,c;
   QueryPerformanceFrequency(&f);

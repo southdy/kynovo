@@ -602,8 +602,12 @@ CLI_DEF int cli_init(cli_ctx *cli,const char *prompt,const cli_cmd *cmds,void *c
        this an operator gets a silent process that exits before even connecting. */
     cli->tty=0;
     cli->raw=0;
+#if defined(_WIN32)
+    /* The console handles exist only in the Windows variant of cli_ctx: the POSIX
+       implementation reads and writes the terminal directly. */
     cli->hstdin=0;
     cli->hstdout=0;
+#endif
     cli->prompt_shown=0;
   }
   return 0;

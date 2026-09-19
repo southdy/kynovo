@@ -20,8 +20,10 @@
 #include "../tools/bench_env.h"
 
 #ifdef _WIN32
+#if defined(_WIN32)
 #include <windows.h>
 #include <psapi.h>
+#endif
 #define STRESS_YIELD() SwitchToThread()
 #else
 #include <sched.h>

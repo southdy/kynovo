@@ -139,7 +139,7 @@ build_selftest() {
     $CC -std=c89 -O2 -Wall -Wextra -Wdeclaration-after-statement -Wno-unused-function -pthread tests/selftest.c -o "$BUILD_DIR/selftest.exe" $LIB_WS
 }
 build_bench() {
-    $CC -std=c89 -O2 -Wall -Wextra -Wdeclaration-after-statement -Wno-unused-function -DBENCH_CFLAGS="\"$BENCH_CFLAGS\"" tools/bench_fsync.c -o "$BUILD_DIR/bench_fsync.exe"
+    $CC -std=c89 -pthread -O2 -Wall -Wextra -Wdeclaration-after-statement -Wno-unused-function -DBENCH_CFLAGS="\"$BENCH_CFLAGS\"" tools/bench_fsync.c -o "$BUILD_DIR/bench_fsync.exe"
 }
 build_bench_e2e() {
     $CC -std=c89 -O2 -Wall -Wextra -Wdeclaration-after-statement -Wno-unused-function -pthread -DBENCH_CFLAGS="\"$BENCH_CFLAGS\"" tools/bench_e2e.c -o "$BUILD_DIR/bench_e2e.exe" $LIB_WS
@@ -163,16 +163,16 @@ build_cemon_stress() {
     $CC -std=c89 -O2 -Wall -Wextra -Wdeclaration-after-statement -Wno-unused-function -pthread -DBENCH_CFLAGS="\"$BENCH_CFLAGS\"" tests/cemon_stress.c -o "$BUILD_DIR/cemon_stress.exe" $LIB_WS $LIB_PS
 }
 build_test() {
-    $CC -std=c89 -O2 -Wall -Wextra -Wdeclaration-after-statement -Wno-unused-function tests/raft_test.c -o "$BUILD_DIR/raft_test.exe"
+    $CC -std=c89 -pthread -O2 -Wall -Wextra -Wdeclaration-after-statement -Wno-unused-function tests/raft_test.c -o "$BUILD_DIR/raft_test.exe"
 }
 build_fuzz() {
-    $CC -std=c89 -O2 -Wall -Wextra -Wdeclaration-after-statement -Wno-unused-function tests/raft_fuzz.c -o "$BUILD_DIR/raft_fuzz.exe"
+    $CC -std=c89 -pthread -O2 -Wall -Wextra -Wdeclaration-after-statement -Wno-unused-function tests/raft_fuzz.c -o "$BUILD_DIR/raft_fuzz.exe"
 }
 build_cfuzz() {
-    $CC -std=c89 -O2 -Wall -Wextra -Wdeclaration-after-statement -Wno-unused-function tests/raft_cluster_fuzz.c -o "$BUILD_DIR/raft_cluster_fuzz.exe"
+    $CC -std=c89 -pthread -O2 -Wall -Wextra -Wdeclaration-after-statement -Wno-unused-function tests/raft_cluster_fuzz.c -o "$BUILD_DIR/raft_cluster_fuzz.exe"
 }
 build_kclient() {
-    $CC -std=c89 -O2 -Wall -Wextra -Wdeclaration-after-statement -Wno-unused-function tests/kclient_test.c -o "$BUILD_DIR/kclient_test.exe"
+    $CC -std=c89 -pthread -O2 -Wall -Wextra -Wdeclaration-after-statement -Wno-unused-function tests/kclient_test.c -o "$BUILD_DIR/kclient_test.exe"
 }
 build_kserver() {
     $CC -std=c89 -O2 -Wall -Wextra -Wdeclaration-after-statement -Wno-unused-function tests/kserver_test.c -pthread -o "$BUILD_DIR/kserver_test.exe"
@@ -181,7 +181,7 @@ build_cemon_test() {
     $CC -std=c89 -O2 -Wall -Wextra -Wdeclaration-after-statement -Wno-unused-function -pthread tests/cemon_test.c -o "$BUILD_DIR/cemon_test.exe" $LIB_WS
 }
 build_kclusterfuzz() {
-    $CC -std=c89 -O2 -Wall -Wextra -Wdeclaration-after-statement -Wno-unused-function tests/kserver_cluster_fuzz.c -o "$BUILD_DIR/kserver_cluster_fuzz.exe"
+    $CC -std=c89 -pthread -O2 -Wall -Wextra -Wdeclaration-after-statement -Wno-unused-function tests/kserver_cluster_fuzz.c -o "$BUILD_DIR/kserver_cluster_fuzz.exe"
 }
 # Undefined-behaviour sanitizer. MinGW-w64 ships no libasan/libubsan runtime, so
 # the runtime-linked ASan+UBSan is unavailable here (that needs Linux/clang, per
@@ -189,12 +189,12 @@ build_kclusterfuzz() {
 # instead of runtime calls, so UB -> SIGILL (exit 132) and the last printed seed
 # reproduces the crash.
 build_san() {
-    $CC -std=c89 -fsanitize=undefined -fsanitize-trap=undefined -O1 -g tests/raft_test.c          -o "$BUILD_DIR/raft_test_san.exe" \
-    && $CC -std=c89 -fsanitize=undefined -fsanitize-trap=undefined -O1 -g tests/raft_fuzz.c          -o "$BUILD_DIR/raft_fuzz_san.exe" \
-    && $CC -std=c89 -fsanitize=undefined -fsanitize-trap=undefined -O1 -g tests/raft_cluster_fuzz.c  -o "$BUILD_DIR/raft_cluster_fuzz_san.exe" \
-    && $CC -std=c89 -fsanitize=undefined -fsanitize-trap=undefined -O1 -g tests/kclient_test.c         -o "$BUILD_DIR/kclient_test_san.exe" \
-    && $CC -std=c89 -fsanitize=undefined -fsanitize-trap=undefined -O1 -g tests/kserver_test.c         -o "$BUILD_DIR/kserver_test_san.exe" \
-    && $CC -std=c89 -fsanitize=undefined -fsanitize-trap=undefined -O1 -g tests/kserver_cluster_fuzz.c -o "$BUILD_DIR/kserver_cluster_fuzz_san.exe" \
+    $CC -std=c89 -pthread -fsanitize=undefined -fsanitize-trap=undefined -O1 -g tests/raft_test.c          -o "$BUILD_DIR/raft_test_san.exe" \
+    && $CC -std=c89 -pthread -fsanitize=undefined -fsanitize-trap=undefined -O1 -g tests/raft_fuzz.c          -o "$BUILD_DIR/raft_fuzz_san.exe" \
+    && $CC -std=c89 -pthread -fsanitize=undefined -fsanitize-trap=undefined -O1 -g tests/raft_cluster_fuzz.c  -o "$BUILD_DIR/raft_cluster_fuzz_san.exe" \
+    && $CC -std=c89 -pthread -fsanitize=undefined -fsanitize-trap=undefined -O1 -g tests/kclient_test.c         -o "$BUILD_DIR/kclient_test_san.exe" \
+    && $CC -std=c89 -pthread -fsanitize=undefined -fsanitize-trap=undefined -O1 -g tests/kserver_test.c         -o "$BUILD_DIR/kserver_test_san.exe" \
+    && $CC -std=c89 -pthread -fsanitize=undefined -fsanitize-trap=undefined -O1 -g tests/kserver_cluster_fuzz.c -o "$BUILD_DIR/kserver_cluster_fuzz_san.exe" \
     && $CC -std=c89 -fsanitize=undefined -fsanitize-trap=undefined -O1 -g -pthread tests/cemon_test.c -o "$BUILD_DIR/cemon_test_san.exe" $LIB_WS
 }
 # Code coverage (gcov).  Compiles every driver with --coverage, runs them, then
@@ -208,12 +208,12 @@ build_coverage() {
     rm -rf "$BUILD_DIR/cov"
     mkdir -p "$BUILD_DIR/cov"
     $CC -std=c89 -O0 -g --coverage -Wall -Wextra -Wdeclaration-after-statement -Wno-unused-function -pthread tests/selftest.c -o "$BUILD_DIR/cov/selftest.exe" $LIB_WS || RC=1
-    $CC -std=c89 -O0 -g --coverage -Wall -Wextra -Wdeclaration-after-statement -Wno-unused-function tests/raft_test.c -o "$BUILD_DIR/cov/raft_test.exe" || RC=1
-    $CC -std=c89 -O0 -g --coverage -Wall -Wextra -Wdeclaration-after-statement -Wno-unused-function tests/raft_fuzz.c -o "$BUILD_DIR/cov/raft_fuzz.exe" || RC=1
-    $CC -std=c89 -O0 -g --coverage -Wall -Wextra -Wdeclaration-after-statement -Wno-unused-function tests/raft_cluster_fuzz.c -o "$BUILD_DIR/cov/raft_cluster_fuzz.exe" || RC=1
-    $CC -std=c89 -O0 -g --coverage -Wall -Wextra -Wdeclaration-after-statement -Wno-unused-function tests/kclient_test.c -o "$BUILD_DIR/cov/kclient_test.exe" || RC=1
-    $CC -std=c89 -O0 -g --coverage -Wall -Wextra -Wdeclaration-after-statement -Wno-unused-function tests/kserver_test.c -o "$BUILD_DIR/cov/kserver_test.exe" || RC=1
-    $CC -std=c89 -O0 -g --coverage -Wall -Wextra -Wdeclaration-after-statement -Wno-unused-function tests/kserver_cluster_fuzz.c -o "$BUILD_DIR/cov/kserver_cluster_fuzz.exe" || RC=1
+    $CC -std=c89 -pthread -O0 -g --coverage -Wall -Wextra -Wdeclaration-after-statement -Wno-unused-function tests/raft_test.c -o "$BUILD_DIR/cov/raft_test.exe" || RC=1
+    $CC -std=c89 -pthread -O0 -g --coverage -Wall -Wextra -Wdeclaration-after-statement -Wno-unused-function tests/raft_fuzz.c -o "$BUILD_DIR/cov/raft_fuzz.exe" || RC=1
+    $CC -std=c89 -pthread -O0 -g --coverage -Wall -Wextra -Wdeclaration-after-statement -Wno-unused-function tests/raft_cluster_fuzz.c -o "$BUILD_DIR/cov/raft_cluster_fuzz.exe" || RC=1
+    $CC -std=c89 -pthread -O0 -g --coverage -Wall -Wextra -Wdeclaration-after-statement -Wno-unused-function tests/kclient_test.c -o "$BUILD_DIR/cov/kclient_test.exe" || RC=1
+    $CC -std=c89 -pthread -O0 -g --coverage -Wall -Wextra -Wdeclaration-after-statement -Wno-unused-function tests/kserver_test.c -o "$BUILD_DIR/cov/kserver_test.exe" || RC=1
+    $CC -std=c89 -pthread -O0 -g --coverage -Wall -Wextra -Wdeclaration-after-statement -Wno-unused-function tests/kserver_cluster_fuzz.c -o "$BUILD_DIR/cov/kserver_cluster_fuzz.exe" || RC=1
     # cemon_bench is the second cemon.h driver (selftest alone left cemon.h at one
     # driver).  cemon_stress (~65s) stays out of the coverage run on purpose: it
     # has its own target and would dominate the turn-around; run `./build.sh
