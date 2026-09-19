@@ -8,3 +8,10 @@
 *.py   text eol=lf
 *.exe  binary
 *.o    binary
+# Captured output under doc/measurements/ is EVIDENCE, not source, and some records legitimately
+# contain CRLF or bare CR bytes from the console they were captured on.  `-text` means "never
+# convert", so the bytes in the repository are the bytes that were observed, on every platform -
+# and a fresh clone no longer reports a dozen records as modified merely because a checkout would
+# have rewritten their line endings (which is exactly how a Linux clone looked dirty after a
+# hard reset, and what made the state of that machine read as untrustworthy).
+doc/measurements/** -text
