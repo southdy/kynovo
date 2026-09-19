@@ -4004,7 +4004,12 @@ static void k_wal_worker_entry(runtime_ctx *runtime,void *arg){
            slowly).  A plain average of 1.7-12 ms samples made the window flap. */
         k_u64 dur=t1-t0;
         if(worker->sync_us_ewma==0u||dur<worker->sync_us_ewma) worker->sync_us_ewma=dur;
-        else worker->sync_us_ewma=worker->sync_us_ewma+(dur-worker->sync_us_ewma)/8u;
+        else if(dur<worker->sync_us_ewma*4u) worker->sync_us_ewma=worker->sync_us_ewma+(dur-worker->sync_us_ewma)/8u;
+        /* A sample far above the current estimate does NOT raise it.  The window this feeds must track
+           the sync the device normally delivers; rare multi-millisecond syncs (they are visible in
+           sync_us_max / slow_syncs) used to drag it up by ~600 us each, and on the fast guest that
+           inflation cost half the measured throughput: 67247 ops/s at a 1 ms window against 35822
+           once outliers had grown it to 2-3 ms.  Outliers are still recorded and still counted. */
         if(dur>worker->sync_us_max) worker->sync_us_max=dur;
         if(dur>K_SLOW_SYNC_US) worker->slow_syncs++;
         /* How long the queued bundle waited before THIS worker thread started writing it - the half of

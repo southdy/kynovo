@@ -387,7 +387,7 @@ static int k_run_server_args(int argc,char **argv){
 }
 static int k_run_init_args(int argc,char **argv){
   k_cfg cfg;
-  unsigned int value;
+  int value;   /* k_parse_uint writes an int; using unsigned int here tripped -Wpointer-sign */
   int i;
   if(argc<3||k_cfg_reset(argv[2])!=0||k_wal_meta_init(argv[2])!=0) return -1;
   if(argc==3){
@@ -405,14 +405,14 @@ static int k_run_init_args(int argc,char **argv){
       return -1;
     }
     if(strcmp(argv[i],"--flush-items")==0){
-      if(k_parse_uint(argv[i+1],65536,&value)!=0||value<1u){ printf("kdbsvr: fatal: --flush-items must be 1..65536\n"); return -1; }
-      cfg.flush_item_limit=value;
+      if(k_parse_uint(argv[i+1],65536,&value)!=0||value<1){ printf("kdbsvr: fatal: --flush-items must be 1..65536\n"); return -1; }
+      cfg.flush_item_limit=(unsigned int)value;
     }else if(strcmp(argv[i],"--flush-window-ms")==0){
-      if(k_parse_uint(argv[i+1],60000,&value)!=0||value<1u){ printf("kdbsvr: fatal: --flush-window-ms must be 1..60000\n"); return -1; }
-      cfg.flush_timeout_ms=value;
+      if(k_parse_uint(argv[i+1],60000,&value)!=0||value<1){ printf("kdbsvr: fatal: --flush-window-ms must be 1..60000\n"); return -1; }
+      cfg.flush_timeout_ms=(unsigned int)value;
     }else if(strcmp(argv[i],"--flush-bytes")==0){
-      if(k_parse_uint(argv[i+1],268435456,&value)!=0||value<1u){ printf("kdbsvr: fatal: --flush-bytes must be 1..268435456\n"); return -1; }
-      cfg.flush_bytes_limit=value;
+      if(k_parse_uint(argv[i+1],268435456,&value)!=0||value<1){ printf("kdbsvr: fatal: --flush-bytes must be 1..268435456\n"); return -1; }
+      cfg.flush_bytes_limit=(unsigned int)value;
     }else{
       printf("kdbsvr: fatal: unknown init option '%s'\n",argv[i]);
       return -1;
