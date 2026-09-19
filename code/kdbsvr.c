@@ -266,6 +266,7 @@ static int k_server_run(k_server *server){
         server->wake_us_last=wake_us;
         if(wake_us>server->wake_us_max) server->wake_us_max=wake_us;
         if(wake_us>K_SLOW_WAKE_US) server->slow_wakes++;
+        server->wake_samples++;   /* 0 samples means the measurement never ran, not that it was fast */
       }
     }
     if(round_t0&&k_monotonic_us(&round_t1)==0){
