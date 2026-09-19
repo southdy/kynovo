@@ -29,3 +29,30 @@
 #      before returning, or one arm per frame keeps it shallow (cemon_recv arms ONE completion).
 #   c. more CPU: the guest has 4 vCPU and the server used ~1.3 cores at 90k ops/s on mem://, so the
 #      remaining vCPU is the cheapest untapped resource - noting the host itself is shared.
+
+# ---------------------------------------------------------------- continuation: how far Linux really goes
+# Same day, same box.  Everything below is disk://, 1 B values, N=3000 per client, window 1 ms,
+# items 128, one server, clients as separate bench_rate processes.
+#
+# clients  where          ops/s (total)   what it means
+#    1     in the guest      33k-55k      a single bench_rate process cannot keep the pipe full: its own
+#                                        loop turn paces the server, and both share 4 vCPU
+#    4     in the guest      82.5k        scaling, still sharing the box with the server
+#    4     from the host    141.8k-150.2k real TCP from another machine - 2.6x the best single client
+#
+# Server-side reading taken during the guest-only 4-client run: rounds=239, client_requests=12018,
+# frames_max=754, poll_us_ewma=2437, round_us_ewma=183, sync_us_ewma=708.
+#   -> 50 requests admitted per round (against 5-13 with ONE client) and a single round that took 754.
+#   -> cpu_us_per_op measured 1-6 us across the earlier sweep, so the server was never CPU-bound.
+#
+# Ceiling check: throughput == batch / fsync.  With the batch actually measured at 91-128 requests and a
+# 0.7 ms sync, the bound is ~130k-183k ops/s, and the engine reaches 150k - i.e. once it is fed in
+# parallel it sits AT the group-commit bound, not at some loop limit.
+#
+# So the answer to "is there headroom left on Linux" is: the single-client numbers were a BENCHMARK
+# artifact, most of the apparent headroom was an under-fed server, and the remaining headroom is the
+# batch/fsync term itself - larger --flush-items/--flush-bytes (fewer syncs per request) or a faster
+# sync.  The loop's own work is worth 1-6 us per request and ingests up to 754 frames per round.
+#
+# Latency side is unchanged by any of this: the tail tracks offered concurrency (K), with p50 0.65 ms
+# (mem) / 2.8 ms (disk) at K<=64 and 7.8-11 ms at K=512.

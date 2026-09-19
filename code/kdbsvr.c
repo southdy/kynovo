@@ -204,7 +204,7 @@ static int k_server_serve(k_server *server,cemon *loop){
 static int k_server_run(k_server *server){
   int rc=0;
   for(;;){
-    k_u64 arrived_before,flushes_before,round_t0,round_t1;
+    k_u64 arrived_before,flushes_before,round_t0,round_t1,poll_t0,frames_before,poll_us;
     k_u32 pending_before;
     int timeout;
     unsigned int elapsed_ms,batch_ms;
@@ -217,6 +217,8 @@ static int k_server_run(k_server *server){
     timeout=(int)server->cfg.poll_ms;
     { int left=k_server_flush_deadline_ms(server);
       if(left>=0&&left<timeout) timeout=left; }
+    if(k_monotonic_us(&poll_t0)!=0) poll_t0=0;
+    frames_before=server->client_requests;
     if(cemon_poll((cemon *)server->loop,timeout)!=0) break;
     if(server->fatal){
       /* Fail-stop: a fatal condition (apply could not be replayed, a snapshot
@@ -282,6 +284,17 @@ static int k_server_run(k_server *server){
         if(wake_us>K_SLOW_WAKE_US) server->slow_wakes++;
         server->wake_samples++;   /* 0 samples means the measurement never ran, not that it was fast */
       }
+    }
+    /* Poll half of the round: everything cemon's callbacks did - receive, decode, send.  Recorded
+       before the drive half so the two are never confused, and paired with the frames that arrived. */
+    if(poll_t0&&round_t0&&round_t0>=poll_t0){
+      poll_us=round_t0-poll_t0;
+      server->poll_us_last=poll_us;
+      if(poll_us>server->poll_us_max) server->poll_us_max=poll_us;
+      server->poll_us_ewma=server->poll_us_ewma?((server->poll_us_ewma*7u+poll_us)/8u):poll_us;
+      server->frames_last=server->client_requests-frames_before;
+      if(server->frames_last>server->frames_max) server->frames_max=server->frames_last;
+      server->poll_samples++;
     }
     if(round_t0&&k_monotonic_us(&round_t1)==0){
       k_u64 round_us=round_t1-round_t0;

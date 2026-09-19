@@ -96,6 +96,10 @@ FW="$(field "$TMP/stats.txt" flush_writes)"
 CR="$(field "$TMP/stats.txt" client_requests)"
 RD="$(field "$TMP/stats.txt" rounds)"
 SE="$(field "$TMP/stats.txt" sync_us_ewma)"
+POLL_US="$(field "$TMP/stats.txt" poll_us_ewma)"
+DRIVE_US="$(field "$TMP/stats.txt" round_us_ewma)"
+[ -n "$POLL_US" ] || POLL_US=0
+[ -n "$DRIVE_US" ] || DRIVE_US=0
 WM="$(field "$TMP/stats.txt" window_ms)"
 [ -n "$FB" ] || FB=0
 [ -n "$FW" ] || FW=0
@@ -116,4 +120,10 @@ SYNC_RATE=0; [ "$WALL" -gt 0 ] && SYNC_RATE=$(( FB * 1000000 / WALL ))
 CPU_PER_OP=0
 case "$U0" in ''|*[!0-9]*) CPU_PER_OP=-1 ;; *) CPU_PER_OP=$(( (U1-U0) * 10000 / OPS )) ;; esac
 
-echo "PROFILE|backend=${URI%%:*} k=$K items=$ITEMS bytes=$BYTES ops_s=$OPS p50=$P50 p99=$P99 max=$MAX batch=$BATCH per_round=$PER_ROUND sync_per_s=$SYNC_RATE window_ms=$WM sync_ewma_us=$SE cpu_us_per_op=$CPU_PER_OP rounds=$RD client_requests=$CR"
+# Round cost split at the poll boundary.  poll_us is receive+decode+SEND (all inside cemon
+# callbacks); drive_us is raft advance, apply and flush bookkeeping.  Per frame is what matters for
+# throughput: if it is tens of microseconds, the loop is pricing work per request that could be
+# priced per batch.
+PER_FRAME=0
+if [ "$PER_ROUND" -gt 0 ]; then PER_FRAME=$(( (POLL_US + DRIVE_US) / PER_ROUND )); fi
+echo "PROFILE|backend=${URI%%:*} k=$K items=$ITEMS bytes=$BYTES ops_s=$OPS p50=$P50 p99=$P99 max=$MAX batch=$BATCH per_round=$PER_ROUND sync_per_s=$SYNC_RATE window_ms=$WM sync_ewma_us=$SE cpu_us_per_op=$CPU_PER_OP rounds=$RD client_requests=$CR poll_us_ewma=$POLL_US drive_us_ewma=$DRIVE_US us_per_frame=$PER_FRAME"
