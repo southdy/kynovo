@@ -1,0 +1,13 @@
+=== single node: one-shot SET / GET / STATS / unknown (no tty, plain pipes) ===
+  SET -> 
+  GET -> 
+  STATS -> 
+  BOGUS -> 
+  bench_rate valid-label on a lone node -> PROBE|status=0 leader_id=1 leader=:0 body= PHASE_VALID|yes (probe_status=0, server accepted the write) 
+=== 3 nodes: one-shot against a FOLLOWER must follow the redirect (dissertation 6.2) ===
+  port 8411 state=
+  port 8412 state=
+  port 8413 state=
+  LEADER= FOLLOWER=8411
+CL13_DONE
+CL13_EXIT=0

@@ -1,0 +1,18 @@
+port 8161: id= state=3 leader=1
+port 8162: id= state=1 leader=1
+port 8163: id= state=1 leader=1
+LEADER_PORT=8161 alive=0
+PHASE|n=400 k=32 wall_us=79101 ops_per_s=5056
+--- 6 single writes: leader counters at ack time vs 200ms later ---
+itr  ack_lat_us   leader@before->ack       leader@ack->+200ms       verdict
+1    6081         wal 24->28 fl 20->24                wal 28->30 fl 24->26  ok(waited for a fsync)
+2    6628         wal 32->36 fl 28->32                wal 36->38 fl 32->34  ok(waited for a fsync)
+3    6960         wal 40->44 fl 36->40                wal 44->46 fl 40->42  ok(waited for a fsync)
+4    5882         wal 48->52 fl 44->48                wal 52->54 fl 48->50  ok(waited for a fsync)
+5    6099         wal 56->60 fl 52->56                wal 60->62 fl 56->58  ok(waited for a fsync)
+6    6358         wal 64->68 fl 60->64                wal 68->70 fl 64->66  ok(waited for a fsync)
+--- read back the single-write keys from the leader ---
+VALUE|key=__one0 size=0 body=
+GET|n=6 ok=5 empty=1 err=0 bytes=185
+CL8_DONE
+CL8_EXIT=0

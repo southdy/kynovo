@@ -1,0 +1,18 @@
+# build/ is a PURE OUTPUT directory (./build.sh clean removes it entirely): nothing hand-written
+# belongs there, and nothing in it is worth versioning.
+build/
+*.exe
+*.o
+*.log
+*.gcov
+*.gcda
+*.gcno
+
+# Third-party document kept LOCALLY ONLY (copyright).  Ongaro's PhD dissertation is the semantic
+# baseline this code is reviewed against, but it must not be redistributed in a public repository.
+# The code and docs reference doc/dissertation.md by path, so the file stays in place and is ignored.
+doc/dissertation.md
+
+# Personal editor configuration: .vscode/c_cpp_properties.json contains a machine-specific absolute
+# compiler path, so it must not be committed (each contributor keeps their own).
+.vscode/

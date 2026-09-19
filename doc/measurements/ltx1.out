@@ -1,0 +1,42 @@
+[sd@3379]
+[sd@3379]
+[sd@4553]
+[sd@3379]
+[sd@3487]
+snapshot: verified 97 (1147 bytes)
+snapshot: verified 97 (1147 bytes)
+snapshot: verified 64 (1272 bytes)
+[sd@3379]
+[sd@3379]
+[sd@3487]
+snapshot: verified 97 (1147 bytes)
+[sd@3379]
+[sd@3487]
+[sd@3379]
+[sd@3379]
+[sd@3487]
+[sd@3379]
+[sd@3379]
+warning: result for request id=1 whose connection is gone (type=1 status=4)
+[sd@3379]
+[sd@3379]
+[bar] follower, no leader_id
+[bar] follower, no leader_id
+[bar] follower, no leader_id
+[bar] follower, no leader_id
+[bar] follower, no leader_id
+[sd@3487]
+[sd@3379]
+[sd@3379]
+[sd@3487]
+[sd@3379]
+[sd@3379]
+[sd@3487]
+[sd@4553]
+[sd@3379]
+[sd@3379]
+[sd@3487]
+snapshot: verified 64 (1272 bytes)
+snapshot: verified 97 (1147 bytes)
+snapshot: verified 97 (1147 bytes)
+selftest: PASS

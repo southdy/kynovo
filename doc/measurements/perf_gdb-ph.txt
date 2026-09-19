@@ -1,0 +1,17 @@
+[New Thread 3752.0x4a80]
+[New Thread 3752.0x6f18]
+[New Thread 3752.0x148]
+[New Thread 3752.0x62d0]
+[New Thread 3752.0x668c]
+[New Thread 3752.0x5c38]
+[New Thread 3752.0x6b28]
+server 1 client=127.0.0.1:9491 peer=127.0.0.1:9492
+[Thread 3752.0x148 exited with code 0]
+[Thread 3752.0x4a80 exited with code 0]
+[Thread 3752.0x6f18 exited with code 0]
+[Thread 3752.0x668c exited with code 1]
+[Thread 3752.0x62d0 exited with code 1]
+[Thread 3752.0x6b28 exited with code 1]
+[Thread 3752.0x5c38 exited with code 1]
+[Inferior 1 (process 3752) exited with code 01]
+No stack.

@@ -1,0 +1,7 @@
+tests/raft_cluster_fuzz.c: In function 'disk_merge_log':
+tests/raft_cluster_fuzz.c:954:12: warning: unused variable 'vi' [-Wunused-variable]
+  954 |   raft_i64 vi;
+      |            ^~
+tests/raft_cluster_fuzz.c:953:11: warning: unused variable 'w' [-Wunused-variable]
+  953 |   int i,j,w;
+      |           ^

@@ -1,0 +1,17 @@
+port 8171 state=3 commit=1 applied=1
+port 8172 state=1 commit=3 applied=3
+port 8173 state=1 commit=3 applied=3
+LEADER=8171 FOLLOWER=8172 alive=0
+--- write a 500-key burst to the FOLLOWER (8172) ---
+PHASE|n=500 k=32 wall_us=5448 ops_per_s=91776
+LAT|n=500 min=123 p50=287 p90=375 p99=661 max=691
+LEADER    wal_records 4->6  flush_batches 2->4  flush_writes 2->4  commit 3->5  applied 3->5  client_requests 2->4
+FOLLOWER  wal_records 6->8  flush_batches 0->0  flush_writes 0->0  commit 5->7  applied 5->7  client_requests 0->0
+--- immediately read the burst keys back from BOTH nodes (linearizability check) ---
+from leader:   GET|n=100 ok=0 empty=100 err=0 bytes=0
+from follower: GET|n=100 ok=0 empty=100 err=0 bytes=0
+--- and a second burst to the LEADER for contrast ---
+PHASE|n=500 k=32 wall_us=115318 ops_per_s=4335
+LAT|n=500 min=3205 p50=4860 p90=14147 p99=15113 max=15295
+CL9_DONE
+CL9_EXIT=0

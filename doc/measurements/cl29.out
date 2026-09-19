@@ -1,0 +1,13 @@
+=== who is the leader (probe each port; bench_rate follows the redirect hint) ===
+  port 8771: 
+  port 8772: 
+  port 8773: 
+LEADER=
+=== one-shot kdbctl against the LEADER (3-node cluster) ===
+  SET  -> 
+  GET  -> 
+  MEMBERS -> 
+=== and against a FOLLOWER (must follow the redirect) ===
+  GET via follower 8773 -> connected to 127.0.0.1:8773  |wait for the current request  |wait for the current request  |wait for the current request  |wait for the current request  |wait for the current request  |wait for the current request  |wait for the current request  |wait for the current request  |wait for the current request  |wait for the current request  |wait for the current request  |wait for the current request  |wait for the current request  |wait for the current request  |wait for the current request  |wait for the current request  |wait for the current request  |wait for the current request  |wait for the current request  |wait for the current request  |connection closed; pending request failed  |
+CL29_DONE
+EXIT=0

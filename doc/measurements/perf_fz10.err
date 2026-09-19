@@ -1,0 +1,62 @@
+tests/raft_cluster_fuzz.c: In function 'disk_persist':
+tests/raft_cluster_fuzz.c:1092:52: warning: left-hand operand of comma expression has no effect [-Wunused-value]
+ 1092 |                   (long long)p->last_included_index,(long long)p->last_included_term,
+      |                                                    ^
+tests/raft_cluster_fuzz.c:1092:85: warning: left-hand operand of comma expression has no effect [-Wunused-value]
+ 1092 |                   (long long)p->last_included_index,(long long)p->last_included_term,
+      |                                                                                     ^
+tests/raft_cluster_fuzz.c:1093:37: warning: left-hand operand of comma expression has no effect [-Wunused-value]
+ 1093 |                   p->log_entry_count,(int)p->snapshot_dirty,(unsigned)p->snapshot_size,
+      |                                     ^
+tests/raft_cluster_fuzz.c:1093:60: warning: left-hand operand of comma expression has no effect [-Wunused-value]
+ 1093 |                   p->log_entry_count,(int)p->snapshot_dirty,(unsigned)p->snapshot_size,
+      |                                                            ^
+tests/raft_cluster_fuzz.c:1093:87: warning: left-hand operand of comma expression has no effect [-Wunused-value]
+ 1093 |                   p->log_entry_count,(int)p->snapshot_dirty,(unsigned)p->snapshot_size,
+      |                                                                                       ^
+tests/raft_cluster_fuzz.c:1094:79: warning: left-hand operand of comma expression has no effect [-Wunused-value]
+ 1094 |                   (long long)(p->log_entry_count>0?p->log_entries[0].index:-1),
+      |                                                                               ^
+tests/raft_cluster_fuzz.c:1094:79: warning: statement with no effect [-Wunused-value]
+tests/raft_cluster_fuzz.c:1095:98: error: expected ';' before ')' token
+ 1095 |                   (long long)(p->log_entry_count>0?p->log_entries[p->log_entry_count-1].index:-1));
+      |                                                                                                  ^
+      |                                                                                                  ;
+tests/raft_cluster_fuzz.c:1095:98: error: expected statement before ')' token
+tests/raft_cluster_fuzz.c:1166:41: warning: left-hand operand of comma expression has no effect [-Wunused-value]
+ 1166 |                   (long long)n->disk_lii,n->disk_log_count,
+      |                                         ^
+tests/raft_cluster_fuzz.c:1166:59: warning: left-hand operand of comma expression has no effect [-Wunused-value]
+ 1166 |                   (long long)n->disk_lii,n->disk_log_count,
+      |                                                           ^
+tests/raft_cluster_fuzz.c:1167:49: warning: left-hand operand of comma expression has no effect [-Wunused-value]
+ 1167 |                   (long long)n->disk_pending_lii,n->disk_pending_log_count);
+      |                                                 ^
+tests/raft_cluster_fuzz.c:1167:49: warning: statement with no effect [-Wunused-value]
+tests/raft_cluster_fuzz.c:1167:75: error: expected ';' before ')' token
+ 1167 |                   (long long)n->disk_pending_lii,n->disk_pending_log_count);
+      |                                                                           ^
+      |                                                                           ;
+tests/raft_cluster_fuzz.c:1167:75: error: expected statement before ')' token
+tests/raft_cluster_fuzz.c: In function 'node_crash':
+tests/raft_cluster_fuzz.c:1257:13: warning: left-hand operand of comma expression has no effect [-Wunused-value]
+ 1257 |        n->id,(long long)n->disk_lii,n->disk_log_count,(long long)n->disk_pending_lii,
+      |             ^
+tests/raft_cluster_fuzz.c:1257:36: warning: left-hand operand of comma expression has no effect [-Wunused-value]
+ 1257 |        n->id,(long long)n->disk_lii,n->disk_log_count,(long long)n->disk_pending_lii,
+      |                                    ^
+tests/raft_cluster_fuzz.c:1257:54: warning: left-hand operand of comma expression has no effect [-Wunused-value]
+ 1257 |        n->id,(long long)n->disk_lii,n->disk_log_count,(long long)n->disk_pending_lii,
+      |                                                      ^
+tests/raft_cluster_fuzz.c:1257:85: warning: left-hand operand of comma expression has no effect [-Wunused-value]
+ 1257 |        n->id,(long long)n->disk_lii,n->disk_log_count,(long long)n->disk_pending_lii,
+      |                                                                                     ^
+tests/raft_cluster_fuzz.c:1258:33: warning: left-hand operand of comma expression has no effect [-Wunused-value]
+ 1258 |        n->disk_pending_log_count,(long long)(n->r?n->r->durable_confirm:-1));
+      |                                 ^
+tests/raft_cluster_fuzz.c:1258:33: warning: statement with no effect [-Wunused-value]
+tests/raft_cluster_fuzz.c:1258:76: error: expected ';' before ')' token
+ 1258 |        n->disk_pending_log_count,(long long)(n->r?n->r->durable_confirm:-1));
+      |                                                                            ^
+      |                                                                            ;
+tests/raft_cluster_fuzz.c:1258:76: error: expected statement before ')' token

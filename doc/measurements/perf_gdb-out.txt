@@ -1,0 +1,85 @@
+[New Thread 25816.0x5cfc]
+[New Thread 25816.0x2b90]
+[New Thread 25816.0x5fa8]
+[New Thread 25816.0x6fa4]
+[New Thread 25816.0x3770]
+[New Thread 25816.0x6c5c]
+[New Thread 25816.0x2af4]
+server 1 client=127.0.0.1:9461 peer=127.0.0.1:9462
+[Thread 25816.0x5cfc exited with code 0]
+[Thread 25816.0x2b90 exited with code 0]
+[Thread 25816.0x5fa8 exited with code 0]
+warning: result for request id=2285 whose connection is gone (type=4 status=2)
+warning: result for request id=2286 whose connection is gone (type=4 status=2)
+warning: result for request id=2287 whose connection is gone (type=4 status=2)
+warning: result for request id=2288 whose connection is gone (type=4 status=2)
+warning: result for request id=2289 whose connection is gone (type=4 status=2)
+warning: result for request id=2290 whose connection is gone (type=4 status=2)
+warning: result for request id=2291 whose connection is gone (type=4 status=2)
+warning: result for request id=2292 whose connection is gone (type=4 status=2)
+warning: result for request id=2293 whose connection is gone (type=4 status=2)
+warning: result for request id=2294 whose connection is gone (type=4 status=2)
+warning: result for request id=2295 whose connection is gone (type=4 status=2)
+warning: result for request id=2296 whose connection is gone (type=4 status=2)
+warning: result for request id=2297 whose connection is gone (type=4 status=2)
+warning: result for request id=2298 whose connection is gone (type=4 status=2)
+warning: result for request id=2299 whose connection is gone (type=4 status=2)
+warning: result for request id=2300 whose connection is gone (type=4 status=2)
+warning: result for request id=2301 whose connection is gone (type=4 status=2)
+warning: result for request id=2302 whose connection is gone (type=4 status=2)
+warning: result for request id=2303 whose connection is gone (type=4 status=2)
+warning: result for request id=2304 whose connection is gone (type=4 status=2)
+warning: result for request id=2305 whose connection is gone (type=4 status=2)
+warning: result for request id=2306 whose connection is gone (type=4 status=2)
+warning: result for request id=2307 whose connection is gone (type=4 status=2)
+warning: result for request id=2308 whose connection is gone (type=4 status=2)
+warning: result for request id=2309 whose connection is gone (type=4 status=2)
+warning: result for request id=2310 whose connection is gone (type=4 status=2)
+warning: result for request id=2311 whose connection is gone (type=4 status=2)
+warning: result for request id=2312 whose connection is gone (type=4 status=2)
+warning: result for request id=2313 whose connection is gone (type=4 status=2)
+warning: result for request id=2314 whose connection is gone (type=4 status=2)
+warning: result for request id=2315 whose connection is gone (type=4 status=2)
+warning: result for request id=2316 whose connection is gone (type=4 status=2)
+warning: result for request id=2317 whose connection is gone (type=4 status=2)
+warning: result for request id=2318 whose connection is gone (type=4 status=2)
+warning: result for request id=2319 whose connection is gone (type=4 status=2)
+warning: result for request id=2320 whose connection is gone (type=4 status=2)
+warning: HEAP[kdbsvr_dbg.exe]: 
+warning: HEAP: Free Heap block 000000001FBB7C40 modified at 000000001FBB9240 after it was freed
+
+Thread 1 received signal SIGTRAP, Trace/breakpoint trap.
+0x00007ffda13c62df in ntdll!RtlpNtMakeTemporaryKey () from C:\Windows\SYSTEM32\ntdll.dll
+#0  0x00007ffda13c62df in ntdll!RtlpNtMakeTemporaryKey () from C:\Windows\SYSTEM32\ntdll.dll
+#1  0x00007ffda12fd9cb in ntdll!RtlAllocateHeap () from C:\Windows\SYSTEM32\ntdll.dll
+#2  0x00007ffda12fb4bb in ntdll!RtlAllocateHeap () from C:\Windows\SYSTEM32\ntdll.dll
+#3  0x00007ffda13c47db in ntdll!RtlpNtMakeTemporaryKey () from C:\Windows\SYSTEM32\ntdll.dll
+#4  0x00007ffda137511e in ntdll!memset () from C:\Windows\SYSTEM32\ntdll.dll
+#5  0x00007ffda12fb4bb in ntdll!RtlAllocateHeap () from C:\Windows\SYSTEM32\ntdll.dll
+#6  0x00007ffda038a191 in realloc () from C:\Windows\System32\msvcrt.dll
+#7  0x00007ffda0389ca5 in msvcrt!calloc () from C:\Windows\System32\msvcrt.dll
+#8  0x00007ff64610f4f9 in raft_log_alloc_chunk (log=0x224d0, ci=504) at code/raft.h:822
+#9  0x00007ff6461102f4 in raft_log_append_commands (log=0x224d0, term=1, commands=0x1af64d30, count=32) at code/raft.h:952
+#10 0x00007ff64611e0c6 in raft_submit (r=0x22420, commands=0x1af64d30, count=32) at code/raft.h:4042
+#11 0x00007ff64611ec9f in raft_recvfrom_client (r=0x22420, msg=0x5fb4f0) at code/raft.h:4196
+#12 0x00007ff64612b6b4 in k_server_flush_writes (server=0x5fc720) at code/kserver.h:2645
+#13 0x00007ff64612b1e7 in k_server_flush_reason (server=0x5fc720, reason=1) at code/kserver.h:2534
+#14 0x00007ff64612c9d0 in k_server_submit (server=0x5fc720, conn=0x93a9910, request_id=3381, request_type=4, key=0xdcb0854 "ch_343379\a", key_len=9, value=0xdcb0861 "payloadKCL1\001\004", value_len=7) at code/kserver.h:2929
+#15 0x00007ff64612dcf7 in k_server_client_frame (ud=0x93a9910, type=4 '\004', payload=0xdcb084c "5\r", size=28) at code/kserver.h:3152
+#16 0x00007ff646122178 in k_rx_feed (rx=0x93a9938, magic=827081547, data=0x2136b040, size=40, fn=0x7ff64612da28 <k_server_client_frame>, ud=0x93a9910) at code/kproto.h:212
+#17 0x00007ff64612f5b2 in k_server_client_received (conn=0x93a9910, data=0x2136b040, size=40) at code/kserver.h:3385
+#18 0x00007ff6461361fe in k_server_client_io (sock=0xb879000, event=0x5fc390) at code/kdbsvr.c:127
+#19 0x00007ff6461091d4 in cemon_emit (sock=0xb879000, type=3, status=0, data=0x2136b040, size=40, addr=0x0) at code/cemon.h:1422
+#20 0x00007ff646109270 in cemon_emit_blockable (sock=0xb879000, type=3, status=0, data=0x2136b040, size=40, addr=0x0) at code/cemon.h:1436
+#21 0x00007ff64610c0d2 in cemon_win_recv_done (recv=0x2136b000, bytes=40, err=0) at code/cemon.h:2225
+#22 0x00007ff64610c38d in cemon_win_handle (ov=0x2136b008, bytes=40, err=0) at code/cemon.h:2270
+#23 0x00007ff64610dbca in cemon_poll_once (loop=0x231e0, timeout_ms=2) at code/cemon.h:3189
+#24 0x00007ff64610dc6b in cemon_poll (loop=0x231e0, timeout_ms=2) at code/cemon.h:3284
+#25 0x00007ff6461366c1 in k_server_run (server=0x5fc720) at code/kdbsvr.c:220
+#26 0x00007ff646136e2a in k_run_server_args (argc=7, argv=0x22100) at code/kdbsvr.c:345
+#27 0x00007ff646136fa5 in main (argc=7, argv=0x22100) at code/kdbsvr.c:367
+A debugging session is active.
+
+	Inferior 1 [process 25816] will be killed.
+
+Quit anyway? (y or n) [answered Y; input not from terminal]

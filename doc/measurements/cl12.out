@@ -1,0 +1,32 @@
+=== roles after 8s (first fields are id/state/leader/term/commit/applied/LII/log) ===
+  port 8201: id=1 state=3 leader=1 term=1 commit=2 applied=2 snapshot=0 log=2 count=1 height=1 bytes=100 pending_frees=0 pending_bytes=0 persist_generation=3 wal_segment=0 w
+  port 8202: id=1 state=3 leader=1 term=1 commit=5 applied=5 snapshot=0 log=5 count=1 height=1 bytes=175 pending_frees=6 pending_bytes=450 persist_generation=6 wal_segment=0
+  port 8203: id=1 state=3 leader=1 term=1 commit=8 applied=8 snapshot=0 log=8 count=1 height=1 bytes=250 pending_frees=12 pending_bytes=900 persist_generation=9 wal_segment=
+=== 3s later ===
+  port 8201: id=1 state=3 leader=1 term=1 commit=12 applied=12 snapshot=0 log=12 count=1 height=1 bytes=350 pending_frees=20 pending_bytes=1500 persist_generation=13 wal_seg
+  port 8202: id=1 state=3 leader=1 term=1 commit=15 applied=15 snapshot=0 log=15 count=1 height=1 bytes=425 pending_frees=26 pending_bytes=1950 persist_generation=16 wal_seg
+  port 8203: id=1 state=3 leader=1 term=1 commit=18 applied=18 snapshot=0 log=18 count=1 height=1 bytes=500 pending_frees=32 pending_bytes=2400 persist_generation=19 wal_seg
+=== do all three ACCEPT a write (each thinks it is leader)? ===
+  port 8201: PROBE|status=0 leader_id=1 leader=:0 body= RESP|status=0 leader_id=1 leader=:0 body= 
+  port 8202: PROBE|status=3 leader_id=1 leader=127.0.0.1:8201 body= RESP|status=0 leader_id=1 leader=:0 body= 
+  port 8203: PROBE|status=3 leader_id=1 leader=127.0.0.1:8201 body= RESP|status=0 leader_id=1 leader=:0 body= 
+=== is the cluster SHARED? write a key on 8201 and read it on 8202/8203 ===
+  read on 8201: GET|n=1 ok=1 empty=0 err=0 bytes=11
+  read on 8202: GET|n=1 ok=1 empty=0 err=0 bytes=11
+  read on 8203: GET|n=1 ok=1 empty=0 err=0 bytes=11
+=== peer ports listening? ===
+127.0.0.1:56987 ESTABLISHED
+127.0.0.1:56989 ESTABLISHED
+127.0.0.1:56990 ESTABLISHED
+127.0.0.1:8301 LISTENING
+127.0.0.1:8302 ESTABLISHED
+127.0.0.1:8302 LISTENING
+=== server logs ===
+  == build/cl12/s1.log
+server 1 client=127.0.0.1:8201 peer=127.0.0.1:8301
+  == build/cl12/s2.log
+server 2 client=127.0.0.1:8202 peer=127.0.0.1:8302
+  == build/cl12/s3.log
+server 3 client=127.0.0.1:8203 peer=127.0.0.1:8303
+CL12_DONE
+CL12_EXIT=0

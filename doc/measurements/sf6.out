@@ -1,0 +1,41 @@
+[st] BECOME_CANDIDATE from=1 term=0
+[sv] apply leader_change is_leader=0 leader_id=0 lost=0
+[st] STEP_DOWN from=1 term=1 leader_id=0 flag_before=0
+[st] STEP_DOWN from=1 term=1 leader_id=0 flag_before=0
+[sv] apply leader_change is_leader=0 leader_id=0 lost=0
+[sv] apply leader_change is_leader=0 leader_id=0 lost=0
+[st] BECOME_LEADER from=2 term=1
+[sv] apply leader_change is_leader=1 leader_id=3 lost=0
+[sv] apply leader_change is_leader=0 leader_id=3 lost=0
+[sv] apply leader_change is_leader=0 leader_id=3 lost=0
+[st] STEP_DOWN from=3 term=1 leader_id=0 flag_before=0
+[sv] apply leader_change is_leader=0 leader_id=0 lost=1
+[st] BECOME_CANDIDATE from=1 term=1
+[sv] apply leader_change is_leader=0 leader_id=0 lost=0
+[st] STEP_DOWN from=1 term=2 leader_id=0 flag_before=0
+[sv] apply leader_change is_leader=0 leader_id=0 lost=0
+[st] BECOME_LEADER from=2 term=2
+[sv] apply leader_change is_leader=1 leader_id=1 lost=0
+[sv] apply leader_change is_leader=0 leader_id=1 lost=0
+[st] STEP_DOWN from=1 term=2 leader_id=1 flag_before=0
+[sv] apply leader_change is_leader=0 leader_id=1 lost=0
+[sv] apply leader_change is_leader=0 leader_id=0 lost=1
+snapshot: verified 97 (1147 bytes)
+snapshot: verified 64 (1272 bytes)
+snapshot: verified 64 (1272 bytes)
+[st] BECOME_CANDIDATE from=1 term=2
+[sv] apply leader_change is_leader=0 leader_id=0 lost=0
+[st] STEP_DOWN from=1 term=3 leader_id=0 flag_before=0
+[st] STEP_DOWN from=1 term=3 leader_id=0 flag_before=0
+[sv] apply leader_change is_leader=0 leader_id=0 lost=0
+[sv] apply leader_change is_leader=0 leader_id=0 lost=0
+[st] BECOME_LEADER from=2 term=3
+[sv] apply leader_change is_leader=1 leader_id=3 lost=0
+[sv] apply leader_change is_leader=0 leader_id=3 lost=0
+[sv] apply leader_change is_leader=0 leader_id=3 lost=0
+[st] STEP_DOWN from=3 term=3 leader_id=0 flag_before=0
+[sv] apply leader_change is_leader=0 leader_id=0 lost=1
+selftest: recovery GET failed
+snapshot: verified 64 (1272 bytes)
+snapshot: verified 97 (1147 bytes)
+snapshot: verified 64 (1272 bytes)

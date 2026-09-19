@@ -1,0 +1,47 @@
+alive_win=0
+s1: server 1 client=127.0.0.1:8121 peer=127.0.0.1:8221|
+s2: server 2 client=127.0.0.1:8122 peer=127.0.0.1:8222|
+s3: server 3 client=127.0.0.1:8123 peer=127.0.0.1:8223|
+LEADER=8121
+--- write 200 distinct keys, 37-byte values (leader) ---
+PHASE|n=200 k=8 wall_us=204527 ops_per_s=977
+LAT|n=200 min=5211 p50=6285 p90=15840 p99=16681 max=16688
+--- READ BACK through the leader (key __k__7 must be 37 bytes) ---
+STATS_BEFORE|id=1 state=3 leader=1 term=1 commit=204 applied=204 snapshot=200 log=4 count=202 height=15 bytes=28332 pending_frees=86 pending_bytes=6809 persist_generation=33 wal_segment=0 wal_offset=20371 wal_size=100 wal_next_segment=0 wal_next_offset=20471 wal_pending=0 wal_events=0 wal_records=33 wal_open_files=2 flush_by_target=0 flush_by_drain=4 flush_by_window=25 flush_by_bytes=0 flush_by_barrier=0 flush_by_stop=0 write_bytes=0 batch_bytes_limit=262144 rounds=1787 client_requests=203 snapshot_inflight=0 snapshot_failed=0 snapshot_cleanup_busy=0 cleanup_failed=0 flush_batches=29 flush_writes=203 peer_send_drops=0 wal_inflight=0 client_connections=1 client_connection_limit=4096 pending_requests=0 pending_request_limit=16384 pending_request_bytes=0 pending_request_bytes_limit=268435456 rx_buffer_bytes=0 rx_buffer_bytes_limit=67108864
+VALUE|key=__k__70 size=37 body=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+GET|n=1 ok=1 empty=0 err=0 bytes=37
+--- sanity: a key that was never written ---
+STATS_BEFORE|id=1 state=3 leader=1 term=1 commit=204 applied=204 snapshot=200 log=4 count=202 height=15 bytes=28332 pending_frees=86 pending_bytes=6809 persist_generation=33 wal_segment=0 wal_offset=20371 wal_size=100 wal_next_segment=0 wal_next_offset=20471 wal_pending=0 wal_events=0 wal_records=33 wal_open_files=2 flush_by_target=0 flush_by_drain=4 flush_by_window=25 flush_by_bytes=0 flush_by_barrier=0 flush_by_stop=0 write_bytes=0 batch_bytes_limit=262144 rounds=1845 client_requests=204 snapshot_inflight=0 snapshot_failed=0 snapshot_cleanup_busy=0 cleanup_failed=0 flush_batches=29 flush_writes=203 peer_send_drops=0 wal_inflight=0 client_connections=1 client_connection_limit=4096 pending_requests=0 pending_request_limit=16384 pending_request_bytes=0 pending_request_bytes_limit=268435456 rx_buffer_bytes=0 rx_buffer_bytes_limit=67108864
+VALUE|key=__nope__ size=0 body=
+GET|n=1 ok=0 empty=1 err=0 bytes=0
+--- kill the leader (8121) ---
+leader_winpid=22784 alive_win=0
+FAILOVER new_leader=8122 time_ms=781
+--- SURVIVAL: read committed keys through the NEW leader ---
+STATS_BEFORE|id=2 state=1 leader=3 term=2 commit=205 applied=205 snapshot=200 log=5 count=202 height=15 bytes=28332 pending_frees=86 pending_bytes=6809 persist_generation=35 wal_segment=0 wal_offset=20571 wal_size=133 wal_next_segment=0 wal_next_offset=20704 wal_pending=0 wal_events=0 wal_records=35 wal_open_files=2 flush_by_target=0 flush_by_drain=0 flush_by_window=0 flush_by_bytes=0 flush_by_barrier=0 flush_by_stop=0 write_bytes=0 batch_bytes_limit=262144 rounds=1884 client_requests=0 snapshot_inflight=0 snapshot_failed=0 snapshot_cleanup_busy=0 cleanup_failed=0 flush_batches=0 flush_writes=0 peer_send_drops=0 wal_inflight=0 client_connections=1 client_connection_limit=4096 pending_requests=0 pending_request_limit=16384 pending_request_bytes=0 pending_request_bytes_limit=268435456 rx_buffer_bytes=0 rx_buffer_bytes_limit=67108864
+VALUE|key=__k__70 size=37 body=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+GET|n=1 ok=1 empty=0 err=0 bytes=37
+survival_20keys: GET|n=20 ok=20 empty=0 err=0 bytes=740
+SURVIVAL=PASS
+--- post-failover throughput (2 nodes) ---
+PHASE|n=500 k=8 wall_us=8646 ops_per_s=57830
+LAT|n=500 min=10 p50=103 p90=197 p99=276 max=314
+--- restart the killed node ---
+alive_win=0 restarted=8121
+--- REJOIN: read the pre-failover key from the restarted node ---
+STATS_BEFORE|id=1 state=1 leader=3 term=2 commit=205 applied=205 snapshot=200 log=5 count=202 height=15 bytes=28332 pending_frees=86 pending_bytes=6809 persist_generation=35 wal_segment=0 wal_offset=20571 wal_size=133 wal_next_segment=0 wal_next_offset=20704 wal_pending=0 wal_events=0 wal_records=2 wal_open_files=2 flush_by_target=0 flush_by_drain=0 flush_by_window=0 flush_by_bytes=0 flush_by_barrier=0 flush_by_stop=0 write_bytes=0 batch_bytes_limit=262144 rounds=2035 client_requests=0 snapshot_inflight=0 snapshot_failed=0 snapshot_cleanup_busy=0 cleanup_failed=0 flush_batches=0 flush_writes=0 peer_send_drops=0 wal_inflight=0 client_connections=1 client_connection_limit=4096 pending_requests=0 pending_request_limit=16384 pending_request_bytes=0 pending_request_bytes_limit=268435456 rx_buffer_bytes=0 rx_buffer_bytes_limit=67108864
+VALUE|key=__k__0 size=37 body=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+GET|n=5 ok=5 empty=0 err=0 bytes=185
+rejoin_20keys: GET|n=20 ok=20 empty=0 err=0 bytes=740
+REJOIN=PASS
+--- 3-node again after rejoin ---
+PHASE|n=500 k=8 wall_us=11654 ops_per_s=42903
+LAT|n=500 min=4 p50=142 p90=242 p99=347 max=384
+== build/cl5/s1.log
+snapshot: verified 200 (10423 bytes)
+server 1 client=127.0.0.1:8121 peer=127.0.0.1:8221
+== build/cl5/s2.log
+server 2 client=127.0.0.1:8122 peer=127.0.0.1:8222
+== build/cl5/s3.log
+server 3 client=127.0.0.1:8123 peer=127.0.0.1:8223
+CL5_DONE

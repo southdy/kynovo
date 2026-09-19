@@ -1,0 +1,37 @@
+=== A) single-node cluster, K sweep (no replication at all) ===
+sn_K8          K=8    n=500 k=8 wall_us=524576 ops_per_s=953 | n=500 min=3835 p50=5720 p90=15201 p99=16126 max=16207
+wal_records=66 flush_by_target=0 flush_by_drain=20 flush_by_window=44 rounds=1019 flush_batches=64 
+sn_K32         K=32   n=500 k=32 wall_us=37904 ops_per_s=13191 | n=500 min=1729 p50=1990 p90=2663 p99=6455 max=6460
+wal_records=84 flush_by_target=15 flush_by_drain=20 flush_by_window=46 rounds=1407 flush_batches=81 
+sn_K128        K=128  n=500 k=128 wall_us=23485 ops_per_s=21290 | n=500 min=4582 p50=5310 p90=6678 p99=6895 max=6925
+wal_records=94 flush_by_target=30 flush_by_drain=21 flush_by_window=47 rounds=1690 flush_batches=98 
+sn_K256        K=256  n=500 k=256 wall_us=15303 ops_per_s=32673 | n=500 min=4209 p50=6468 p90=8228 p99=9574 max=9576
+wal_records=103 flush_by_target=43 flush_by_drain=25 flush_by_window=48 rounds=2062 flush_batches=116 
+=== B) 3-node cluster ===
+first writer (pre-failover) = 8151  alive=0
+pre_K8         K=8    n=500 k=8 wall_us=668412 ops_per_s=748 | n=500 min=5459 p50=7296 p90=17599 p99=26952 max=27082
+wal_records=69 flush_by_target=0 flush_by_drain=16 flush_by_window=50 rounds=1970 flush_batches=66 
+pre_K32        K=32   n=500 k=32 wall_us=89685 ops_per_s=5575 | n=500 min=3471 p50=4138 p90=13108 p99=20613 max=20731
+wal_records=87 flush_by_target=14 flush_by_drain=17 flush_by_window=52 rounds=2502 flush_batches=83 
+pre_K128       K=128  n=500 k=128 wall_us=127402 ops_per_s=3924 | n=500 min=4893 p50=17098 p90=68874 p99=70755 max=70865
+wal_records=109 flush_by_target=26 flush_by_drain=27 flush_by_window=53 rounds=2873 flush_batches=106 
+pre_K256       K=256  n=500 k=256 wall_us=229676 ops_per_s=2176 | n=500 min=6867 p50=30494 p90=129802 p99=193686 max=193837
+wal_records=129 flush_by_target=39 flush_by_drain=36 flush_by_window=54 rounds=3310 flush_batches=129 
+--- kill the node that has been serving (8151) ---
+writer after failover = 8152  alive=0
+post_K8        K=8    n=500 k=8 wall_us=6777 ops_per_s=73778 | n=500 min=11 p50=86 p90=134 p99=199 max=257
+wal_records=136 flush_by_target=0 flush_by_drain=0 flush_by_window=0 rounds=2897 flush_batches=0 
+post_K32       K=32   n=500 k=32 wall_us=6454 ops_per_s=77471 | n=500 min=7 p50=331 p90=525 p99=675 max=677
+wal_records=136 flush_by_target=0 flush_by_drain=0 flush_by_window=0 rounds=3121 flush_batches=0 
+post_K128      K=128  n=500 k=128 wall_us=6000 ops_per_s=83333 | n=500 min=122 p50=1044 p90=1749 p99=2076 max=2104
+wal_records=136 flush_by_target=0 flush_by_drain=0 flush_by_window=0 rounds=3331 flush_batches=0 
+post_K256      K=256  n=500 k=256 wall_us=5245 ops_per_s=95328 | n=500 min=209 p50=2091 p90=2807 p99=3135 max=3277
+wal_records=136 flush_by_target=0 flush_by_drain=0 flush_by_window=0 rounds=3533 flush_batches=0 
+== build/cl7/s1.log
+server 1 client=127.0.0.1:8151 peer=127.0.0.1:8251
+== build/cl7/s2.log
+server 2 client=127.0.0.1:8152 peer=127.0.0.1:8252
+== build/cl7/s3.log
+server 3 client=127.0.0.1:8153 peer=127.0.0.1:8253
+CL7_DONE
+CL7_EXIT=0

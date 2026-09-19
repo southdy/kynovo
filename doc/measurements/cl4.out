@@ -1,0 +1,31 @@
+alive_win=0
+s1.log_bytes=52
+server 1 client=127.0.0.1:8111 peer=127.0.0.1:8211
+s2.log_bytes=52
+server 2 client=127.0.0.1:8112 peer=127.0.0.1:8212
+s3.log_bytes=52
+server 3 client=127.0.0.1:8113 peer=127.0.0.1:8213
+LEADER=8111
+--- 3-node commit throughput (K=8) ---
+PHASE|n=1000 k=8 wall_us=1343941 ops_per_s=744
+LAT|n=1000 min=4900 p50=8191 p90=16497 p99=26828 max=27460
+--- write a known value through the leader ---
+--- kill the leader (8111) ---
+leader_winpid=3144 alive_win=0
+FAILOVER new_leader=8112 time_ms=724 (resolution: one blocking write probe)
+--- SURVIVAL: the value written before the failover ---
+SURVIVAL=NO_EVIDENCE
+--- post-failover throughput (2 nodes) ---
+PHASE|n=500 k=8 wall_us=8665 ops_per_s=57703
+LAT|n=500 min=4 p50=109 p90=163 p99=204 max=244
+--- restart the killed node and check rejoin ---
+alive_win=0 restarted_port=8111
+REJOIN_READ=NO_EVIDENCE
+== build/cl4/s1.log
+snapshot: verified 992 (124 bytes)
+server 1 client=127.0.0.1:8111 peer=127.0.0.1:8211
+== build/cl4/s2.log
+server 2 client=127.0.0.1:8112 peer=127.0.0.1:8212
+== build/cl4/s3.log
+server 3 client=127.0.0.1:8113 peer=127.0.0.1:8213
+CL4_DONE

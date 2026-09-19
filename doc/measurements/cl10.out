@@ -1,0 +1,24 @@
+port 8181 state=3 commit=1 wal_records=2
+port 8182 state=1 commit=4 wal_records=5
+port 8183 state=1 commit=4 wal_records=5
+LEADER=8181 FOLLOWER=8182 alive=0
+=== A) what a write to a FOLLOWER really is ===
+PHASE|n=200 k=32 wall_us=2921 ops_per_s=68469
+LAT|n=200 min=10 p50=403 p90=575 p99=760 max=760
+RESP|key=__f__ body=
+read back from the follower: GET|n=50 ok=0 empty=50 err=0 bytes=0
+=== B) the honest baseline: writes to the LEADER (state=3) ===
+K=8    n=500 k=8 wall_us=633124 ops_per_s=789 | n=500 min=5123 p50=7292 p90=17507 p99=28299 max=28570
+RESP|key=__k8_ body=
+     leader deltas: wal_records 5->73 flush_batches 3->71 commit 4->509 applied 4->509
+     read back 50 of them: GET|n=50 ok=50 empty=0 err=0 bytes=1850
+K=32   n=500 k=32 wall_us=71268 ops_per_s=7015 | n=500 min=2895 p50=4100 p90=7072 p99=7911 max=10300
+RESP|key=__k32_ body=
+     leader deltas: wal_records 76->98 flush_batches 74->95 commit 512->1017 applied 512->1017
+     read back 50 of them: GET|n=50 ok=50 empty=0 err=0 bytes=1850
+K=128  n=500 k=128 wall_us=109077 ops_per_s=4583 | n=500 min=4066 p50=15419 p90=21072 p99=58633 max=58676
+RESP|key=__k128_ body=
+     leader deltas: wal_records 101->124 flush_batches 98->121 commit 1020->1525 applied 1020->1525
+     read back 50 of them: GET|n=50 ok=50 empty=0 err=0 bytes=1850
+CL10_DONE
+CL10_EXIT=0

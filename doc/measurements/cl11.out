@@ -1,0 +1,18 @@
+port 8191 state=3 commit=2
+port 8192 state=3 commit=5
+port 8193 state=3 commit=8
+LEADER=8193 FOLLOWER=
+=== A) point the probe at the FOLLOWER (): must be redirected to the leader ===
+PROBE|sync_call_failed
+leader deltas: commit 11->14 applied 11->14 wal_records 12->15 flush_batches 10->13
+read back from the FOLLOWER: read back from the LEADER:   GET|n=50 ok=0 empty=50 err=0 bytes=0
+=== B) point the probe at the LEADER (8193) ===
+PROBE|status=3 leader_id=1 leader=127.0.0.1:8191 body=
+REDIRECT|following leader 127.0.0.1:8191
+PHASE|n=500 k=32 wall_us=85888 ops_per_s=5821
+LAT|n=500 min=3077 p50=4098 p90=8086 p99=19488 max=19490
+RESP|status=0 leader_id=1 leader=:0 body=
+leader deltas: commit 17->522 applied 17->522
+read back from the LEADER:   GET|n=50 ok=50 empty=0 err=0 bytes=1850
+CL11_DONE
+CL11_EXIT=0

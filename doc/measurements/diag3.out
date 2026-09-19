@@ -1,0 +1,21 @@
+msys_pids=302,303,304
+alive_win=0
+--- listeners on 81xx/82xx ---
+--- log sizes ---
+0 build/cl3/x1.log
+0 build/cl3/x2.log
+0 build/cl3/x3.log
+0 total
+--- probe each client port (SET then GET) ---
+SET 8101: stats call failed 
+SET 8102: stats call failed 
+SET 8103: stats call failed 
+--- simple TCP connect test ---
+connect 8101: REFUSED
+connect 8102: REFUSED
+connect 8103: REFUSED
+connect 8201: REFUSED
+connect 8202: REFUSED
+connect 8203: REFUSED
+after kill: 0
+DIAG_DONE

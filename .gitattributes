@@ -1,0 +1,10 @@
+# Store LF in the repository and check out LF: this project requires LF everywhere, on every
+# platform.  A CRLF file on a Windows checkout is a defect, not a preference.
+* text=auto eol=lf
+*.c    text eol=lf
+*.h    text eol=lf
+*.sh   text eol=lf
+*.md   text eol=lf
+*.py   text eol=lf
+*.exe  binary
+*.o    binary

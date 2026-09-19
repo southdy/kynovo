@@ -1,0 +1,9 @@
+snapshot: verified 64 (1272 bytes)
+snapshot: verified 97 (1147 bytes)
+snapshot: verified 64 (1272 bytes)
+snapshot: verified 64 (1272 bytes)
+warning: result for request id=1 whose connection is gone (type=1 status=4)
+snapshot: verified 64 (1272 bytes)
+snapshot: verified 97 (1147 bytes)
+snapshot: verified 64 (1272 bytes)
+selftest: PASS

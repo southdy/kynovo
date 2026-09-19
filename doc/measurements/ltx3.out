@@ -1,0 +1,16 @@
+[sd@3379]
+[sd@3379]
+[sd@4553]
+[sd@3379]
+[sd@3487]
+snapshot: verified 97 (1147 bytes)
+snapshot: verified 64 (1272 bytes)
+snapshot: verified 64 (1272 bytes)
+[sd@3379]
+[sd@3379]
+[sd@4553]
+[bar] follower, no leader_id
+selftest: recovery GET failed
+snapshot: verified 64 (1272 bytes)
+snapshot: verified 97 (1147 bytes)
+snapshot: verified 64 (1272 bytes)

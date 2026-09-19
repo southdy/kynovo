@@ -1,0 +1,5 @@
+--- is the server up? ---
+--- instrumented one-shot ---
+--- plain REPL via pipe for comparison (known: no output) ---
+CL14_DONE
+EXIT=0

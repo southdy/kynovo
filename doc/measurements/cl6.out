@@ -1,0 +1,20 @@
+LEADER=8131 alive=0
+--- same leader, same shape (K=8, 37B, 500 distinct keys), four phases ---
+cold   n=500 k=8 wall_us=724239 ops_per_s=690 | n=500 min=5592 p50=8425 p90=17769 p99=27210 max=27344
+snapshot=200 wal_records=69 flush_by_target=0 flush_by_drain=18 flush_by_window=48 rounds=1886 flush_batches=66 
+warm2  n=500 k=8 wall_us=677895 ops_per_s=737 | n=500 min=5544 p50=8015 p90=18110 p99=28295 max=28368
+snapshot=656 wal_records=133 flush_by_target=0 flush_by_drain=33 flush_by_window=97 rounds=3196 flush_batches=130 
+warm3  n=500 k=8 wall_us=668106 ops_per_s=748 | n=500 min=5696 p50=7598 p90=17012 p99=26241 max=26353
+snapshot=656 wal_records=198 flush_by_target=0 flush_by_drain=47 flush_by_window=148 rounds=4486 flush_batches=195 
+warm4  n=500 k=8 wall_us=656630 ops_per_s=761 | n=500 min=5788 p50=7795 p90=17822 p99=27731 max=27844
+snapshot=656 wal_records=262 flush_by_target=0 flush_by_drain=55 flush_by_window=204 rounds=5765 flush_batches=259 
+--- leader STATS at the end ---
+state=3 leader=1 term=1 commit=2007 applied=2007 snapshot=656 log=1351 count=2005 wal_records=262 rounds=6451 client_requests=2006 flush_batches=259 
+== build/cl6/s1.log
+server 1 client=127.0.0.1:8131 peer=127.0.0.1:8231
+== build/cl6/s2.log
+server 2 client=127.0.0.1:8132 peer=127.0.0.1:8232
+== build/cl6/s3.log
+server 3 client=127.0.0.1:8133 peer=127.0.0.1:8233
+CL6_DONE
+CL6_EXIT=0

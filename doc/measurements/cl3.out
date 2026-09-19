@@ -1,0 +1,30 @@
+started(win)=0
+ELECTED leader_port=8101
+--- node states (STATS via kdbctl if available) ---
+port 8101: 
+port 8102: 
+port 8103: 
+--- multi-node commit throughput (leader 8101) ---
+PHASE|n=2000 k=32 wall_us=66659 ops_per_s=30003
+LAT|n=2000 min=15 p50=871 p90=1456 p99=2352 max=3124
+PHASE|n=2000 k=1 wall_us=642467 ops_per_s=3113
+LAT|n=2000 min=6 p50=169 p90=197 p99=233 max=378
+PHASE|n=1000 k=32 wall_us=46106 ops_per_s=21689
+LAT|n=1000 min=60 p50=958 p90=1816 p99=2950 max=4130
+PHASE|n=100 k=32 wall_us=56562 ops_per_s=1767
+LAT|n=100 min=751 p50=7683 p90=9141 p99=9548 max=9548
+--- committed before failover: GET __clk32__1999 ---
+--- failover: kill leader 8101 ---
+leader winpid=9776
+alive after kill: 2
+FAILOVER new_leader=8102 probes=1 time_ms=1640 (resolution = 1 probe iteration)
+--- data survived? GET __clk32__1999 on new leader ---
+--- post-failover throughput (2 nodes) ---
+--- restart the killed node and check it catches up ---
+rejoin: reads_ok=0/20 ; alive=1
+--- cluster logs (tail) ---
+== build/cl3/s1.log
+== build/cl3/s1b.log
+== build/cl3/s2.log
+== build/cl3/s3.log
+CL3_DONE
