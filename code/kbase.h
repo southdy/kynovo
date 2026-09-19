@@ -49,6 +49,7 @@ typedef unsigned long long k_u64;
    offset of the first byte written after the free -- i.e. neither the writer nor the victim has to
    be guessed.  Inert unless K_ALLOC_DEBUG is defined. */
 #ifdef K_ALLOC_DEBUG
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -339,6 +340,65 @@ static void k_crc32(const void *data,k_u32 len,k_u32 *crc32){
   k_crc32_init(&ctx);
   k_crc32_update(&ctx,data,len);
   k_crc32_final(&ctx,crc32);
+}
+/* These live outside the K_ALLOC_DEBUG block above: that block is where <stdio.h>/<stdarg.h> used to
+   come from, which is why the bounded-formatting helpers below failed to compile on Linux (unknown
+   type name va_list) until they carried their own includes. */
+#include <stdarg.h>
+#include <stdio.h>
+#if defined(_WIN32) && !defined(_MSC_VER)
+/* MinGW declares vsnprintf `static` under -std=c89 and does not declare _vsnprintf at all, so the
+   msvcrt entry point is declared here rather than depending on the header's mood.  It exists in every
+   CRT this project targets. */
+__declspec(dllimport) int _vsnprintf(char *dst,size_t cap,const char *fmt,va_list ap);
+#endif
+/* Bounded formatting that is always NUL-terminated and reports what it could not fit.
+   MSVC 6's _vsnprintf does not terminate on truncation, so both branches finish by hand; a caller that
+   keeps appending (the INFO/STATS line does) therefore cannot run off the end of its buffer no matter
+   how many fields are added.  Returns the number of characters written, excluding the terminator. */
+static int k_snprintf(char *dst,size_t cap,const char *fmt,...){
+  va_list ap;
+  int need;
+  if(!dst||cap==0) return 0;
+  dst[0]='\0';
+  if(!fmt) return 0;
+  va_start(ap,fmt);
+#if defined(_WIN32)
+  /* _vsnprintf: MinGW declares vsnprintf static under -std=c89, so the msvcrt name is used on Windows
+     for BOTH compilers.  It returns -1 on truncation (MSVC) or the needed length (modern MinGW) - the
+     check below covers both by trusting strlen() afterwards. */
+  need=_vsnprintf(dst,cap,fmt,ap);
+#else
+  need=vsnprintf(dst,cap,fmt,ap);
+#endif
+  va_end(ap);
+  dst[cap-1u]='\0';
+  if(need<0||(size_t)need>=cap) return (int)strlen(dst);
+  return need;
+}
+/* Append to a growing text: never overflows, never leaves it unterminated, and reports truncation
+   through *over instead of silently shortening the record. */
+static void k_text_append(char *dst,size_t cap,int *len,int *over,const char *fmt,...){
+  va_list ap;
+  int need;
+  size_t left;
+  if(!dst||cap==0||!len) return;
+  if((size_t)*len>=cap-1u){ if(over) *over=1; return; }
+  left=cap-1u-(size_t)*len;
+  va_start(ap,fmt);
+#if defined(_WIN32)
+  need=_vsnprintf(dst+*len,left+1u,fmt,ap);
+#else
+  need=vsnprintf(dst+*len,left+1u,fmt,ap);
+#endif
+  va_end(ap);
+  dst[cap-1u]='\0';
+  if(need<0||(size_t)need>left){
+    *len=(int)strlen(dst);
+    if(over) *over=1;
+    return;
+  }
+  *len+=need;
 }
 static int k_monotonic_us(k_u64 *out_us){
 #if defined(_WIN32)

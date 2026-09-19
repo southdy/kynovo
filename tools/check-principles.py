@@ -154,6 +154,14 @@ report('app layer does not read raft config fields (budget 3, card t_972b67e8)',
 sites = scan(r'raft_inspect', ['code/kserver.h', 'code/kdbsvr.c', 'tests/raft_cluster_fuzz.c', 'tests/raft_test.c'])
 report('raft_inspect only in the diagnostics path (budget 1)', sites[1:] or [])
 
+# 8. unbounded formatting ratchet.  The INFO/STATS line used to be three unbounded sprintf calls that
+# appended through a `text+len` pointer into a fixed buffer, so one more field could overflow it.  It is
+# now built with k_text_append (bounded, always NUL-terminated, marks and counts truncation), and this
+# rule stops new bare sprintf calls into fixed buffers from creeping back in.  The budget is the site
+# count measured when the INFO/STATS line was converted; it may shrink, never grow.
+sites = scan(r'[^_a-zA-Z]sprintf\s*\(', LIB + ['code/kdbctl.c', 'code/kdbsvr.c'])
+report('no new bare sprintf in code/ (budget 13, use k_text_append/k_snprintf)', sites[13:] or [])
+
 # 8. contract files: changing them must be deliberate
 dirty = (git_out('status', '--porcelain', 'code/raft.h', 'code/treap.h') or '').strip()
 last = git_out('diff', '--name-only', 'HEAD~1', 'HEAD') or ''
