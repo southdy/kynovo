@@ -386,8 +386,46 @@ static int k_run_server_args(int argc,char **argv){
   return rc;
 }
 static int k_run_init_args(int argc,char **argv){
-  if(argc!=3||k_cfg_reset(argv[2])!=0||k_wal_meta_init(argv[2])!=0) return -1;
-  printf("initialized configuration for %s\n",argv[2]);
+  k_cfg cfg;
+  unsigned int value;
+  int i;
+  if(argc<3||k_cfg_reset(argv[2])!=0||k_wal_meta_init(argv[2])!=0) return -1;
+  if(argc==3){
+    printf("initialized configuration for %s\n",argv[2]);
+    return 0;
+  }
+  /* The batch target and the flush window are the two parameters that trade throughput against tail
+     latency, so they are settable where the store is created instead of only being compile-time
+     defaults.  The server prints them back at startup ([cfg] ...), which is the read-back that proves
+     what was actually stored.  Unknown options fail loudly rather than being ignored. */
+  if(k_cfg_load(argv[2],&cfg)!=0) return -1;
+  for(i=3;i<argc;i++){
+    if(i+1>=argc){
+      printf("kdbsvr: fatal: option '%s' needs a value\n",argv[i]);
+      return -1;
+    }
+    if(strcmp(argv[i],"--flush-items")==0){
+      if(k_parse_uint(argv[i+1],65536,&value)!=0||value<1u){ printf("kdbsvr: fatal: --flush-items must be 1..65536\n"); return -1; }
+      cfg.flush_item_limit=value;
+    }else if(strcmp(argv[i],"--flush-window-ms")==0){
+      if(k_parse_uint(argv[i+1],60000,&value)!=0||value<1u){ printf("kdbsvr: fatal: --flush-window-ms must be 1..60000\n"); return -1; }
+      cfg.flush_timeout_ms=value;
+    }else if(strcmp(argv[i],"--flush-bytes")==0){
+      if(k_parse_uint(argv[i+1],268435456,&value)!=0||value<1u){ printf("kdbsvr: fatal: --flush-bytes must be 1..268435456\n"); return -1; }
+      cfg.flush_bytes_limit=value;
+    }else{
+      printf("kdbsvr: fatal: unknown init option '%s'\n",argv[i]);
+      return -1;
+    }
+    i++;
+  }
+  if(k_cfg_validate(&cfg)!=0){
+    printf("kdbsvr: fatal: configuration rejected by validation\n");
+    return -1;
+  }
+  if(k_cfg_store(argv[2],&cfg)!=0) return -1;
+  printf("initialized configuration for %s (flush_items=%u flush_window_ms=%u flush_bytes=%u)\n",
+         argv[2],(unsigned)cfg.flush_item_limit,(unsigned)cfg.flush_timeout_ms,(unsigned)cfg.flush_bytes_limit);
   return 0;
 }
 
