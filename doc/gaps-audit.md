@@ -407,6 +407,25 @@ Next round's method: extend the `T2` three-line probe from "node 2 only" to **al
 
 ---
 
+## Observations recorded but NOT explained
+
+**O1 — one guest gate run reported `pass=7 fail=1`, failing layer not captured (2026-09-19).**
+`./build.sh regress quick` on the CentOS 7.9 guest reported `REGRESS|quick|pass=7 fail=1` once. The
+failing layer is **unknown**: the gate output had been filtered with a grep before being read, so the
+`GATE|...|FAIL|` line never reached the record — the exact mistake this project keeps a rule about
+("never pipe a tool's output through a grep before reading its verdict"). Five consecutive runs
+immediately afterwards were `pass=8 fail=0` (76-79 s), and the Windows side has no matching episode.
+Nothing is concluded from it: it is recorded so that a recurrence is met with the full output rather
+than re-discovered. First thing to capture next time: the `GATE|...|FAIL` line and `build/regress/`.
+
+**O2 — the C11 demonstration forces the internal counters, and a slow peer cannot reproduce the hang.**
+The `cemon_ingress_close` fix (issue #9) was demonstrated by setting `ingress_count` directly, not by
+driving a slow peer. That is not a shortcut around a hard repro: the ingress section covers a post/send
+call on the **owner** side, so a peer that sends slowly never holds it — only a thread that never leaves
+the section can, which is exactly the hang the bound removes. The demonstration therefore proves the exit
+condition and the warning, and is labelled as forcing the condition rather than as a peer-driven
+reproduction.
+
 ## G. Open items exposed by compiler differences (raised by CI's gcc 16.2.0, **unclassified**)
 
 **G1 — whether `raft_ready` is fully initialized by `raft_advance`.** **SETTLED, fixed in `raft.h`** (2026-09-19).
