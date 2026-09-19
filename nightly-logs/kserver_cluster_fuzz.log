@@ -1,0 +1,22 @@
+seed 1
+seed 2
+seed 3
+seed 4
+seed 5
+seed 6
+seed 7
+seed 8
+seed 9
+seed 10
+snapshot: verified 64 (1149 bytes)
+snapshot: verified 64 (1149 bytes)
+snapshot: verified 64 (1149 bytes)
+snapshot: verified 64 (1167 bytes)
+snapshot: verified 64 (1149 bytes)
+snapshot: verified 64 (1149 bytes)
+snapshot: verified 64 (1149 bytes)
+snapshot: verified 64 (1167 bytes)
+snapshot: verified 64 (1149 bytes)
+snapshot: verified 64 (1149 bytes)
+done: 10/10 clusters consistent (OOM stopped nodes in 10 runs)
+linearizability: 40 histories / 2509 ops decided by the checker, 0 inconclusive

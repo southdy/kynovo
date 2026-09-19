@@ -1,0 +1,33 @@
+BEGIN [1/16] client prints the SHUTDOWN response body (visibility)
+PASS  client prints the SHUTDOWN response body (visibility)  22 us
+BEGIN [2/16] client seed parse basic
+PASS  client seed parse basic  2 us
+BEGIN [3/16] client find endpoint
+PASS  client find endpoint  1 us
+BEGIN [4/16] client apply members dedup
+PASS  client apply members dedup  2 us
+BEGIN [5/16] client redirect appends (no clobber) -- C2 regression
+PASS  client redirect appends (no clobber) -- C2 regression  4 us
+BEGIN [6/16] client redirect to known endpoint (no dup)
+PASS  client redirect to known endpoint (no dup)  2 us
+BEGIN [7/16] client on-connect arms MEMBERS discovery
+PASS  client on-connect arms MEMBERS discovery  2 us
+BEGIN [8/16] client discovering cleared on error -- C1 regression
+PASS  client discovering cleared on error -- C1 regression  7 us
+BEGIN [9/16] client discovering cleared on closed -- C1 drop site
+PASS  client discovering cleared on closed -- C1 drop site  2 us
+BEGIN [10/16] client seed parse rejects malformed input
+PASS  client seed parse rejects malformed input  1 us
+BEGIN [11/16] client retry arms on leader-unknown then exhausts
+PASS  client retry arms on leader-unknown then exhausts  42 us
+BEGIN [12/16] client retry resends after deadline
+PASS  client retry resends after deadline  2 us
+BEGIN [13/16] client queue_rget arms RGET request
+PASS  client queue_rget arms RGET request  1 us
+BEGIN [14/16] client queue_member arms MEMBER request
+PASS  client queue_member arms MEMBER request  1 us
+BEGIN [15/16] client without pipelining still refuses a second in-flight request
+PASS  client without pipelining still refuses a second in-flight request  2 us
+BEGIN [16/16] client pipelining: K in flight, matched by id, completions accounted
+PASS  client pipelining: K in flight, matched by id, completions accounted  7 us
+SUMMARY: 16/16 passed  100 us

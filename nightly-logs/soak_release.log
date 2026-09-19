@@ -1,0 +1,31 @@
+alive at start: 1
+run1 alive=1 pipe mode=SET k=128 n=4000 wall_us=98798 ops_per_s=40496 ok=4000 not_found=0 other=0 end=complete
+run2 alive=1 pipe mode=SET k=128 n=4000 wall_us=97811 ops_per_s=40905 ok=4000 not_found=0 other=0 end=complete
+run3 alive=1 pipe mode=SET k=128 n=4000 wall_us=77831 ops_per_s=51406 ok=4000 not_found=0 other=0 end=complete
+run4 alive=1 pipe mode=SET k=128 n=4000 wall_us=88156 ops_per_s=45385 ok=4000 not_found=0 other=0 end=complete
+run5 alive=1 pipe mode=SET k=128 n=4000 wall_us=73057 ops_per_s=54765 ok=4000 not_found=0 other=0 end=complete
+run6 alive=1 pipe mode=SET k=128 n=4000 wall_us=74093 ops_per_s=53999 ok=4000 not_found=0 other=0 end=complete
+run7 alive=1 pipe mode=SET k=128 n=4000 wall_us=75459 ops_per_s=53022 ok=4000 not_found=0 other=0 end=complete
+run8 alive=1 pipe mode=SET k=128 n=4000 wall_us=87397 ops_per_s=45779 ok=4000 not_found=0 other=0 end=complete
+run9 alive=1 pipe mode=SET k=128 n=4000 wall_us=80622 ops_per_s=49626 ok=4000 not_found=0 other=0 end=complete
+run10 alive=1 pipe mode=SET k=128 n=4000 wall_us=93870 ops_per_s=42622 ok=4000 not_found=0 other=0 end=complete
+run11 alive=1 pipe mode=SET k=128 n=4000 wall_us=97124 ops_per_s=41194 ok=4000 not_found=0 other=0 end=complete
+run12 alive=1 pipe mode=SET k=128 n=4000 wall_us=78735 ops_per_s=50816 ok=4000 not_found=0 other=0 end=complete
+run13 alive=1 pipe mode=SET k=128 n=4000 wall_us=83935 ops_per_s=47667 ok=4000 not_found=0 other=0 end=complete
+run14 alive=1 pipe mode=SET k=128 n=4000 wall_us=84571 ops_per_s=47309 ok=4000 not_found=0 other=0 end=complete
+run15 alive=1 pipe mode=SET k=128 n=4000 wall_us=81069 ops_per_s=49353 ok=4000 not_found=0 other=0 end=complete
+run16 alive=1 pipe mode=SET k=128 n=4000 wall_us=82923 ops_per_s=48249 ok=4000 not_found=0 other=0 end=complete
+run17 alive=1 pipe mode=SET k=128 n=4000 wall_us=91619 ops_per_s=43669 ok=4000 not_found=0 other=0 end=complete
+run18 alive=1 pipe mode=SET k=128 n=4000 wall_us=84556 ops_per_s=47317 ok=4000 not_found=0 other=0 end=complete
+run19 alive=1 pipe mode=SET k=128 n=4000 wall_us=84717 ops_per_s=47227 ok=4000 not_found=0 other=0 end=complete
+run20 alive=1 pipe mode=SET k=128 n=4000 wall_us=93642 ops_per_s=42726 ok=4000 not_found=0 other=0 end=complete
+run21 alive=1 pipe mode=SET k=128 n=4000 wall_us=86253 ops_per_s=46386 ok=4000 not_found=0 other=0 end=complete
+run22 alive=1 pipe mode=SET k=128 n=4000 wall_us=81746 ops_per_s=48944 ok=4000 not_found=0 other=0 end=complete
+run23 alive=1 pipe mode=SET k=128 n=4000 wall_us=86403 ops_per_s=46306 ok=4000 not_found=0 other=0 end=complete
+run24 alive=1 pipe mode=SET k=128 n=4000 wall_us=83240 ops_per_s=48065 ok=4000 not_found=0 other=0 end=complete
+rounds_run=24 rounds_without_full_success=0
+=== final liveness: 1 ===
+=== server log ===
+[cfg] poll_ms=10 flush_timeout_ms=3 flush_item_limit=32 flush_bytes_limit=262144 wal_seg_size=67108864 (batch targets)
+server 1 client=127.0.0.1:9481 peer=127.0.0.1:9482
+done

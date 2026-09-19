@@ -1,0 +1,399 @@
+warning: expected gcc 15.2.0 under /d/MinW64-15.2.0/bin, found 16.2.0; older mingw headers may lack LPFN_ACCEPTEX
+  pass selftest
+  pass raft_test
+  pass raft_fuzz
+  pass raft_cluster_fuzz
+  pass kclient_test
+  pass kserver_test
+  pass kserver_cluster_fuzz
+  pass cemon_bench
+raft.h  (union of 6 drivers)
+  lines   : 93.36%  (2405/2576)
+  branches: 81.25%  taken-at-least-once (1816/2235)
+  uncovered branches (419):
+    raft.h:718  if(!raft_id_valid(id)) return 0;
+    raft.h:730  if(!set) return;
+    raft.h:737  if(!set){
+    raft.h:752  if(!out) return -1;
+    raft.h:754  if(id_count<0||(id_count>0&&!ids)) return -1;
+    raft.h:754  if(id_count<0||(id_count>0&&!ids)) return -1;
+    raft.h:779  if(!set||raft_make_sorted_ids(ids,id_count,&copy)<0) return -1;
+    raft.h:786  if(!dst||!src) return -1;
+    raft.h:786  if(!dst||!src) return -1;
+    raft.h:790  return r!=0&&r->phase>=p;
+    raft.h:790  return r!=0&&r->phase>=p;
+    raft.h:794  if(!set||!set->ids||set->id_count<=0) return 0;
+    raft.h:794  if(!set||!set->ids||set->id_count<=0) return 0;
+    raft.h:800  if(!learners||learners->id_count<=0) return 0;
+    raft.h:811  if(next<cur) next=~0U;
+
+kserver.h  (union of 3 drivers)
+  lines   : 88.16%  (2666/3024)
+  branches: 64.42%  taken-at-least-once (1896/2943)
+  uncovered branches (1047):
+    kserver.h:547  if(mask.id_count<0||mask.id_count>K_MAX_NODES||(mask.id_count&&!mask.ids)){
+    kserver.h:547  if(mask.id_count<0||mask.id_count>K_MAX_NODES||(mask.id_count&&!mask.ids)){
+    kserver.h:547  if(mask.id_count<0||mask.id_count>K_MAX_NODES||(mask.id_count&&!mask.ids)){
+    kserver.h:557  if(!r||!mask) return -1;
+    kserver.h:557  if(!r||!mask) return -1;
+    kserver.h:561  if(r->err||count>K_MAX_NODES) return -1;
+    kserver.h:561  if(r->err||count>K_MAX_NODES) return -1;
+    kserver.h:564  if(!ids) return -1;
+    kserver.h:566  if(r->err){
+    kserver.h:575  if(!mask) return;
+    kserver.h:582  if(!ids_out||!count_out||mask.id_count<0||(mask.id_count&&!mask.ids)) return -...
+    kserver.h:582  if(!ids_out||!count_out||mask.id_count<0||(mask.id_count&&!mask.ids)) return -...
+    kserver.h:582  if(!ids_out||!count_out||mask.id_count<0||(mask.id_count&&!mask.ids)) return -...
+    kserver.h:582  if(!ids_out||!count_out||mask.id_count<0||(mask.id_count&&!mask.ids)) return -...
+    kserver.h:585  if(!ids) return -1;
+
+kbase.h  (union of 5 drivers)
+  lines   : 84.18%  (133/158)
+  branches: 52.78%  taken-at-least-once (57/108)
+  uncovered branches (51):
+    kbase.h:320  if(!ctx) return -1;
+    kbase.h:327  if(!ctx||(len&&!data)) return -1;
+    kbase.h:327  if(!ctx||(len&&!data)) return -1;
+    kbase.h:327  if(!ctx||(len&&!data)) return -1;
+    kbase.h:334  if(!ctx||!crc32) return -1;
+    kbase.h:334  if(!ctx||!crc32) return -1;
+    kbase.h:362  if(!dst||cap==0) return 0;
+    kbase.h:362  if(!dst||cap==0) return 0;
+    kbase.h:362  if(!dst||cap==0) return 0;
+    kbase.h:362  if(!dst||cap==0) return 0;
+    kbase.h:364  if(!fmt) return 0;
+    kbase.h:364  if(!fmt) return 0;
+    kbase.h:376  if(need<0||(size_t)need>=cap) return (int)strlen(dst);
+    kbase.h:376  if(need<0||(size_t)need>=cap) return (int)strlen(dst);
+    kbase.h:376  if(need<0||(size_t)need>=cap) return (int)strlen(dst);
+
+kproto.h  (union of 4 drivers)
+  lines   : 96.15%  (150/156)
+  branches: 68.35%  taken-at-least-once (149/218)
+  uncovered branches (69):
+    kproto.h:105  if(!text||!text[0]||!out) return -1;
+    kproto.h:105  if(!text||!text[0]||!out) return -1;
+    kproto.h:105  if(!text||!text[0]||!out) return -1;
+    kproto.h:107  if(*end||value==0||value>(unsigned long)max_value) return -1;
+    kproto.h:114  if(!cluster) return -1;
+    kproto.h:124  if(!cluster||!text||!text[0]) return -1;
+    kproto.h:124  if(!cluster||!text||!text[0]) return -1;
+    kproto.h:124  if(!cluster||!text||!text[0]) return -1;
+    kproto.h:127  while(*cursor){
+    kproto.h:133  if(!len||len>=sizeof(item)||count>=K_MAX_NODES) return -1;
+    kproto.h:133  if(!len||len>=sizeof(item)||count>=K_MAX_NODES) return -1;
+    kproto.h:133  if(!len||len>=sizeof(item)||count>=K_MAX_NODES) return -1;
+    kproto.h:137  if(!at) return -1;
+    kproto.h:140  if(!colon1) return -1;
+    kproto.h:143  if(!colon2||strchr(colon2+1,':')) return -1;
+
+kclient.h  (union of 2 drivers)
+  lines   : 87.68%  (249/284)
+  branches: 57.81%  taken-at-least-once (185/320)
+  uncovered branches (135):
+    kclient.h:101  if(!app) return 0;
+    kclient.h:107  return app&&app->inflight_limit>1?app->inflight_limit:1;
+    kclient.h:124  if(!app) return;
+    kclient.h:129  if(!app||!app->connected||!app->sock) return 0;
+    kclient.h:129  if(!app||!app->connected||!app->sock) return 0;
+    kclient.h:129  if(!app||!app->connected||!app->sock) return 0;
+    kclient.h:131  if(!pending->sent){
+    kclient.h:132  if(app->transport->send(app,app->sock,K_CLIENT_MAGIC,pending->type,pending->pa...
+    kclient.h:141  if(!app||!pending) return;
+    kclient.h:141  if(!app||!pending) return;
+    kclient.h:142  for(link=&app->pending;*link;link=&(*link)->next){
+    kclient.h:156  if(!app) return -1;
+    kclient.h:168  if(!app||!host) return -1;
+    kclient.h:168  if(!app||!host) return -1;
+    kclient.h:170  if(app->ports[i]==port&&strcmp(app->hosts[i],host)==0) return i;
+
+runtime.h  (union of 4 drivers)
+  lines   : 81.07%  (257/317)
+  branches: 52.55%  taken-at-least-once (103/196)
+  uncovered branches (93):
+    runtime.h:197  if(*stop){ LeaveCriticalSection(&q->lock); return -1; }
+    runtime.h:207  if(!t){
+    runtime.h:234  if(WaitForSingleObject(q->wake,(timeout_ms<0)?INFINITE:(DWORD)timeout_ms)==WAI...
+    runtime.h:236  if(*stop&&!q->head){
+    runtime.h:255  if(fn) *fn=t->fn;
+    runtime.h:256  if(arg) *arg=t->arg;
+    runtime.h:273  while(q->head){
+    runtime.h:285  if(q->wake) CloseHandle(q->wake);
+    runtime.h:377  if(WaitForSingleObject(t->ready_event,RUNTIME_WAIT_MS)!=WAIT_OBJECT_0){ fprint...
+    runtime.h:401  if(WaitForSingleObject(t->exit_event,RUNTIME_WAIT_MS)!=WAIT_OBJECT_0){ fprintf...
+    runtime.h:412  if(t->threads){
+    runtime.h:416  if(t->threads[i]){
+    runtime.h:417  if(WaitForSingleObject(t->threads[i],RUNTIME_WAIT_MS)!=WAIT_OBJECT_0){ fprintf...
+    runtime.h:431  if(t->ready_event) CloseHandle(t->ready_event);
+    runtime.h:432  if(t->exit_event) CloseHandle(t->exit_event);
+
+treap.h  (union of 3 drivers)
+  lines   : 92.72%  (650/701)
+  branches: 63.68%  taken-at-least-once (391/614)
+  uncovered branches (223):
+    treap.h:132  if(!data||!len) return 0;
+    treap.h:132  if(!data||!len) return 0;
+    treap.h:134  if(!b) return 0;
+    treap.h:142  return b?(unsigned char *)(b+1):0;
+    treap.h:146  if(!value) return;
+    treap.h:154  if(!value) return 0;
+    treap.h:156  if(b->refs>0) b->refs--;
+    treap.h:204  if(!n) return;
+    treap.h:263  if(!dst||!src) return;
+    treap.h:263  if(!dst||!src) return;
+    treap.h:264  if(src->alloc_head){
+    treap.h:306  if(!key_len) n->key=0;
+    treap.h:321  if(!value_len){
+    treap.h:327  if(!b) return -1;
+    treap.h:330  if(value_bytes) *value_bytes+=b->bytes;
+
+vfs.h  (union of 3 drivers)
+  lines   : 86.85%  (185/213)
+  branches: 58.90%  taken-at-least-once (86/146)
+  uncovered branches (60):
+    vfs.h:97  if(fd==INVALID_HANDLE_VALUE) return 0;
+    vfs.h:103  if(file_disk){
+    vfs.h:118  return (DeleteFileA(path)||GetLastError()==ERROR_FILE_NOT_FOUND)?0:-1;
+    vfs.h:137  if(!ReadFile(file_disk->fd,ptr,(DWORD)chunk,&done,&ov)||done==0) return -1;
+    vfs.h:159  if(!WriteFile(file_disk->fd,ptr,(DWORD)chunk,&done,&ov)||done==0) return -1;
+    vfs.h:159  if(!WriteFile(file_disk->fd,ptr,(DWORD)chunk,&done,&ov)||done==0) return -1;
+    vfs.h:173  return FlushFileBuffers(file_disk->fd)?0:-1;
+    vfs.h:228  if(!n->blocks) return 0;
+    vfs.h:229  for(b=n->blocks[(size_t)(id%(vfs_u64)n->nbuckets)];b;b=b->next){
+    vfs.h:230  if(b->id==id) return b;
+    vfs.h:240  if(!n->blocks) return 0;
+    vfs.h:244  if(b->id==id) return b;
+    vfs.h:247  if(!b) return 0;
+    vfs.h:252  if(n->nblocks>n->nbuckets*2&&n->nbuckets<((size_t)-1)/2){
+    vfs.h:252  if(n->nblocks>n->nbuckets*2&&n->nbuckets<((size_t)-1)/2){
+
+cemon.h  (union of 2 drivers)
+  lines   : 66.10%  (1020/1543)
+  branches: 42.39%  taken-at-least-once (668/1576)
+  uncovered branches (908):
+    cemon.h:678  if(period==0) return now;
+    cemon.h:679  if(now<at) return at+period;
+    cemon.h:682  if(period>0&&steps>limit/period){
+    cemon.h:682  if(period>0&&steps>limit/period){
+    cemon.h:683  if(now>(~(cemon_u64)0)-period) return ~(cemon_u64)0;
+    cemon.h:683  if(now>(~(cemon_u64)0)-period) return ~(cemon_u64)0;
+    cemon.h:689  if(us){
+    cemon.h:691  if(us>(cemon_u64)2147483647) return 2147483647;   /* plain int constant: no C9...
+    cemon.h:696  if(out==0||addr==0||len<=0||len>(int)sizeof(out->data)) return -1;
+    cemon.h:696  if(out==0||addr==0||len<=0||len>(int)sizeof(out->data)) return -1;
+    cemon.h:696  if(out==0||addr==0||len<=0||len>(int)sizeof(out->data)) return -1;
+    cemon.h:696  if(out==0||addr==0||len<=0||len>(int)sizeof(out->data)) return -1;
+    cemon.h:703  if(out==0) return -1;
+    cemon.h:704  if(host==0||host[0]==0){
+    cemon.h:704  if(host==0||host[0]==0){
+
+bench_env.h  (union of 1 driver)
+  lines   : 100.00%  (23/23)
+  branches: 68.75%  taken-at-least-once (11/16)
+  uncovered branches (5):
+    bench_env.h:36  if(t1>t0&&(best==0||t1-t0<best)) best=t1-t0;
+    bench_env.h:52  printf("== %s: env ==\n",tool?tool:"bench");
+    bench_env.h:53  printf("   cpu      : %s / %s logical\n",ident?ident:"?",ncpu?ncpu:"?");
+    bench_env.h:53  printf("   cpu      : %s / %s logical\n",ident?ident:"?",ncpu?ncpu:"?");
+    bench_env.h:64  printf("   params   : %s\n",params?params:"(none)");
+
+cemon_bench.c  (union of 1 driver)
+  lines   : 99.27%  (272/274)
+  branches: 67.42%  taken-at-least-once (89/132)
+  uncovered branches (43):
+    cemon_bench.c:64  if(n<=0){ printf("%-28s no samples\n",label); return 0; }
+    cemon_bench.c:111  while(!runtime_should_stop(rt)&&ctx->i<ctx->n){
+    cemon_bench.c:126  if(!rt){ os_wake_free(&ctx.w); return 0; }
+    cemon_bench.c:161  if(ctx->handled<ctx->n){
+    cemon_bench.c:164  ctx->samples[ctx->handled]=now>node->post_us?now-node->post_us:0u;
+    cemon_bench.c:173  while(!runtime_should_stop(rt)&&ctx->posted<ctx->n){
+    cemon_bench.c:177  if(!node) break;
+    cemon_bench.c:180  if(cemon_post(ctx->loop,lat_cb,node)!=0){ free(node); break; }
+    cemon_bench.c:194  if(!loop) return 0;
+    cemon_bench.c:197  if(!rt){ cemon_destroy(loop); return 0; }
+    cemon_bench.c:201  while(ctx.handled<n&&(bench_now()-t0)<30000000u) cemon_poll(loop,10);
+    cemon_bench.c:202  if(ctx.handled<n) printf("   [warn] latency test stopped early: handled=%d of ...
+    cemon_bench.c:232  if(cemon_post(ctx->loop,noop_cb,ctx)!=0) break;
+    cemon_bench.c:258  while(!runtime_should_stop(rt)&&!ctx->stop){
+    cemon_bench.c:260  if(cemon_post(ctx->loop,steady_cb,ctx)!=0) continue;
+
+kclient_test.c  (union of 1 driver)
+  lines   : 99.31%  (286/288)
+  branches: 50.85%  taken-at-least-once (120/236)
+  uncovered branches (116):
+    kclient_test.c:42  if(host) strncpy(g.conn_host,host,K_HOST_MAX-1);
+    kclient_test.c:60  vsnprintf(g.out+g.outlen,sizeof(g.out)-(g.outlen<sizeof(g.out)?g.outlen:0),fmt...
+    kclient_test.c:77  k_u32 body_len=body?(k_u32)strlen(body):0u;
+    kclient_test.c:100  TEST_ASSERT(k_client_queue(&app,K_REQ_SHUTDOWN,0,0,0,0)==0,"queue SHUTDOWN");
+    kclient_test.c:101  TEST_ASSERT(app.pending!=0,"pending armed");
+    kclient_test.c:103  TEST_ASSERT(k_client_response_frame(&app,K_RESPONSE,b.data,b.len)==0,"feed OK ...
+    kclient_test.c:104  TEST_ASSERT_STR_EQ(g.out,"stopping","the SHUTDOWN body is printed, not swallow...
+    kclient_test.c:104  TEST_ASSERT_STR_EQ(g.out,"stopping","the SHUTDOWN body is printed, not swallow...
+    kclient_test.c:104  TEST_ASSERT_STR_EQ(g.out,"stopping","the SHUTDOWN body is printed, not swallow...
+    kclient_test.c:114  TEST_ASSERT(k_client_seed_parse(&app,"h1:7000,h2:7001")==0,"seed parse ok");
+    kclient_test.c:115  TEST_ASSERT(app.host_count==2,"host_count 2");
+    kclient_test.c:116  TEST_ASSERT(app.seed_count==2,"seed_count 2");
+    kclient_test.c:117  TEST_ASSERT_STR_EQ(app.hosts[0],"h1","hosts[0]");
+    kclient_test.c:117  TEST_ASSERT_STR_EQ(app.hosts[0],"h1","hosts[0]");
+    kclient_test.c:117  TEST_ASSERT_STR_EQ(app.hosts[0],"h1","hosts[0]");
+
+kserver_cluster_fuzz.c  (union of 1 driver)
+  lines   : 86.41%  (426/493)
+  branches: 66.83%  taken-at-least-once (278/416)
+  uncovered branches (138):
+    kserver_cluster_fuzz.c:50  static void *km_malloc(size_t n){ return km_oom_hit()?0:malloc(n); }
+    kserver_cluster_fuzz.c:117  if(t) treap_scan(t,0,0,0,0,TREAP_ASC,hash_visit,&c);
+    kserver_cluster_fuzz.c:160  if(!d) return 0;
+    kserver_cluster_fuzz.c:169  if(g_capture_resp && magic==K_CLIENT_MAGIC && type==K_RESPONSE){
+    kserver_cluster_fuzz.c:173  if(k_response_decode(&r,(const k_u8*)payload,size)==0){
+    kserver_cluster_fuzz.c:175  if(c){
+    kserver_cluster_fuzz.c:188  if(!m) return -1;
+    kserver_cluster_fuzz.c:195  if(size){
+    kserver_cluster_fuzz.c:197  if(!m->payload){ free(m); return -1; }
+    kserver_cluster_fuzz.c:214  for(i=0;i<nnode;i++) if(nodes[i].id==id) return &nodes[i];
+    kserver_cluster_fuzz.c:221  for(c=s->connections;c;c=c->next) if(c->sock==sock) return c;
+    kserver_cluster_fuzz.c:229  k_conn *c=dst?find_conn_by_sock(dst,SOCK_ENC(to,from)):0;
+    kserver_cluster_fuzz.c:231  if(!c) return;
+    kserver_cluster_fuzz.c:233  if(!frame) return;
+    kserver_cluster_fuzz.c:235  if(size) memcpy(frame+K_FRAME_HEADER,payload,size);
+
+kserver_test.c  (union of 1 driver)
+  lines   : 97.74%  (951/973)
+  branches: 53.00%  taken-at-least-once (406/766)
+  uncovered branches (360):
+    kserver_test.c:57  if(size&&payload) memcpy(gcap.last_payload,payload,(size<sizeof(gcap.last_payl...
+    kserver_test.c:57  if(size&&payload) memcpy(gcap.last_payload,payload,(size<sizeof(gcap.last_payl...
+    kserver_test.c:86  if(s->wal_rt) runtime_drain(s->wal_rt);
+    kserver_test.c:87  if(s->snapshot_rt) runtime_drain(s->snapshot_rt);
+    kserver_test.c:93  for(i=0;i<100&&!s->is_leader;i++) turn(s,50u);
+    kserver_test.c:94  return s->is_leader?0:-1;
+    kserver_test.c:102  if(k_request_payload(&b,request_id,type,key,key_len,value,value_len)!=0){ k_bu...
+    kserver_test.c:104  if(total>cap){ k_buf_free(&b); return 0; }
+    kserver_test.c:106  if(b.len) memcpy(out+K_FRAME_HEADER,b.data,b.len);
+    kserver_test.c:126  TEST_ASSERT(k_server_open(&s)==0,"open");
+    kserver_test.c:127  TEST_ASSERT(elect(&s)==0,"leader");
+    kserver_test.c:132  TEST_ASSERT(total>0,"MEMBERS frame");
+    kserver_test.c:135  TEST_ASSERT(gcap.send_count>sends_before,"server answered the first request");
+    kserver_test.c:136  TEST_ASSERT(gcap.last_type==K_RESPONSE,"the reply is a response frame");
+    kserver_test.c:137  TEST_ASSERT(gcap.close_calls==closes_before,"connection was not closed");
+
+lincheck.h  (union of 1 driver)
+  lines   : 92.25%  (131/142)
+  branches: 82.61%  taken-at-least-once (76/92)
+  uncovered branches (16):
+    lincheck.h:62  if(n<0||n>LIN_MAX) return LIN_INCONCLUSIVE;
+    lincheck.h:62  if(n<0||n>LIN_MAX) return LIN_INCONCLUSIVE;
+    lincheck.h:98  for(probe=0;probe<LIN_MEMO_SIZE;probe++){
+    lincheck.h:100  if(lin_memo[i].used==used&&lin_memo[i].cur==cur) return 1;
+    lincheck.h:108  if(!lin_memo[i].valid||(lin_memo[i].used==used&&lin_memo[i].cur==cur)){
+    lincheck.h:157  if(n<0||n>LIN_MAX) return LIN_INCONCLUSIVE;
+    lincheck.h:157  if(n<0||n>LIN_MAX) return LIN_INCONCLUSIVE;
+    lincheck.h:169  for(i=0;i<n;i++)
+    lincheck.h:169  for(i=0;i<n;i++)
+    lincheck.h:171  (long)ops[i].inv,(long)ops[i].resp);
+    lincheck.h:171  (long)ops[i].inv,(long)ops[i].resp);
+    lincheck.h:176  if(got!=expect){
+    lincheck.h:259  if(r!=oracle){
+    lincheck.h:272  if(r!=0&&r!=1){ fprintf(stderr,"lincheck selftest FAIL: memo lookup returned %...
+    lincheck.h:272  if(r!=0&&r!=1){ fprintf(stderr,"lincheck selftest FAIL: memo lookup returned %...
+
+raft_cluster_fuzz.c  (union of 1 driver)
+  lines   : 86.08%  (1274/1480)
+  branches: 68.78%  taken-at-least-once (868/1262)
+  uncovered branches (394):
+    raft_cluster_fuzz.c:96  if(g_cur_node_idx>=0&&g_cur_node_idx<5) g_oom_node[g_cur_node_idx]++;
+    raft_cluster_fuzz.c:96  if(g_cur_node_idx>=0&&g_cur_node_idx<5) g_oom_node[g_cur_node_idx]++;
+    raft_cluster_fuzz.c:211  n=(old.ids&&old.id_count>0)?old.id_count:0;
+    raft_cluster_fuzz.c:211  n=(old.ids&&old.id_count>0)?old.id_count:0;
+    raft_cluster_fuzz.c:214  n=(new_.ids&&new_.id_count>0)?new_.id_count:0;
+    raft_cluster_fuzz.c:214  n=(new_.ids&&new_.id_count>0)?new_.id_count:0;
+    raft_cluster_fuzz.c:217  n=(learn.ids&&learn.id_count>0)?learn.id_count:0;
+    raft_cluster_fuzz.c:239  for(i=start;i<ev_count;i++) fprintf(stderr,"%s\n",ev_buf[i%EV_MAX]);
+    raft_cluster_fuzz.c:239  for(i=start;i<ev_count;i++) fprintf(stderr,"%s\n",ev_buf[i%EV_MAX]);
+    raft_cluster_fuzz.c:266  return (m.id_count>0&&m.ids)?sizeof(int)*(size_t)m.id_count:0;
+    raft_cluster_fuzz.c:266  return (m.id_count>0&&m.ids)?sizeof(int)*(size_t)m.id_count:0;
+    raft_cluster_fuzz.c:275  if(m.id_count>0&&m.ids) return align8(base)+mask_size(m);
+    raft_cluster_fuzz.c:282  if(!arr||ec<=0) return base;
+    raft_cluster_fuzz.c:282  if(!arr||ec<=0) return base;
+    raft_cluster_fuzz.c:323  if(src.id_count>0&&src.ids){
+
+raft_fuzz.c  (union of 1 driver)
+  lines   : 92.75%  (320/345)
+  branches: 91.20%  taken-at-least-once (114/125)
+  uncovered branches (11):
+    raft_fuzz.c:59  for(i=start;i<act_count;i++) fprintf(stderr,"%s\n",act_buf[i%ACT_MAX]);
+    raft_fuzz.c:59  for(i=start;i<act_count;i++) fprintf(stderr,"%s\n",act_buf[i%ACT_MAX]);
+    raft_fuzz.c:116  if(n<=1) return 0;
+    raft_fuzz.c:157  if(g_last_term>=0 && rd->persist.term<g_last_term)
+    raft_fuzz.c:162  if(g_last_commit>=0 && rd->commit_index<g_last_commit)
+    raft_fuzz.c:168  if(idx<=g_last_apply)
+    raft_fuzz.c:170  if(idx>rd->commit_index)
+    raft_fuzz.c:260  switch(m.type){
+    raft_fuzz.c:348  switch(c.type){
+    raft_fuzz.c:523  if(argc>1) seed = (unsigned long)strtoul(argv[1],0,10);
+    raft_fuzz.c:524  if(argc>2) count = (unsigned long)strtoul(argv[2],0,10);
+
+raft_test.c  (union of 1 driver)
+  lines   : 99.05%  (7327/7397)
+  branches: 56.38%  taken-at-least-once (1369/2428)
+  uncovered branches (1059):
+    raft_test.c:30  if(n<0) n=0;
+    raft_test.c:31  if(n>RESTORE_COPY_MAX) n=RESTORE_COPY_MAX;
+    raft_test.c:32  if(n>0&&src->log_entries){
+    raft_test.c:32  if(n>0&&src->log_entries){
+    raft_test.c:184  if(ready.messages[ri].type==RAFT_MSG_REQUEST_VOTE){
+    raft_test.c:199  if(ready.messages[ri].type==RAFT_MSG_REQUEST_VOTE
+    raft_test.c:221  if(ready.messages[ri].type==RAFT_MSG_REQUEST_VOTE){
+    raft_test.c:235  if(ready.messages[ri].type==RAFT_MSG_REQUEST_VOTE
+    raft_test.c:256  if(ready.messages[ri].type==RAFT_MSG_REQUEST_VOTE){
+    raft_test.c:270  if(ready.messages[ri].type==RAFT_MSG_REQUEST_VOTE
+    raft_test.c:302  if(ready.messages[ri].type==RAFT_MSG_REQUEST_VOTE
+    raft_test.c:303  && !ready.messages[ri].request_vote.pre_vote){
+    raft_test.c:320  for(phase=0;phase<10;phase++){
+    raft_test.c:342  TEST_ASSERT(raft_recvfrom_client(r,&cmsg)==0,"submit accepted");
+    raft_test.c:372  if(g_test_ctx){
+
+selftest.c  (union of 1 driver)
+  lines   : 93.65%  (1003/1071)
+  branches: 55.19%  taken-at-least-once (638/1156)
+  uncovered branches (518):
+    selftest.c:48  if(!sock||size>K_FRAME_MAX||(size&&!payload)) return -1;
+    selftest.c:48  if(!sock||size>K_FRAME_MAX||(size&&!payload)) return -1;
+    selftest.c:48  if(!sock||size>K_FRAME_MAX||(size&&!payload)) return -1;
+    selftest.c:48  if(!sock||size>K_FRAME_MAX||(size&&!payload)) return -1;
+    selftest.c:51  if(!frame) return -1;
+    selftest.c:53  if(size) memcpy(frame+K_FRAME_HEADER,payload,size);
+    selftest.c:67  if(!sock||!event) return;
+    selftest.c:67  if(!sock||!event) return;
+    selftest.c:69  if(!ud) return;
+    selftest.c:75  if(*(const int *)ud!=K_UD_CONN) return;
+    selftest.c:91  if(!sock||!event) return;
+    selftest.c:91  if(!sock||!event) return;
+    selftest.c:93  if(!ud) return;
+    selftest.c:99  if(*(const int *)ud!=K_UD_CONN) return;
+    selftest.c:135  if(!server) return;
+
+stdio.h  (union of 3 drivers)
+  lines   : 100.00%  (2/2)
+  branches:  0.00%  taken-at-least-once (0/0)
+
+test.h  (union of 3 drivers)
+  lines   :  4.17%  (4/96)
+  branches:  0.00%  taken-at-least-once (0/66)
+  uncovered branches (66):
+    test.h:166  for(i=0;i<45-(int)strlen(_test_name);i++) fputc('-',stderr);
+    test.h:166  for(i=0;i<45-(int)strlen(_test_name);i++) fputc('-',stderr);
+    test.h:172  if(msg&&msg[0]) fprintf(stderr,"  message:   %s\n",msg);
+    test.h:172  if(msg&&msg[0]) fprintf(stderr,"  message:   %s\n",msg);
+    test.h:172  if(msg&&msg[0]) fprintf(stderr,"  message:   %s\n",msg);
+    test.h:172  if(msg&&msg[0]) fprintf(stderr,"  message:   %s\n",msg);
+    test.h:173  if(_test_log_buf[0]) fprintf(stderr,"  log:       %s\n",_test_log_buf);
+    test.h:173  if(_test_log_buf[0]) fprintf(stderr,"  log:       %s\n",_test_log_buf);
+    test.h:182  if(msg&&msg[0]) fprintf(stderr,"  message:   %s\n",msg);
+    test.h:182  if(msg&&msg[0]) fprintf(stderr,"  message:   %s\n",msg);
+    test.h:182  if(msg&&msg[0]) fprintf(stderr,"  message:   %s\n",msg);
+    test.h:182  if(msg&&msg[0]) fprintf(stderr,"  message:   %s\n",msg);
+    test.h:183  if(_test_log_buf[0]) fprintf(stderr,"  log:       %s\n",_test_log_buf);
+    test.h:183  if(_test_log_buf[0]) fprintf(stderr,"  log:       %s\n",_test_log_buf);
+    test.h:191  if(msg&&msg[0]) fprintf(stderr,"  message:   %s\n",msg);
+

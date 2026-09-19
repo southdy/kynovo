@@ -1,0 +1,14 @@
+PASS SET exit
+PASS SET output
+PASS GET exit
+PASS GET value
+PASS STATS exit
+PASS STATS leader
+PASS MEMBERS exit
+PASS MEMBERS body
+PASS DEL exit
+PASS GET(missing) exit
+PASS GET(missing) body
+PASS dead host exit
+PASS unknown command exit
+cli_smoke: PASS

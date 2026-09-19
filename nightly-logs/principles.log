@@ -1,0 +1,18 @@
+== principles ==
+  ok   repository stores LF (index CRLF = 0; doc/measurements/ excepted as captured evidence)
+  ok   no CRLF in shell scripts
+  ok   build/ holds no tracked file (pure output)
+  ok   no drive-letter paths in tracked shell scripts
+  ok   no <stdint.h>
+  ok   no 'inline' keyword
+  ok   no ULL literals in the shipped library (code/)
+  ok   no // comments in C sources
+  ok   no post-XP Windows APIs
+  ok   no temporary instrumentation tags
+  ok   every 64-bit header has __int64 and long long forms under _MSC_VER
+  ok   no literal %lld/%llu in code/ (use the header format macro)
+  ok   app layer reads no raft config fields (budget 0, card t_972b67e8)
+  ok   raft_inspect only in the diagnostics path (budget 1)
+  ok   no new bare sprintf in code/ (budget 13, use k_text_append/k_snprintf)
+  ok   raft.h/treap.h untouched in this change
+PRINCIPLES|OK|rules=16 fail=0

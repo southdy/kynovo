@@ -1,0 +1,13 @@
+BEGIN [1/5] cemon_shutdown: write half open (socket freed on error)
+PASS  cemon_shutdown: write half open (socket freed on error)  612 us
+BEGIN [2/5] cemon_shutdown: write half already closed (clean close)
+PASS  cemon_shutdown: write half already closed (clean close)  66 us
+BEGIN [3/5] cemon_destroy returns with a never-completing socket ref (bounded drain)
+cemon: warning: destroy abandoned 1 outstanding completion(s) after the 2000 ms drain; the completion port is closed next, so none of them can be delivered
+PASS  cemon_destroy returns with a never-completing socket ref (bounded drain)  2002264 us
+BEGIN [4/5] cemon: a control frame is not queued behind bulk traffic
+   [info] control frame at stream offset 262144 (one bulk frame = 262144 bytes, queue cap = 1048576)
+PASS  cemon: a control frame is not queued behind bulk traffic  2007 us
+BEGIN [5/5] cemon: owner is explicitly bindable and violations are reported
+PASS  cemon: owner is explicitly bindable and violations are reported  374 us
+SUMMARY: 5/5 passed  2005323 us

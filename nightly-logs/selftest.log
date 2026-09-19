@@ -1,0 +1,18 @@
+warning: result (status=2) for an unknown request cookie 00007FF77FDFD020 dropped
+snapshot: verified 64 (1272 bytes)
+snapshot: verified 64 (1272 bytes)
+snapshot: verified 64 (1272 bytes)
+warning: result (status=2) for an unknown request cookie 00007FF77FDFD020 dropped
+snapshot: verified 64 (1272 bytes)
+warning: result (status=2) for an unknown request cookie 00007FF77FDFD020 dropped
+warning: result (status=2) for an unknown request cookie 00007FF77FDFD020 dropped
+warning: result for request id=1 whose connection is gone (type=1 status=4)
+warning: result (status=2) for an unknown request cookie 00007FF77FDFD020 dropped
+warning: result (status=2) for an unknown request cookie 00007FF77FDFD020 dropped
+warning: result (status=2) for an unknown request cookie 00007FF77FDFD020 dropped
+warning: result (status=2) for an unknown request cookie 00007FF77FDFD020 dropped
+warning: result (status=2) for an unknown request cookie 00007FF77FDFD020 dropped
+snapshot: verified 64 (1272 bytes)
+snapshot: verified 64 (1272 bytes)
+snapshot: verified 64 (1272 bytes)
+selftest: PASS
