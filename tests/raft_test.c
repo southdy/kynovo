@@ -1532,6 +1532,11 @@ static void test_log_conflict_resolution(void){
   msg.from=1;
   raft_recvfrom_peer(follower,&msg);
   raft_advance(follower,10,&ready);
+  /* Sec. 3.8: this AppendEntries carries a higher term, so the follower must PERSIST it before sending
+     any reply that advertises that term (issue #13): the rejection is deferred until the caller reports
+     the persist, exactly like the vote path and the successful-AE ACK. */
+  if(ready.persist_needed) raft_persist_complete(follower,0);
+  raft_advance(follower,10,&ready);
   rejected=0;
   for(ri=0;ri<ready.message_count;ri++){
     if(ready.messages[ri].type==RAFT_MSG_APPEND_RESULT
@@ -1627,6 +1632,10 @@ static void test_log_conflict_full_resolution(void){
   msg.from=1;
   raft_recvfrom_peer(follower,&msg);
   raft_advance(follower,10,&ready);
+  /* Sec. 3.8 (issue #13): the higher term this AE carries must be persisted before any reply that
+     advertises it, so the rejection is released by the persist rather than appearing immediately. */
+  if(ready.persist_needed) raft_persist_complete(follower,0);
+  raft_advance(follower,10,&ready);
   raft_ready_consumed(follower);
   memset(&ae,0,sizeof(ae));
   ae.term=1;
@@ -1639,6 +1648,11 @@ static void test_log_conflict_full_resolution(void){
   msg.append_entries=ae;
   msg.from=1;
   raft_recvfrom_peer(follower,&msg);
+  raft_advance(follower,10,&ready);
+  /* Sec. 3.8: this AppendEntries carries a higher term, so the follower must PERSIST it before sending
+     any reply that advertises that term (issue #13): the rejection is deferred until the caller reports
+     the persist, exactly like the vote path and the successful-AE ACK. */
+  if(ready.persist_needed) raft_persist_complete(follower,0);
   raft_advance(follower,10,&ready);
   rejected=0;
   for(ri=0;ri<ready.message_count;ri++){
@@ -1912,6 +1926,11 @@ static void test_log_ae_retry_on_rejection(void){
   msg.from=1;
   raft_recvfrom_peer(follower,&msg);
   raft_advance(follower,10,&ready);
+  /* Sec. 3.8: this AppendEntries carries a higher term, so the follower must PERSIST it before sending
+     any reply that advertises that term (issue #13): the rejection is deferred until the caller reports
+     the persist, exactly like the vote path and the successful-AE ACK. */
+  if(ready.persist_needed) raft_persist_complete(follower,0);
+  raft_advance(follower,10,&ready);
   rejected=0;
   for(ri=0;ri<ready.message_count;ri++){
     if(ready.messages[ri].type==RAFT_MSG_APPEND_RESULT
@@ -1996,6 +2015,8 @@ static void test_log_conflict_optimization_info(void){
   msg.from=1;
   raft_recvfrom_peer(follower,&msg);
   raft_advance(follower,10,&ready);
+  if(ready.persist_needed) raft_persist_complete(follower,0);
+  raft_advance(follower,10,&ready);
   has_conflict_term=0;
   for(ri=0;ri<ready.message_count;ri++){
     if(ready.messages[ri].type==RAFT_MSG_APPEND_RESULT
@@ -2041,6 +2062,8 @@ static void test_log_conflict_skip_optimization(void){
   memset(&msg,0,sizeof(msg));
   msg.type=RAFT_MSG_APPEND; msg.append_entries=ae; msg.from=3;
   raft_recvfrom_peer(f,&msg);
+  raft_advance(f,0,&ready);
+  if(ready.persist_needed) raft_persist_complete(f,100);
   raft_advance(f,0,&ready);
   has_ct=0;
   for(ri=0;ri<ready.message_count;ri++){

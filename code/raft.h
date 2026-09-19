@@ -595,6 +595,18 @@ struct raft_ctx{
   unsigned int deferred_vote_request_gen; /* persist_gen that must be reached before broadcasting */
   int deferred_append_response;
   int deferred_append_to;
+  /* A DEFERRED REJECTION (issue #13): the reply carries our current term, so it must not leave before
+     that term is durable (Sec. 3.8).  It keeps its OWN latch on purpose - an ACK that is already pending
+     must not be overwritten by a rejection (and vice versa): converting one into the other loses the
+     match progress the leader needs and stalls its read barrier (raft_cluster_fuzz seed 869). */
+  int deferred_reject_pending;
+  unsigned int deferred_reject_gen;             /* persist_gen that must be reached before it is sent */
+  raft_i64 deferred_reject_hint;                /* the rejection's "rejected" value */
+  raft_i64 deferred_reject_to;                  /* leader it is addressed to */
+  raft_i64 deferred_reject_last_index;          /* captured at rejection time, as the immediate path does */
+  raft_i64 deferred_reject_conflict_term;
+  raft_i64 deferred_reject_conflict_first_index;
+  raft_u64 deferred_reject_read_context;
   raft_i64 deferred_append_last_index; /* highest confirmed frontier already reported to the leader */
   raft_i64 deferred_append_confirmed;  /* largest prev+entry_count this follower has accepted since the
       latch was taken: the range an AppendEntries ACK may advertise (paper TLA+
@@ -604,6 +616,11 @@ struct raft_ctx{
   raft_u64 deferred_append_read_context; /* latest valid AppendEntries round echoed by the durable ACK */
   unsigned int deferred_append_gen;   /* persist_gen that must be reached before the ACK is released */
   unsigned int persist_gen;  /* bumped by every persist completion */
+  /* The generation that will carry the CURRENT term/vote to disk (Sec. 3.8).  A reply that advertises
+     our term may only leave once persist_gen has reached it - the vote path and the successful-AE ACK
+     already work this way, and issue #13's rejection path now does too.  Narrow on purpose: an
+     unpersisted log APPEND must not delay a rejection whose term is already durable. */
+  unsigned int term_dirty_gen;
   raft_i64 durable_index;
   /* Highest log index the CALLER has actually written to its WAL (the reported value
      clamped to the log tip at report time, and lowered by any truncation).  The persist
@@ -1276,6 +1293,7 @@ static void raft_step_down(raft_ctx *r,raft_i64 term,int new_leader_id){
   if(term>=RAFT_TERM_MAX+1) return; /* cap: INT64_MAX-1 */
   r->current_term=term;
   r->persist_needed=1; /* Sec. 3.8: a term change (and the voted_for clear below) must be persisted */
+  r->term_dirty_gen=r->persist_gen+1;  /* the generation that will make this term durable */
   r->state=RAFT_FOLLOWER;
   r->voted_for=0;
   r->leader_id=new_leader_id;
@@ -1400,6 +1418,7 @@ static int raft_become_candidate(raft_ctx *r){
   r->deferred_vote_response=0;
   r->deferred_vote_to=0;
   r->persist_needed=1; /* Sec. 3.8: persist the term bump + self-vote BEFORE requesting votes */
+  r->term_dirty_gen=r->persist_gen+1;
   r->leader_id=0;
   r->ready_leader_change=1;
   r->in_pre_vote=0;
@@ -3212,6 +3231,27 @@ RAFT_DEF int raft_advance(raft_ctx *r,unsigned int elapsed_ms,raft_ready *ready)
        durable frontier advances). */
     if(r->durable_confirm>=r->deferred_append_confirmed) r->deferred_append_response=0;
   }
+  /* Sec. 3.8 release for a deferred REJECTION (issue #13): it goes out once the term it advertises is
+     durable.  Its own latch, so a pending ACK travels independently - overwriting one with the other is
+     what stalled the leader's read barrier at raft_cluster_fuzz seed 869. */
+  if(r->deferred_reject_pending&&r->persist_gen>=r->deferred_reject_gen){
+    if(raft_msg_ensure(r,r->msg_count+1)==0){
+      raft_peer_message *m6=&r->msg_buf[r->msg_count];
+      m6->type=RAFT_MSG_APPEND_RESULT;
+      m6->from=r->cfg.id;
+      m6->to=r->deferred_reject_to;
+      m6->term=r->current_term;
+      m6->append_entries_result.term=r->current_term;
+      m6->append_entries_result.success=0;
+      m6->append_entries_result.rejected=r->deferred_reject_hint;
+      m6->append_entries_result.last_log_index=r->deferred_reject_last_index;
+      m6->append_entries_result.conflict_term=r->deferred_reject_conflict_term;
+      m6->append_entries_result.conflict_first_index=r->deferred_reject_conflict_first_index;
+      m6->append_entries_result.read_context=r->deferred_reject_read_context;
+      r->msg_count++;
+    }
+    r->deferred_reject_pending=0;   /* sent once, not re-reported */
+  }
   /* Sec. 3.8: release the candidate's real RequestVote broadcast once the term
      bump + self-vote have been persisted (symmetric with the two deferred
      response blocks above).  On OOM keep the flag and retry next advance. */
@@ -3679,6 +3719,39 @@ append_done:
   return 0;
 reply_fail:
   last=raft_log_last_index(&r->log);
+  /* Sec. 3.8 ("each server persists its current term and vote ... to prevent the server from ... replacing
+     log entries from a newer leader with those from a deposed leader"): a rejection carries our current
+     term, and the receiving leader steps down on a higher one - so replying before the term is durable lets
+     an unpersisted term depose a leader and then vanish on a restart.  The vote path and the successful-AE
+     ACK are already gated this way; this path was not (issue #13).  Defer through the same latch while a
+     persist is outstanding; reply immediately when nothing is pending (liveness unchanged). */
+  /* Broad on purpose: `persist_needed` covers the term/vote change this reply advertises, and waiting one
+     persist round keeps the leader's view consistent.  Narrowing it to the term's own generation passed the
+     unit suite but broke liveness (raft_cluster_fuzz seed 869: a lagging match index stalled the leader's
+     read barrier), so the wider gate is the one that holds on both. */
+  if(r->persist_needed||r->persist_gen<r->term_dirty_gen){
+    raft_i64 hint=reject_hint>0?reject_hint:(rpc->prev_log_index>last?last+1:rpc->prev_log_index);
+    r->deferred_reject_gen=r->persist_gen+1;   /* released once the caller reports this persist */
+    r->deferred_reject_last_index=last;        /* the immediate path reports the log tip at rejection time */
+    r->deferred_reject_to=r->leader_id;
+    r->deferred_reject_read_context=rpc->read_context;
+    r->deferred_reject_hint=hint;
+    /* Keep the conflict hints: they are what lets the leader skip a whole conflicting term, and a
+       deferral must not quietly drop them. */
+    r->deferred_reject_conflict_term=0;
+    r->deferred_reject_conflict_first_index=0;
+    if(rpc->prev_log_index>0&&rpc->prev_log_index>r->log.last_included_index&&rpc->prev_log_index<=last){
+      raft_i64 ct=raft_log_term_at(&r->log,rpc->prev_log_index);
+      raft_i64 cfi=rpc->prev_log_index;
+      if(ct>0){
+        while(cfi>r->log.last_included_index+1&&raft_log_term_at(&r->log,cfi-1)==ct) cfi--;
+        r->deferred_reject_conflict_term=ct;
+        r->deferred_reject_conflict_first_index=cfi;
+      }
+    }
+    r->deferred_reject_pending=1;
+    return 0;
+  }
   if(raft_msg_ensure(r,r->msg_count+1)<0) return -1;
   rm=&r->msg_buf[r->msg_count];
   rm->type=RAFT_MSG_APPEND_RESULT;
