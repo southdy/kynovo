@@ -113,6 +113,18 @@ report('no post-XP Windows APIs', scan(r'GetQueuedCompletionStatusEx|GetTickCoun
 # 6. no temporary instrumentation left behind
 report('no temporary instrumentation tags', scan(r'\b(TEMP-(INSTR|AB|PROBE)|INSTR-[A-Z0-9]+|XXX-|HACK-)'))
 
+# 6b. 64-bit types: every header that defines one must carry the MSVC branch, and 64-bit printf
+# conversions must go through the header's format macro - a literal %lld is a C99 conversion that
+# MSVC 6.0's runtime does not accept (see the comment in raft.h).
+C64 = ['code/kbase.h', 'code/vfs.h', 'code/cemon.h', 'code/raft.h', 'code/treap.h']
+problems = []
+for path in C64:
+    with open(path, 'r', encoding='utf-8', errors='replace', newline='') as fh: txt = fh.read()
+    for need, why in (('_MSC_VER', 'no _MSC_VER branch'), ('__int64', 'no __int64 form'), ('long long', 'no long long form')):
+        if need not in txt: problems.append('%s: %s' % (path, why))
+report('every 64-bit header has __int64 and long long forms under _MSC_VER', problems)
+report('no literal %lld/%llu in code/ (use the header format macro)', scan(r'%ll[du]', LIB + ['code/kdbctl.c', 'code/kdbsvr.c']))
+
 # 7. layering ratchets
 sites = scan(r'->config_(new|joint|learners)', ['code/kserver.h', 'code/kdbsvr.c'])
 report('app layer does not read raft config fields (budget 3, card t_972b67e8)', sites[3:] or [])

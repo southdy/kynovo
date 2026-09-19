@@ -424,9 +424,9 @@ static int k_pipe_cmp_u32(const void *a,const void *b){
 }
 static void k_pipe_report(const char *mode,k_u32 k,k_u32 count,k_u64 wall_us,k_u32 done){
   k_u32 pct;
-  printf("pipe mode=%s k=%u n=%u wall_us=%llu ops_per_s=%llu ok=%u not_found=%u other=%u\n",
-         mode,(unsigned)k,(unsigned)count,(unsigned long long)wall_us,
-         (unsigned long long)(wall_us?(k_u64)done*1000000u/(k_u64)wall_us:0u),
+  printf("pipe mode=%s k=%u n=%u wall_us=%" K_U64_FMT " ops_per_s=%" K_U64_FMT " ok=%u not_found=%u other=%u\n",
+         mode,(unsigned)k,(unsigned)count,(k_u64)wall_us,
+         (k_u64)(wall_us?(k_u64)done*1000000u/(k_u64)wall_us:0u),
          (unsigned)g_pipe_status_ok,(unsigned)g_pipe_status_nf,(unsigned)g_pipe_status_other);
   if(g_pipe_lat_n){
     k_u32 *sorted=(k_u32 *)K_MALLOC(g_pipe_lat_n*sizeof(k_u32));
@@ -440,7 +440,7 @@ static void k_pipe_report(const char *mode,k_u32 k,k_u32 count,k_u64 wall_us,k_u
         printf(" %s=%u",pct==50u?"p50":(pct==90u?"p90":(pct==99u?"p99":(pct==999u?"p99.9":"max"))),
                (unsigned)sorted[(k_u32)(((k_u64)pct*(k_u64)(g_pipe_lat_n-1u))/1000u)]);
       }
-      printf(" avg_us=%llu\n",(unsigned long long)(g_pipe_us_sum/g_pipe_lat_n));
+      printf(" avg_us=%" K_U64_FMT "\n",(k_u64)(g_pipe_us_sum/g_pipe_lat_n));
       K_FREE(sorted);
     }
   }
@@ -501,8 +501,8 @@ static int k_cli_pipeline_run(k_client_app *app,cemon *loop,const char *line){
     }else if(stall_t0){
       if(k_monotonic_us(&stall_now)!=0) break;
       if(stall_now-stall_t0>5000000u){
-        printf("pipe: stalled after %llu s (queued=%u done=%u in_flight=%u)\n",
-               (unsigned long long)((now-t0)/1000000u),(unsigned)queued,(unsigned)app->done_count,
+        printf("pipe: stalled after %" K_U64_FMT " s (queued=%u done=%u in_flight=%u)\n",
+               (k_u64)((now-t0)/1000000u),(unsigned)queued,(unsigned)app->done_count,
                (unsigned)k_client_inflight_count(app));
         break;
       }

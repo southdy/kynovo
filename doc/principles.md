@@ -16,7 +16,7 @@
 |---|---|---|---|
 | C89：无 `inline`、无 VLA、无 `stdint.h`、不在语句后声明 | 目标含 MSVC 6.0 与 Windows XP | `code/*` | **机械**：checker（禁 `inline`/`stdint.h`）+ 编译门 `-std=c89 -Wdeclaration-after-statement` |
 | 不用 `ULL` 字面量 | MSVC 6 不认 | `code/*` | **机械**：checker（`tests/`、`tools/` 豁免——它们只由 gcc 编译，已在消息中注明） |
-| 64 位整数经 `kbase.h` 的 `__int64` 包装 | MSVC 6 只有 `__int64` | `kbase.h` | ⚠ **未强制**——见 §7-1（本仓另有 `unsigned long long` typedef，与 MSVC 6 冲突） |
+| 64 位类型/字面量/打印格式一律走各头文件自带宏（`k_u64`/`vfs_u64`/…、`*_U64_C`、`*_U64_FMT`） | MSVC 6 没有 `long long`，其 printf 只认 `"I64d"` | 每个头文件 | **机械**：checker 断言五个头文件都含 `__int64` 与 `long long` 双形式，且 `code/` 中无裸 `%lld`/`%llu` |
 | 只用 XP 及更早的 Win32 API | 目标 XP+ | `code/*` | **机械**：checker 黑名单（`GetQueuedCompletionStatusEx`/`GetTickCount64`/`CreateFile2`/…），注释里的说明不算 |
 | 换行一律 LF | 脚本要能在 bash 下跑；`sed`/`grep` 行为一致 | 全仓 | **机械**：checker 断言**仓库索引** `i/crlf = 0`（仓库实际存储 ✓）+ 脚本 `w/crlf = 0`；CI 另有 LF 步骤 |
 | 归档证据不重排、不"规范化" | 复现判断依赖原始记录 | `doc/measurements/` | 纪律 + 上面那条**豁免**即是执行（CRLF 记录被有意保留） |
@@ -76,12 +76,28 @@
 
 这些是**最容易被误打破**的一类 ✓。按风险排序，以及可选的机械化方向：
 
-1. **§7-1 `long long` × MSVC 6.0（本次梳理最重要的发现 ✗）**
-   `vfs.h:16` `typedef unsigned long long vfs_u64;`，`raft.h:104` `raft_u64`、`cemon.h:16` `cemon_u64`、
-   `runtime.h` 同类。而 **MSVC 6 不支持 `long long`**（只有 `__int64`）。也就是说 **"MSVC 6.0 兼容"这条原则
-   在工具链层面从未被验证过** ✗（本机也没有 MSVC 6 可试）。两种出路：① 用 `_MSC_VER` 分支把 64 位类型定义
-   成 `__int64`（小改动，但触及多个头文件的类型定义）；② 明确**把原则降级**为"C89 风格 + gcc/MinGW 工具链在编"，
-   并在 `AGENTS.md` 里改词。**在拍板前不要两者都做**。已挂卡片。
+1. **（原 §7-1「MSVC 6 × `long long` 从未被验证」—— ✗ 已撤回，见下）**
+   我曾据此断言"MSVC 6.0 兼容从未在工具链层被验证" ✗。**这是误报**：我只 grep 到 `typedef unsigned long long …`
+   的 `#else` 分支就下了结论，没读它的条件编译 ✗。实际上**仓库早就有一套跨平台 64 位设施**，且每个头文件各自携带：
+
+   | 头文件 | 64 位类型（`_MSC_VER` / 其它） | 字面量宏 | 打印宏 |
+   |---|---|---|---|
+   | `kbase.h:27-42` | `signed/unsigned __int64` / `long long` | `K_I64_C`/`K_U64_C` | `K_U64_FMT`（`"I64u"` / `"llu"`） |
+   | `vfs.h:63-67` | `unsigned __int64 vfs_u64` / `unsigned long long` | `VFS_U64_C` | — |
+   | `cemon.h:13` | `unsigned __int64 cemon_u64` / `unsigned long long` | （暂无字面量宏） | — |
+   | `raft.h:92-107` | `raft_u64`/`raft_i64` 双分支 | `RAFT_U64_C`/`RAFT_I64_C` | `RAFT_U64_FMT`/`RAFT_I64_FMT` |
+   | `treap.h:113-116` | `treap_u64` 双分支 | `TREAP_U64_C` | — |
+
+   而且 `raft.h:99` 有一条**明确写成注释的原则**：*"MSVC 6.0 has no `long long`, so its printf spells a 64-bit
+   conversion "I64d"; gcc spells it "lld". Never write `%lld` literally."*
+
+   **由此得到的真原则（已机械化，2 条规则）** ✓：
+   - 每个定义 64 位类型的头文件**必须**同时含 `_MSC_VER` 分支、`__int64` 形式与 `long long` 形式 ✓；
+   - `code/` 中**禁止裸 `%lld`/`%llu`**，必须走该头文件的 `*_U64_FMT` ✓。
+
+   **这次修正实际命中了一处真违规** ✗：`code/kdbctl.c` 三行直接写 `%llu`（且参数用 `(unsigned long long)` 直转 ✗），
+   已改为 `%" K_U64_FMT "` + `(k_u64)` ✓ —— 即"原则确实被误打破过"，只不过打破它的**不是 typedef，而是格式串** ✓。
+
 2. **快照视图所有权**（capture/finish 在属主线程）：可机械化的方向 = 在 `treap.h` 里加 `owner_thread` 断言。
 3. **fatal 必须有原因**（C4）：可机械化的方向 = 一个"每个 `exit(1)` 附近必须有 printf"的检查（噪声大，暂缓）。
 4. **不丢请求**：可机械化的方向 = 在每个"接受即丢弃"的分支插自标识标签，再由 harness 断言零命中。

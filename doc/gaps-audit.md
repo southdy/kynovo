@@ -425,3 +425,16 @@ CI 用 MSYS2 自带 gcc（当前 16.2.0），本地钉 15.2.0（`MINGW_BIN=/d/Mi
 **0 告警契约只在钉版工具链上强制**：`regress` 的 build 门在检测到外来工具链时改为"报出诊断但不据此判失败"
 （`GATE|build|ok|rc=0 diagnostics=N binaries=yes [foreign toolchain, warnings reported not enforced]`），
 诊断行照旧打印，**不静默**。
+
+**G3 — ✗ 撤回：我曾断言「MSVC 6.0 兼容从未在工具链层被验证」。**
+依据（当时的）观察：`vfs.h:16`、`raft.h:104`、`cemon.h:16`、`runtime.h` 出现 `typedef unsigned long long …`，
+而 MSVC 6 没有 `long long`。**该结论已被代码否证并撤回**：那些 typedef 全都在 `#if defined(_MSC_VER)` 分支里，
+`#else` 才是 `long long`（`vfs.h:63-67`、`cemon.h:13`、`raft.h:92-107`、`treap.h:113-116`、`kbase.h:27-42`）；
+仓库自带完整的 64 位设施：`k_i64/k_u64`、`vfs_u64`、`cemon_u64`、`raft_i64/raft_u64`、`treap_u64`，
+字面量宏 `K_*/VFS_/RAFT_/TREAP_*_I64_C|U64_C`，打印宏 `K_U64_FMT`/`RAFT_U64_FMT`
+（`"I64u"`/`"I64d"` on MSVC，`"llu"`/`"lld"` on gcc），且 `raft.h:99` 有明确注释禁止直接写 `%lld`。
+**教训**：我只 grep 到 `#else` 行就下了结论，没有读条件编译——"读代码"意味着读**上下文**，不是读一行。
+**但这次修正命中一处真违规**（原则确实被误打破过，只是打破者不是 typedef 而是格式串）：`code/kdbctl.c`
+三行直接写 `%llu` 并用 `(unsigned long long)` 直转，已改为 `%" K_U64_FMT "` + `(k_u64)`。
+新增两条机械规则（`tools/check-principles.py`）：五个头文件必须含 `__int64` 与 `long long` 双形式；
+`code/` 中禁止裸 `%lld`/`%llu`。自证：各注入一处真违规 → 恰好 2 条 FAIL → 精确回退 → 残留 0。
