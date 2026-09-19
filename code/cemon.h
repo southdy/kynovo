@@ -597,6 +597,11 @@ struct cemon_socket{
 };
 struct cemon{
   cemon_loop_control control;
+  /* Why the loop last failed: the Windows socket code or errno, kept so a caller is not left with a
+     bare -1 (issue #11).  cemon_last_error() reads the platform's current error, which is only valid
+     immediately; these keep it. */
+  int fatal_code;
+  char fatal_what[48];
   unsigned int sock_total;
   unsigned int send_cost;
   unsigned int send_cost_peak;
@@ -927,6 +932,27 @@ static int cemon_sock_error(cemon_socket *sock){
   return so;
 }
 #endif
+/* Record and REPORT a loop-level fatal.  A bare -1 told the caller nothing about whether the socket
+   layer, the poller or the OS refused (issue #11); the code is Winsock's on Windows and errno elsewhere,
+   and the accessors below let a caller put it in its own diagnostic instead of guessing. */
+static void cemon_fatal_note(cemon *loop,const char *what,int code){
+  size_t i=0;
+  if(!loop) return;
+  loop->fatal_code=code;
+  if(what){
+    for(;what[i]&&i+1u<sizeof(loop->fatal_what);i++) loop->fatal_what[i]=what[i];
+  }
+  loop->fatal_what[i]='\0';
+  /* The numeric code is what the acceptance asks for (Winsock code on Windows, errno elsewhere); no
+     strerror table is invented for it. */
+  fprintf(stderr,"cemon: fatal: %s failed (code %d)\n",what?what:"loop",code);
+}
+static int cemon_fatal_code(const cemon *loop){
+  return loop?loop->fatal_code:0;
+}
+static const char *cemon_fatal_what(const cemon *loop){
+  return (loop&&loop->fatal_what[0])?loop->fatal_what:"";
+}
 static void cemon_bind_owner_locked(cemon *loop){
   if(loop==0||(loop->control.post_bits&CEMON_LOOP_POST_OWNER_BOUND)!=0) return;
 #if defined(_WIN32)
@@ -3198,7 +3224,7 @@ static int cemon_poll_once(cemon *loop,int timeout_ms){
       /* No completion: either the wait timed out (queue empty) or the packet was
          an owner wake / a failed dequeue. */
       if(err==WAIT_TIMEOUT) break;
-      if(!ok&&key!=CEMON_WAKE_KEY&&cemon_should_stop(loop)==0) return -1;
+      if(!ok&&key!=CEMON_WAKE_KEY&&cemon_should_stop(loop)==0){ cemon_fatal_note(loop,"completion port poll",err); return -1; }
       cemon_handle_owner_wake(loop,1);
       break;
     }
@@ -3228,6 +3254,7 @@ static int cemon_poll_once(cemon *loop,int timeout_ms){
   n=kevent(loop->fd,0,0,evs,CEMON_UNIX_POLL_BATCH,pts);
   if(n<0){
     if(errno==EINTR) return 0;
+    cemon_fatal_note(loop,"epoll_wait",cemon_last_error());
     return -1;
   }
   for(i=0;i<n;i++){
@@ -3326,6 +3353,9 @@ CEMON_DEF cemon_socket *cemon_tcp_listen(cemon *loop,const char *host,unsigned s
   }
 #endif
   if(bind(fd,(struct sockaddr*)addr.data,(cemon_socklen)addr.len)!=0||listen(fd,CEMON_BACKLOG)!=0){
+    /* A refused bind is the most common loop-level fatal in practice (the port is taken), and it used to
+       be indistinguishable from any other failure: record the socket code so the caller can report it. */
+    cemon_fatal_note(loop,"bind/listen",cemon_last_error());
     cemon_fd_close(fd);
     return 0;
   }
