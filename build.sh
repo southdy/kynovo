@@ -341,7 +341,15 @@ reg_build(){ # build + the 0-warning assertion (strict on the pinned toolchain o
     # The 0-warning contract belongs to the PINNED toolchain - the compiler the project is built
     # and reviewed with.  A CI runner with a different gcc reports what it finds (the diagnostics
     # are printed below either way) but cannot enforce a contract that was never made for it.
-    if [ "$(grep -c 'expected gcc 15.2.0' "$log")" = 0 ]; then note="pinned, strict"; else note="foreign toolchain, warnings reported not enforced"; fi
+    # The 0-warning contract belongs to the pinned Windows toolchain.  On POSIX there is no pinned
+    # toolchain at all, and the guard above does not even run there, so the platform decides - not
+    # the presence of a notice (which is what made Linux claim "pinned, strict" and fail on 101
+    # pre-existing header warnings from a foreign compiler).
+    if [ "$PLATFORM" = windows ] && [ "$(grep -c 'expected gcc 15.2.0' "$log")" = 0 ]; then
+        note="pinned, strict"
+    else
+        note="foreign toolchain, warnings reported not enforced"
+    fi
     if [ "$rc" = 0 ] && [ "$errs" = 0 ] && [ -x "$BUILD_DIR/raft_test.exe" ] && { [ "$note" != "pinned, strict" ] || [ "$diag" = 0 ]; }; then
         reg_report build ok "rc=0 diagnostics=$diag binaries=yes [$note]" "$t0"
         if [ "$diag" != 0 ]; then echo "  diagnostics from this toolchain (not enforced here):"; grep -E '^[^ :]+\.(c|h):[0-9]+:[0-9]+: (warning|error):' "$log" | head -10 | sed 's/^/  | /'; fi

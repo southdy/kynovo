@@ -31,14 +31,14 @@ def main():
         print('OPS|post-backlog-as-issues|count=%d dry_run=1' % len(items)); return 0
     existing = subprocess.run(['gh', 'issue', 'list', '--state', 'all', '--limit', '200',
                                '--json', 'title', '--jq', '.[].title'],
-                              capture_output=True, text=True).stdout.split('\n')
+                              stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True).stdout.split('\n')
     have = set(x.strip() for x in existing if x.strip())
     made = 0
     for title, body in items:
         if title in have:
             print('OPS|skip-existing|%s' % title); continue
         r = subprocess.run(['gh', 'issue', 'create', '--title', title, '--body', body],
-                           capture_output=True, text=True)
+                           stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
         if r.returncode == 0:
             made += 1; print('OPS|created|%s' % title)
         else:

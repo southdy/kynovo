@@ -33,7 +33,7 @@ def find_git():
 GIT = find_git()
 def git_out(*args):
     if not GIT: return None
-    return subprocess.run([GIT] + list(args), capture_output=True, text=True).stdout
+    return subprocess.run([GIT] + list(args), stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True).stdout
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 os.chdir(ROOT)
