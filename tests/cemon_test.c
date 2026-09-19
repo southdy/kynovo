@@ -7,17 +7,34 @@
  * allocator hides it - free() usually keeps the page mapped, so the stale read
  * is harmless until the block is reused.  This test therefore installs a
  * page-poisoning allocator: every block is right-aligned at the end of its own
- * pages with a trailing guard page, and CEMON_FREE() VirtualProtect()s the whole
- * block PAGE_NOACCESS, so any read after free faults immediately and
- * deterministically instead of passing silently.
+ * pages with a trailing page after it, and CEMON_FREE() makes the whole block
+ * inaccessible (VirtualProtect PAGE_NOACCESS on Windows, mprotect PROT_NONE on
+ * POSIX), so any read after free faults immediately and deterministically
+ * instead of passing silently.
+ *
+ * Portability: the Windows path is unchanged; POSIX gets the same behaviour
+ * behind this file's own seam - probe_os_reserve / probe_os_poison /
+ * probe_os_release (mmap / mprotect / munmap), probe_fd + PROBE_FD_INVALID +
+ * probe_fd_close, probe_set_nonblocking and probe_sleep_ms - rather than
+ * #define-ing Windows names to POSIX functions.
  *
  * Scope: the shutdown/close path, driven through the internal socket constructor
  * with a real (never used for I/O) TCP fd.  A full listen/connect/accept
  * round-trip through the loop is NOT covered here.
  *
  * Build: gcc -std=c89 -O2 -Wall -Wextra -Wno-unused-function \
- *           tests/cemon_test.c -o build/cemon_test.exe -lws2_32
+ *           tests/cemon_test.c -o build/cemon_test.exe -lws2_32      (Windows)
+ *        gcc -std=c89 -O2 -Wall -Wextra -Wno-unused-function \
+ *           -D_POSIX_C_SOURCE=200809L -pthread \
+ *           tests/cemon_test.c -o build/cemon_test.exe               (POSIX)
  */
+/* The POSIX poisoning allocator needs mmap/mprotect.  MAP_ANONYMOUS is a glibc
+   extension that only exists when a feature macro was defined before the first
+   header (glibc's features.h is already processed here on CentOS 7), and the
+   Linux build passes -D_POSIX_C_SOURCE=200809L, which on its own hides it. */
+#if !defined(_WIN32)&&!defined(_GNU_SOURCE)
+#define _GNU_SOURCE 1
+#endif
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -27,8 +44,76 @@
 #include <pthread.h>
 #if defined(_WIN32)
 #include <windows.h>
+#else
+#include <unistd.h>
+#include <sys/ioctl.h>
+#include <sys/mman.h>
 #endif
 #include "test.h"
+
+/* ---- platform seam -------------------------------------------------------
+   Two fd types with different sentinels (SOCKET/INVALID_SOCKET vs int/-1),
+   different close calls and different sleep calls.  Everything below this
+   block is written against these names only. */
+#if defined(_WIN32)
+typedef SOCKET probe_fd;
+#define PROBE_FD_INVALID INVALID_SOCKET
+#else
+typedef int probe_fd;
+#define PROBE_FD_INVALID (-1)
+#endif
+
+static void probe_fd_close(probe_fd fd){
+#if defined(_WIN32)
+  closesocket(fd);
+#else
+  close(fd);
+#endif
+}
+static void probe_sleep_ms(int ms){
+#if defined(_WIN32)
+  Sleep((DWORD)ms);
+#else
+  usleep((useconds_t)ms*1000u);
+#endif
+}
+static int probe_set_nonblocking(probe_fd fd){
+#if defined(_WIN32)
+  u_long nb=1;
+  return ioctlsocket(fd,FIONBIO,&nb);
+#else
+  int nb=1;
+  return ioctl(fd,FIONBIO,&nb);
+#endif
+}
+/* Reserve `total` bytes of read/write memory for one block + its trailing page. */
+static void *probe_os_reserve(size_t total){
+#if defined(_WIN32)
+  return VirtualAlloc(0,total,MEM_COMMIT|MEM_RESERVE,PAGE_READWRITE);
+#else
+  void *p=mmap(0,total,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANONYMOUS,-1,0);
+  if(p==MAP_FAILED) return 0;
+  return p;
+#endif
+}
+/* Poison: make the whole reservation inaccessible, so any later read or write
+   of the freed block faults instead of silently touching reused memory. */
+static void probe_os_poison(void *base,size_t total){
+#if defined(_WIN32)
+  DWORD old;
+  VirtualProtect(base,total,PAGE_NOACCESS,&old);
+#else
+  mprotect(base,total,PROT_NONE);
+#endif
+}
+static void probe_os_release(void *base,size_t total){
+#if defined(_WIN32)
+  (void)total;
+  VirtualFree(base,0,MEM_RELEASE);
+#else
+  munmap(base,total);
+#endif
+}
 
 /* ---- page-poisoning allocator (must be defined before cemon.h) ---- */
 #define PROBE_MAX_BLOCKS 8192
@@ -42,9 +127,9 @@ static void *probe_alloc(size_t n){
   if(n==0) n=1;
   pages=(n+4096u-1u)/4096u;
   total=(pages+1u)*4096u;                     /* one trailing guard page */
-  base=(char*)VirtualAlloc(0,total,MEM_COMMIT|MEM_RESERVE,PAGE_READWRITE);
+  base=(char*)probe_os_reserve(total);
   if(!base) return 0;
-  if(probe_block_count>=PROBE_MAX_BLOCKS){ VirtualFree(base,0,MEM_RELEASE); return 0; }
+  if(probe_block_count>=PROBE_MAX_BLOCKS){ probe_os_release(base,total); return 0; }
   off=pages*4096u-n;                          /* right-align: block ends at the page end */
   probe_blocks[probe_block_count].ptr=base+off;
   probe_blocks[probe_block_count].base=base;
@@ -59,11 +144,10 @@ static probe_block *probe_find(void *p){
 }
 static void probe_free(void *p){
   probe_block *b;
-  DWORD old;
   if(!p) return;
   b=probe_find(p);
   if(!b) return;                              /* foreign pointer: nothing to poison */
-  VirtualProtect(b->base,b->bytes,PAGE_NOACCESS,&old);   /* any later use faults */
+  probe_os_poison(b->base,b->bytes);          /* any later use faults */
 }
 static void *probe_realloc(void *p,size_t n){
   probe_block *b;
@@ -93,13 +177,13 @@ static void *probe_realloc(void *p,size_t n){
 static void test_shutdown_write_open(void){
   cemon *loop;
   cemon_socket *sock;
-  SOCKET fd;
+  probe_fd fd;
   int rc;
   TEST_BEGIN("cemon_shutdown: write half open (socket freed on error)");
   loop=cemon_create();
   TEST_ASSERT(loop!=0,"loop created");
   fd=socket(AF_INET,SOCK_STREAM,0);
-  TEST_ASSERT(fd!=INVALID_SOCKET,"tcp fd");
+  TEST_ASSERT(fd!=PROBE_FD_INVALID,"tcp fd");
   sock=cemon_sock_new(loop,(cemon_fd)fd,CEMON_TCP_SOCK,0,0);
   TEST_ASSERT(sock!=0,"socket created");
   cemon_tcp_note_eof(sock);                   /* the peer closed its half */
@@ -114,13 +198,13 @@ static void test_shutdown_write_open(void){
 static void test_shutdown_write_closed(void){
   cemon *loop;
   cemon_socket *sock;
-  SOCKET fd;
+  probe_fd fd;
   int rc;
   TEST_BEGIN("cemon_shutdown: write half already closed (clean close)");
   loop=cemon_create();
   TEST_ASSERT(loop!=0,"loop created");
   fd=socket(AF_INET,SOCK_STREAM,0);
-  TEST_ASSERT(fd!=INVALID_SOCKET,"tcp fd");
+  TEST_ASSERT(fd!=PROBE_FD_INVALID,"tcp fd");
   sock=cemon_sock_new(loop,(cemon_fd)fd,CEMON_TCP_SOCK,0,0);
   TEST_ASSERT(sock!=0,"socket created");
   cemon_tcp_note_eof(sock);
@@ -140,12 +224,12 @@ static void test_shutdown_write_closed(void){
 static void test_destroy_bounded_drain(void){
   cemon *loop;
   cemon_socket *sock;
-  SOCKET fd;
+  probe_fd fd;
   TEST_BEGIN("cemon_destroy returns with a never-completing socket ref (bounded drain)");
   loop=cemon_create();
   TEST_ASSERT(loop!=0,"loop created");
   fd=socket(AF_INET,SOCK_STREAM,0);
-  TEST_ASSERT(fd!=INVALID_SOCKET,"tcp fd");
+  TEST_ASSERT(fd!=PROBE_FD_INVALID,"tcp fd");
   sock=cemon_sock_new(loop,(cemon_fd)fd,CEMON_TCP_SOCK,0,0);
   TEST_ASSERT(sock!=0,"socket created");
   cemon_sock_hold(sock);                      /* the "holder that never completes" */
@@ -170,10 +254,10 @@ static void ctl_io(cemon_socket *sock,const cemon_event *event){
 static void test_control_frame_priority(void){
   cemon *loop;
   cemon_socket *sock;
-  SOCKET listener,peer;
+  probe_fd listener,peer;
   struct sockaddr_in addr;
-  int opt,addr_len,i,rc,tries,fails,found;
-  u_long nb=1;
+  cemon_socklen addr_len;
+  int opt,i,rc,tries,fails,found;
   static unsigned char bulk[256u*1024u];
   static unsigned char ctl[64];
   static unsigned char rbuf[65536];
@@ -182,15 +266,15 @@ static void test_control_frame_priority(void){
   memset(bulk,0x5a,sizeof(bulk));
   memset(ctl,0xc7,sizeof(ctl));
   listener=socket(AF_INET,SOCK_STREAM,0);
-  TEST_ASSERT(listener!=INVALID_SOCKET,"listener socket");
+  TEST_ASSERT(listener!=PROBE_FD_INVALID,"listener socket");
   opt=65536;
-  setsockopt(listener,SOL_SOCKET,SO_RCVBUF,(const char *)&opt,(int)sizeof(opt));
+  setsockopt(listener,SOL_SOCKET,SO_RCVBUF,(const char *)&opt,(cemon_socklen)sizeof(opt));
   memset(&addr,0,sizeof(addr));
   addr.sin_family=AF_INET;
   addr.sin_port=0;
   addr.sin_addr.s_addr=inet_addr("127.0.0.1");
-  TEST_ASSERT(bind(listener,(struct sockaddr *)&addr,(int)sizeof(addr))==0,"bind ephemeral port");
-  addr_len=(int)sizeof(addr);
+  TEST_ASSERT(bind(listener,(struct sockaddr *)&addr,(cemon_socklen)sizeof(addr))==0,"bind ephemeral port");
+  addr_len=(cemon_socklen)sizeof(addr);
   TEST_ASSERT(getsockname(listener,(struct sockaddr *)&addr,&addr_len)==0,"getsockname");
   TEST_ASSERT(listen(listener,1)==0,"listen");
   loop=cemon_create();
@@ -202,7 +286,7 @@ static void test_control_frame_priority(void){
   TEST_ASSERT(g_ctl_connected,"connected");
   /* keep the kernel buffers small so the measured offset reflects QUEUE order */
   opt=16384;
-  setsockopt(sock->fd,SOL_SOCKET,SO_SNDBUF,(const char *)&opt,(int)sizeof(opt));
+  setsockopt(sock->fd,SOL_SOCKET,SO_SNDBUF,(const char *)&opt,(cemon_socklen)sizeof(opt));
   tries=0; fails=0;
   while(fails<8&&tries<600){
     if(cemon_send(sock,bulk,(int)sizeof(bulk))!=0) fails++;
@@ -214,8 +298,8 @@ static void test_control_frame_priority(void){
   rc=cemon_send_control(sock,ctl,(int)sizeof(ctl));
   TEST_ASSERT_I64_EQ(rc,0,"control frame accepted while the socket is saturated");
   peer=accept(listener,0,0);
-  TEST_ASSERT(peer!=INVALID_SOCKET,"peer accepted");
-  ioctlsocket(peer,FIONBIO,&nb);
+  TEST_ASSERT(peer!=PROBE_FD_INVALID,"peer accepted");
+  probe_set_nonblocking(peer);
   seen=0; found=0; offset=0;
   t0=cemon_monotonic_us();
   while(!found){
@@ -229,15 +313,15 @@ static void test_control_frame_priority(void){
     }
     now=cemon_monotonic_us();
     if(now-t0>10000000u) break;
-    if(!found&&rc<=0) Sleep(1);
+    if(!found&&rc<=0) probe_sleep_ms(1);
   }
   printf("   [info] control frame at stream offset %lu (one bulk frame = %lu bytes, queue cap = %u)\n",
          (unsigned long)offset,(unsigned long)sizeof(bulk),(unsigned)1048576u);
   TEST_ASSERT(found,"control frame arrived");
   TEST_ASSERT(offset>0,"still ordered after the bytes already queued ahead of it");
   TEST_ASSERT(offset<=2u*(cemon_u64)sizeof(bulk),"head-of-line delay bounded by ~one frame, not the whole queue");
-  closesocket(peer);
-  closesocket(listener);
+  probe_fd_close(peer);
+  probe_fd_close(listener);
   cemon_close(sock);
   cemon_destroy(loop);
   TEST_END();
@@ -280,9 +364,11 @@ static void test_owner_binding(void){
 }
 
 int main(void){
+#if defined(_WIN32)
   WSADATA wsa;
-  TEST_PLAN(5);
   WSAStartup(MAKEWORD(2,2),&wsa);
+#endif
+  TEST_PLAN(5);
   test_shutdown_write_open();
   test_shutdown_write_closed();
   test_destroy_bounded_drain();

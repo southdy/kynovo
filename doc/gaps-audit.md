@@ -459,7 +459,10 @@ passes.**  Verbatim verdict lines:
 | `kserver_cluster_fuzz 1 1` | `done: 1/1 clusters consistent` |
 | `selftest` | `selftest: PASS` (storage, snapshot and network paths in one process) |
 | `tests/cli_smoke.sh` | `cli_smoke: PASS`, zero failed checks |
-| `cemon_test` | ported to POSIX in the same change (its poisoned allocator uses `mmap`/`mprotect`) |
+| `cemon_test` | `SUMMARY: 5/5 passed` after porting its poisoned allocator to `mmap`/`mprotect`.
+| | Confirmed on both platforms, and the poisoning still WORKS: re-introducing the old
+| | post-`cemon_tcp_finish` socket read on a throwaway copy makes the ported test segfault
+| | (rc=139) in case 1 instead of passing silently. |
 
 **What had to change to get there** (all in `build.sh` and the sources' platform guards):
 
