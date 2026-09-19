@@ -45,7 +45,7 @@
 | `.gitattributes` | `* text=auto eol=lf`、`*.md text eol=lf`、`*.c/*.h text eol=lf`、`*.exe binary` —— 强制 LF（既定要求） |
 | `.gitignore` | `build/`、`*.exe`、`*.log`、`*.o`、`*.gcov`、临时数据盘目录；**不忽略** `doc/measurements/`、`tools/` |
 | `README.md` | 20–40 行：单头文件 Raft KV 是什么、Windows XP+ 与 MSVC6/C89 约束、依赖、`./build.sh` 目标表、最小运行示例（`init` → `server` → `kdbctl SET/GET`）、指向 `doc/testing.md` |
-| `LICENSE` | 待定（决策点 D5）；私有仓可暂缺 |
+| `LICENSE` | **Apache-2.0**（官方全文；与 README 的版权行一致） |
 | `AGENTS.md` | 见 §3.1（同时是 Hermes 的项目上下文入口） |
 | `.github/workflows/ci.yml` | 见 §2.3 |
 | `.github/pull_request_template.md` | 要求填写：改了什么、**跑了哪些门**、判定行结果、风险与回滚方式 |
@@ -155,4 +155,4 @@
 | D2 | CI 范围 | **完整 + nightly**（已定） |
 | D3 | backlog 载体 | **双写**（已定）：GitHub Issues 面向人 + Hermes kanban 面向 agent |
 | D4 | agent 权限 | **允许直推 `main`**（已定）⇒ 补偿措施：每次推送前本地跑 `./build.sh regress quick`；nightly 是安全网（已写入 `AGENTS.md`） |
-| D5 | 许可证 | **MIT**（已落 `LICENSE`）；如需专利条款换 Apache-2.0（单文件替换） |
+| D5 | 许可证 | **Apache-2.0**（已落 `LICENSE`，官方全文逐字取自 apache.org）：与 MIT 同为宽松许可，额外**显式授予专利许可**并含专利报复条款；要求保留版权/声明并标注修改 |

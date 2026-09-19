@@ -46,4 +46,4 @@ The full method (layers, exact commands, verdict lines, time budgets, pitfalls) 
 [`doc/testing.md`](doc/testing.md) - read it before adding tests.
 
 ## Licence
-MIT (see `LICENSE`).
+Apache License 2.0 (see `LICENSE`).  Copyright 2026 kynovo contributors.
