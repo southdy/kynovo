@@ -130,6 +130,21 @@ OOM 注入走库自身的分配器钩子（`RAFT_MALLOC` 等），并按"第 N �
 
 ---
 
+## 5b. 一键门：`./build.sh regress`
+
+自动化的**唯一稳定入口**（agent、cron、CI 都用它，不要各自拼命令）：
+
+```bash
+./build.sh regress quick     # 默认：build(0 告警断言) + 4 个单元 + selftest + CLI smoke   ~2.5 min
+./build.sh regress full      # 追加 raft_fuzz 20k / raft_cluster_fuzz 2000(0 延迟) / kserver_cluster_fuzz 10 / release soak 24 轮  ~20 min
+```
+
+- 每层输出一行 `GATE|<层>|pass|FAIL|<判定行>|<秒>`；**判定行必须出现**——空跑（exit 0 但无判定行）判 **FAIL**，
+  这就是"0 failures 不等于 0 data"的落地；
+- **末行机器可读**：`REGRESS|quick|pass=7 fail=0 duration=150s`（agent 只读这一行即可判定）；
+- 失败时打印该层的日志路径与末尾 12 行；日志在 `build/regress/<层>.log`；
+- 门自身的失败路径有自检：`bash tools/harness/regress_selftest.sh`（期望 `pass=1 fail=2`）。
+
 ## 6. 推荐门序与时间预算
 
 | 场景 | 命令序列 | 预算 |

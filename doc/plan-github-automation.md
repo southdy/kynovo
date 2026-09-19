@@ -1,6 +1,6 @@
 # 规划：接入 GitHub 与 Hermes Agent 自动化开发维护
 
-**状态**：规划稿（未执行）。**依据**：本文件 §1 的实测核查 + Hermes 官方技能（`hermes-agent`）关于
+**状态**：已拍板并执行中 —— 决策见 §6（已定），P0 完成，P1 进行中。**依据**：本文件 §1 的实测核查 + Hermes 官方技能（`hermes-agent`）关于
 项目上下文文件与后台系统的权威说明。**执行前提**：§6 的五个决策点需先拍板。
 
 ---
@@ -128,8 +128,8 @@
 
 | 阶段 | 产出 | 验收 | 预估 |
 |---|---|---|---|
-| **P0 版本控制基线** | `git init`；`.gitattributes`、`.gitignore`；移出 `doc/dissertation.md`（改由文档说明获取方式）；首次提交 | `git status` 干净；`grep -c dissertation .gitignore` 命中；`./build.sh clean && ./build.sh` 后 `git status` 仍干净（证明 `build/` 被忽略） | 0.5 天 |
-| **P1 可自动化** | `AGENTS.md`；`./build.sh regress`（含 `REGRESS|` 摘要）；统一 `python` 探测；数据路径参数化（`KDB_DATA`，默认 `build/data`） | `./build.sh regress --quick` 绿且末行可解析；在非 `D:\kynovo` 目录复制一份也能跑（验证无绝对路径依赖） | 1 天 |
+| **P0 版本控制基线** ✅ 已完成 | `git init`；`.gitattributes`、`.gitignore`；移出 `doc/dissertation.md`（改由文档说明获取方式）；首次提交 | `git status` 干净；`grep -c dissertation .gitignore` 命中；`./build.sh clean && ./build.sh` 后 `git status` 仍干净（证明 `build/` 被忽略） | 0.5 天 |
+| **P1 可自动化**（`AGENTS.md` ✅、`regress` ✅；余：数据路径参数化、`python` 探测） | `AGENTS.md`；`./build.sh regress`（含 `REGRESS|` 摘要）；统一 `python` 探测；数据路径参数化（`KDB_DATA`，默认 `build/data`） | `./build.sh regress --quick` 绿且末行可解析；在非 `D:\kynovo` 目录复制一份也能跑（验证无绝对路径依赖） | 1 天 |
 | **P2 GitHub + CI** | 私有仓库；`ci.yml`（build/unit/smoke/fuzz-fast）；PR 模板；nightly 工作流 | PR 触发 CI 全绿；故意引入一个告警 ⇒ CI 红（证明断言有效） | 1 天 |
 | **P3 自动化闭环** | 技能三件（§3.3）；cron 夜间门禁 + 失败才报告；kanban/Issues 与 backlog 对齐 | 连续 3 个夜间任务按预期只在失败时报告；一条 backlog 卡片走完"分派 → 改 → regress → PR" | 1 天 |
 | **P4 常态维护** | 按 backlog 驱动：每任务 = 分支 → 改 → `regress` → PR → 报告（附证据） | 每周回顾：门的绿/红趋势、`doc/measurements/` 是否更新、技能是否需修订 | 持续 |
@@ -151,8 +151,8 @@
 ## 6. 决策点（需拍板后执行）
 | # | 决策 | 选项与影响 |
 |---|---|---|
-| D1 | 仓库可见性 | 私有（可保留全部内容、最快）/ 公开（必须先移出 `dissertation.md`，并确认 LICENSE） |
-| D2 | CI 范围 | 最小（build+unit+smoke，省钱）/ 完整（含 fuzz-fast，PR 反馈更硬）/ 完整 + nightly |
-| D3 | backlog 载体 | `doc/gaps-audit.md`（现状）/ GitHub Issues / Hermes kanban / 双写（Issues 面向人、kanban 面向 agent） |
-| D4 | agent 权限 | 只允许 PR（推荐）/ 允许直推 `main` |
-| D5 | 许可证 | 私有仓可暂缺 / MIT / Apache-2.0 |
+| D1 | 仓库可见性 | **公开**（已定）⇒ `doc/dissertation.md` 保持原地并 `.gitignore`（引用不失效、永不提交） |
+| D2 | CI 范围 | **完整 + nightly**（已定） |
+| D3 | backlog 载体 | **双写**（已定）：GitHub Issues 面向人 + Hermes kanban 面向 agent |
+| D4 | agent 权限 | **允许直推 `main`**（已定）⇒ 补偿措施：每次推送前本地跑 `./build.sh regress quick`；nightly 是安全网（已写入 `AGENTS.md`） |
+| D5 | 许可证 | **MIT**（已落 `LICENSE`）；如需专利条款换 Apache-2.0（单文件替换） |

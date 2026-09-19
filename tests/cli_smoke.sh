@@ -4,6 +4,11 @@
 # success" bug (exit 0 with no output), both lived here unseen.  Run from the repo root:
 #   bash tests/cli_smoke.sh
 set -u
+# Repo root from THIS script's own location (the data store path must not depend on where the
+# tree was cloned).  pwd -W gives the native D:/... form that the disk:// backend expects; plain
+# pwd is the fallback for non-MSYS shells.
+cd "$(dirname "$0")/.." || exit 1
+ROOT="$(pwd -W 2>/dev/null || pwd)"
 BIN=./build
 PORT=${PORT:-9271}
 PEER=${PEER:-9272}
@@ -18,8 +23,8 @@ contain(){ # contain <desc> <haystack> <needle>
 }
 
 rm -rf "$DIR"; mkdir -p "$DIR"
-"$BIN/kdbsvr.exe" init "disk://D:/kynovo/$DIR/db" >/dev/null || { say "FAIL server init"; exit 1; }
-( "$BIN/kdbsvr.exe" server 1 "$PORT" "$PEER" "disk://D:/kynovo/$DIR/db" "1@127.0.0.1:$PORT:$PEER" > "$DIR/server.log" 2>&1 & )
+"$BIN/kdbsvr.exe" init "disk://$ROOT/$DIR/db" >/dev/null || { say "FAIL server init"; exit 1; }
+( "$BIN/kdbsvr.exe" server 1 "$PORT" "$PEER" "disk://$ROOT/$DIR/db" "1@127.0.0.1:$PORT:$PEER" > "$DIR/server.log" 2>&1 & )
 sleep 5
 
 # happy path: exit 0 and the expected payload on stdout

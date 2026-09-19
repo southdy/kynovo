@@ -143,3 +143,15 @@ kdbsvr.c / kdbctl.c（应用）
 
 > 未列入建议的既有取舍（按既定判断保持）：磁盘满 fail-stop、无目录同步原语、`vfs` 不暴露错误码、
 > `treap_save` 保留引用计数、exactly-once 靠指令幂等根治、多节点真机测试暂不具备条件。
+
+---
+
+## 附：本轮修复落档（P0/P1，规划见 `doc/plan-github-automation.md`）
+
+| 原编号 | 问题 | 现状 |
+|---|---|---|
+| H-1 | 无版本控制 / 无 `.gitignore` | **已修**：`git init`（分支 `main`）+ `.gitattributes`（强制 LF）+ `.gitignore`（忽略 `build/`、`doc/dissertation.md` 第三方论文、`.vscode/` 个人机器路径）；首次提交 255 文件 |
+| T-1 | 缺"一键门"，完整回归要手工敲 8 条命令 | **已修**：`./build.sh regress quick\|full`，每层一行 `GATE\|…`，末行 `REGRESS\|quick\|pass=7 fail=0 duration=150s`；**空跑（exit 0 但无判定行）判 FAIL**；门自身失败路径自检 `tools/harness/regress_selftest.sh` |
+| 新 | `tests/cli_smoke.sh` 硬编码 `disk://D:/kynovo/…`（B3，关键路径） | **已修**：改为按脚本自身位置推导仓库根（`pwd -W` 取原生形式）；任意目录可跑 |
+| 新 | `.vscode/c_cpp_properties.json` 含本机绝对 gcc 路径 | **已排除**（加入 `.gitignore`，不入库） |
+| B3 余量 | 28 个脚本仍含数据路径硬编码（多为 `tools/archive/` 历史调查脚本） | **待办（P1 剩余）**：核心路径（`build.sh`/`cli_smoke.sh`）已清；其余按需参数化 |

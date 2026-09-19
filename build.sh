@@ -250,6 +250,72 @@ do_clean() {
     echo "removed $BUILD_DIR/ (pure output directory; tooling lives in tools/, records in doc/measurements/)"
 }
 
+
+# ---------------------------------------------------------------------------
+# regress: the ONE command that answers "is this tree healthy?".  Two rules make
+# it usable by agents and CI:
+#   * every layer must produce a VERDICT LINE; a gate that produces no verdict is
+#     a FAILURE, not a pass ("0 failures" must never mean "0 data"),
+#   * the last line is machine-readable:  REGRESS|quick|pass=7 fail=0 duration=142s
+# Mode: quick (default, ~4 min: build + unit + CLI smoke) or full (adds fuzz,
+# cluster fuzz and the 24-round release soak, ~20 min).
+# ---------------------------------------------------------------------------
+REG_DIR=""; REG_PASS=0; REG_FAIL=0; REG_T0=0
+reg_begin(){ REG_DIR="$BUILD_DIR/regress"; mkdir -p "$REG_DIR"; REG_PASS=0; REG_FAIL=0; REG_T0="$(date +%s)"; }
+reg_report(){ # reg_report <name> <ok|FAIL> <detail> <t0>
+    local t1; t1="$(date +%s)"
+    if [ "$2" = ok ]; then REG_PASS=$((REG_PASS+1)); else REG_FAIL=$((REG_FAIL+1)); fi
+    printf 'GATE|%s|%s|%s|%ss\n' "$1" "$2" "$3" "$((t1-$4))"
+}
+reg_gate(){ # reg_gate <name> <verdict-egrep> <cmd...>
+    local name="$1" pat="$2" log t0 rc got
+    shift 2
+    log="$REG_DIR/$name.log"; t0="$(date +%s)"
+    "$@" >"$log" 2>&1; rc=$?
+    got="$(grep -E "$pat" "$log" | tail -1)"
+    if [ "$rc" = 0 ] && [ -n "$got" ]; then
+        reg_report "$name" ok "$got" "$t0"
+    else
+        reg_report "$name" FAIL "rc=$rc verdict=${got:-<no verdict line>}" "$t0"
+        echo "  log: $log"; tail -12 "$log" | sed 's/^/  | /'
+    fi
+}
+reg_build(){ # the 0-warning assertion, reported with its own numbers
+    local t0 log rc issues
+    t0="$(date +%s)"; log="$REG_DIR/build.log"
+    ./build.sh all >"$log" 2>&1; rc=$?
+    issues="$(grep -cE 'error:|warning:' "$log")"
+    if [ "$rc" = 0 ] && [ "$issues" = 0 ] && [ -x "$BUILD_DIR/raft_test.exe" ]; then
+        reg_report build ok "rc=0 issues=0 binaries=yes" "$t0"
+    else
+        reg_report build FAIL "rc=$rc issues=$issues binaries=$([ -x "$BUILD_DIR/raft_test.exe" ] && echo yes || echo NO)" "$t0"
+        echo "  log: $log"; grep -E 'error:|warning:' "$log" | head -10 | sed 's/^/  | /'
+    fi
+}
+do_regress(){
+    local mode="${1:-quick}" t0
+    case "$mode" in --quick) mode=quick ;; --full) mode=full ;; quick|full) ;; *) echo "regress: unknown mode '$mode' (use quick|full)" >&2; exit 2 ;; esac
+    reg_begin
+    echo "=== regress ($mode) - verdict lines follow; full logs in $REG_DIR/ ==="
+    reg_build
+    reg_gate raft_test      'SUMMARY: [0-9]+/[0-9]+ passed' "$BUILD_DIR/raft_test.exe"
+    reg_gate kserver_test   'SUMMARY: [0-9]+/[0-9]+ passed' "$BUILD_DIR/kserver_test.exe"
+    reg_gate kclient_test   'SUMMARY: [0-9]+/[0-9]+ passed' "$BUILD_DIR/kclient_test.exe"
+    reg_gate cemon_test     'SUMMARY: [0-9]+/[0-9]+ passed' "$BUILD_DIR/cemon_test.exe"
+    reg_gate selftest       'selftest: PASS'                "$BUILD_DIR/selftest.exe"
+    reg_gate cli_smoke      'cli_smoke: PASS'               bash tests/cli_smoke.sh
+    if [ "$mode" = full ]; then
+        reg_gate raft_fuzz          'done: [0-9]+ iterations'      "$BUILD_DIR/raft_fuzz.exe" 1 "${2:-20000}"
+        reg_gate raft_cluster_fuzz  'done: [0-9]+ iterations'      "$BUILD_DIR/raft_cluster_fuzz.exe" 1 "${3:-2000}" 0
+        reg_gate kserver_cluster_fuzz 'clusters consistent'        "$BUILD_DIR/kserver_cluster_fuzz.exe" 1 "${4:-10}"
+        reg_gate soak_release       'rounds_without_full_success=0' env RUNS="${RUNS:-24}" bash tools/harness/soak_release.sh
+    fi
+    t0="$REG_T0"
+    printf 'REGRESS|%s|pass=%s fail=%s duration=%ss\n' "$mode" "$REG_PASS" "$REG_FAIL" "$(( $(date +%s) - t0 ))"
+    [ "$REG_FAIL" = 0 ] || RC=1
+    return 0
+}
+
 case "${1:-all}" in
     all)          build_all ;;
     kdbsvr)    build_kdbsvr || RC=1 ;;
@@ -287,6 +353,7 @@ case "${1:-all}" in
                               && "$BUILD_DIR/kserver_test_san.exe" \
                               && "$BUILD_DIR/kserver_cluster_fuzz_san.exe" "${2:-1}" "${3:-100}" \
                               && "$BUILD_DIR/cemon_test_san.exe" || RC=1 ;;
+    regress)      do_regress "${2:-quick}" "${3:-}" "${4:-}" "${5:-}" ;;
     clean)        do_clean; exit 0 ;;
     *)            echo "unknown target: $1" >&2; exit 2 ;;
 esac
