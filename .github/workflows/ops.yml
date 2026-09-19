@@ -1,0 +1,65 @@
+name: Ops
+
+# A tag push is the only trigger an agent needs: it works over SSH, it requires no token, and every
+# action is reviewable in this repository.  The job uses the workflow's own GITHUB_TOKEN, so no
+# personal credential exists anywhere.  The action is the part of the tag name after "ops/".
+#
+#   git tag ops/close-obsolete-issues && git push origin ops/close-obsolete-issues
+#   git tag ops/post-backlog-as-issues && git push origin ops/post-backlog-as-issues
+#
+# Unknown actions fail loudly rather than doing nothing useful, and a failure publishes its log to a
+# public branch (same diagnostics channel as CI), because Actions logs need authentication to read.
+
+on:
+  push:
+    tags: ['ops/*']
+
+permissions:
+  contents: write   # publish the failure log branch
+  issues: write     # the point of this workflow
+
+jobs:
+  ops:
+    name: ops
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run the requested operation
+        run: |
+          set -o pipefail
+          action="${GITHUB_REF_NAME#ops/}"
+          echo "OPS|action=$action"
+          case "$action" in
+            close-obsolete-issues)  bash tools/ops/close-obsolete-issues.sh      2>&1 | tee ops.log ;;
+            post-backlog-as-issues) python3 tools/ops/post-backlog-as-issues.py  2>&1 | tee ops.log ;;
+            *) echo "OPS|FAIL|unknown action '$action' (known actions are listed in this file)" | tee ops.log; exit 1 ;;
+          esac
+          {
+            echo "### ops: $action"
+            echo '```'
+            cat ops.log
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Publish the log when the operation failed
+        if: failure()
+        shell: bash
+        run: |
+          set -e
+          mkdir -p ops-logs
+          cp -f ops.log ops-logs/ 2>/dev/null || true
+          {
+            echo "tag:  $GITHUB_REF_NAME"
+            echo "sha:  $GITHUB_SHA"
+            echo "date: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            echo
+            cat ops.log 2>/dev/null || echo "(no log)"
+          } > ops-logs/SUMMARY.txt
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -B ops-logs
+          git add -f ops-logs
+          git commit -m "Ops failure log for ${GITHUB_REF_NAME}" || exit 0
+          git push -f origin ops-logs
