@@ -2964,9 +2964,16 @@ RAFT_DEF void raft_destroy(raft_ctx *r){
 RAFT_DEF int raft_advance(raft_ctx *r,unsigned int elapsed_ms,raft_ready *ready){
   int drain_pending,lc,is_ldr,ldr_id,frd_i,frd_n,rbi,rbj,rbn,rb_pending,i;
   raft_i64 li;
-  if(!r||!ready) return -1;
-  if(!raft_phase_ge(r,RAFT_PHASE_READY)) return -1;
+  /* ZERO THE BUNDLE BEFORE THE REMAINING GUARDS.  An early return used to leave the caller's struct
+     exactly as it found it, so a failed raft_advance left whatever the stack held in every field and a
+     caller that read one (the tests did) read uninitialized memory - which is what GCC 16.2 reports as
+     17 `ready.* may be used uninitialized` sites in tests/raft_test.c (issue #6, gcc 15.2.0 does not see
+     it).  A failed advance must leave a well-defined EMPTY bundle instead: the return code still says
+     the call failed, and no field is ever undefined. */
+  if(!ready) return -1;
   memset(ready,0,sizeof(raft_ready));
+  if(!r) return -1;
+  if(!raft_phase_ge(r,RAFT_PHASE_READY)) return -1;
   r->prev_leader_state=r->state;
   if(r->phase==RAFT_PHASE_STOPPING){
     r->state=RAFT_FOLLOWER;

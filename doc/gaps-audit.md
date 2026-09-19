@@ -409,7 +409,7 @@ Next round's method: extend the `T2` three-line probe from "node 2 only" to **al
 
 ## G. Open items exposed by compiler differences (raised by CI's gcc 16.2.0, **unclassified**)
 
-**G1 — whether `raft_ready` is fully initialized by `raft_advance`.**
+**G1 — whether `raft_ready` is fully initialized by `raft_advance`.** **SETTLED, fixed in `raft.h`** (2026-09-19).
 CI (MSYS2 gcc **16.2.0**) reports 17 items in `tests/raft_test.c`: `'ready.<field>' / 'ready' may be used
 uninitialized` (around lines 713/748/902/1142/3153/3711/3893/4095/4119/6968/9107), while this machine's **pinned gcc 15.2.0 reports none**.
 Two possibilities, **not yet classified**:
@@ -419,6 +419,40 @@ Two possibilities, **not yet classified**:
 Evidence-gathering method (to run the next time this area is touched): read every assignment path of `raft_advance` in `raft.h`, and compile **the same site** under the four combinations `-O2`/`-O0` ×
 `15.2.0`/`16.2.0`, comparing whether the warning follows the optimization level (optimization-related `-Wmaybe-uninitialized` is usually (a)).
 **Do not start editing code on the strength of CI's 17 lines alone.**
+
+### Verdict (settled by the method above, then by a deterministic probe)
+
+**Neither (a) nor (b) as stated — a third cause, and CI was right to warn.**
+`raft_advance` *does* zero the whole bundle (`memset(ready,0,sizeof(raft_ready))`), but it did so **after**
+its guards, so an early return — `!r`, or a phase below `RAFT_PHASE_READY` — left the caller's struct
+**exactly as it found it**. The tests that read a field after a *failed* advance were reading stack
+garbage. So it is not an optimizer false positive (the read really is undefined) and not "every field is
+missing" either; the path is the one a caller takes when the call fails.
+
+**Why the pinned 15.2.0 says nothing:** its analysis did not follow that path; 16.2.0's did. The warning
+count was a compiler-capability difference, not a code difference — which is exactly why the card's
+"do not edit on the strength of the 17 lines" instruction was followed: the mechanism was established
+first, independently of any warning.
+
+**Proof (deterministic, no compiler-version dependency):** a probe poisons a `raft_ready` with `0xAA`,
+calls `raft_advance(0,10,&rd)` (the failure path) and inspects it:
+
+| | failed `raft_advance` leaves the caller's bundle |
+|---|---|
+| before the fix | `fields left at 0xAA: YES` — `has_work=-1431655766`, `is_leader=-1431655766` (uninitialized read) |
+| after the fix | `fields left at 0xAA: none` — `has_work=0`, `is_leader=0` (well-defined empty bundle) |
+
+**Fix (in `raft.h`, per the card's own rule — never in the test):** the `ready` null check stays first,
+then the bundle is zeroed, then the `r` and phase guards. A failed advance now leaves a well-defined
+EMPTY bundle while the return code still reports the failure; no field of `raft_ready` is ever undefined,
+and the "ready must be reported completely" contract holds on the failure path too.
+
+**Four-combination status, stated exactly:** `gcc 15.2.0` × `-O0` and × `-O2` were both run on
+`tests/raft_test.c` with `-Wmaybe-uninitialized` — 0 uninitialized warnings in each. The two
+`gcc 16.2.0` combinations were **not** run: that compiler is not installed on this machine and the
+environment cannot fetch one reliably, so the warning count for it is unavailable here. The mechanism was
+demonstrated directly instead, which does not depend on the compiler seeing it. Verification after the
+fix: `REGRESS|quick|pass=8 fail=0` on Windows and on the Linux guest, with `raft_test 221/221`.
 
 **G2 — CI differs from the local toolchain (accepted by design, not a defect).**
 CI uses MSYS2's bundled gcc (currently 16.2.0), while the local toolchain is pinned at 15.2.0 (`MINGW_BIN=/d/MinW64-15.2.0/bin`). Therefore the
