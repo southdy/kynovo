@@ -1,0 +1,13 @@
+OPS|parsed|11 issues
+OPS|created|G1 定性：CI gcc 16.2 对 tests/raft_test.c 报 17 处 ready.* may be used uninitialized
+OPS|created|C4 启动失败原因不可见
+OPS|created|C7 INFO/STATS 无界 sprintf 写 char text[2048]
+OPS|created|C11 cemon_ingress_close 无界自旋；cemon_destroy 排空 2000ms 上限后可能泄漏 socket
+OPS|created|C12 UDP 软错误静默吞掉；UDP 兜底分支用错缓冲
+OPS|created|C13 循环级致命错误只有 -1，无取回错误原因的接口
+OPS|created|非 Windows 分支从未编译（含 C9/C10 的 Unix 语义）
+OPS|created|R8 被拒绝的 AE 携带尚未持久化的新任期对外传播
+OPS|created|C6 层边界：应用层直接读 raft->config_new/config_joint/config_learners 做策略判定
+OPS|created|C3 WAL 段首记录的 generation 连续性不检查
+OPS|created|lincheck 未进入任何构建目标
+OPS|post-backlog-as-issues|count=11 created=11
