@@ -52,6 +52,7 @@ Read this first. It is deliberately short; the details live in `doc/`.
 ## Entry points
 - **Principles and how each one is enforced: `doc/principles.md`** (`python tools/check-principles.py` runs as a gate layer)
 - Gates and method: `doc/testing.md` · Backlog and evidence: `doc/gaps-audit.md`
+- Crash contract (what survives a crash, per platform): `doc/crash-contract.md`
 - Harnesses: `tools/harness/` · Past investigations: `doc/investigations.md`
 - Raw measurements: `doc/measurements/` · Review: `doc/code-review-2026-09.md`
 - Plan for GitHub/automation: `doc/plan-github-automation.md`

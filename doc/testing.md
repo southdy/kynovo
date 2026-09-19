@@ -50,6 +50,9 @@ and their `run-*` versions, `selftest`, `kdbsvr`, `kdbctl`, `bench*`, `cemon-ben
 | L2 | CLI semantics smoke (real process + real socket) | `bash tests/cli_smoke.sh` | `cli_smoke: PASS` | ~10s |
 | L3a | single-node randomised fuzzing (API/OOM rollback) | `./build/raft_fuzz.exe <seed> <n>` | `done: <n> iterations` / `FAIL: …` | n=2000 ~10s |
 | L3b | **multi-node cluster fuzzing** (real pull-mode wire messages: drop/reorder/duplicate/partition/crash-restart/membership change/OOM injection) | `./build/raft_cluster_fuzz.exe <seed> <n> [persist_delay]` | `done: <n> iterations` / `FAIL: …` | n=2000 ~30s |
+Crash contract (what survives a crash on each platform, and the audited platform differences):
+`doc/crash-contract.md`.
+
 | L3c | server cluster fuzzing (with the in-harness linearizability checker `tests/lincheck.h`) | `./build/kserver_cluster_fuzz.exe <seed> <n>` | `done: 1/1 clusters consistent` **and** `linearizability: <N> histories / <M> ops decided by the checker` with N>0 | ~10s |
 | L4 | network soak (release binaries, 24 rounds, in-round PIPE load + liveness check) | `RUNS=24 bash tools/harness/soak_release.sh` | `rounds_without_full_success=0` and `final liveness: 1` | ~3min |
 | L5 | performance/latency | `tools/harness/perf_matrix.sh`, `burst.sh`, `pipe_frontier.sh`, `pipe_verify.sh`, `watch_counters.sh` | each prints its own ops/s, p50/p99, counters | minutes |
