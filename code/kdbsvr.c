@@ -204,7 +204,7 @@ static int k_server_serve(k_server *server,cemon *loop){
 static int k_server_run(k_server *server){
   int rc=0;
   for(;;){
-    k_u64 arrived_before,flushes_before;
+    k_u64 arrived_before,flushes_before,round_t0,round_t1;
     k_u32 pending_before;
     int timeout;
     unsigned int elapsed_ms,batch_ms;
@@ -242,6 +242,7 @@ static int k_server_run(k_server *server){
      /* DATA callbacks run inside cemon_poll, so compare the counter across the
        whole poll+drive round.  Sampling after poll would classify every busy
        round as drained and defeat structural group commit. */
+    if(k_monotonic_us(&round_t0)!=0) round_t0=0;   /* round work starts here, after the poll's wait */
     elapsed_ms=k_server_elapsed_ms(server);
     /* Two quantities: Raft timers, reconnects and the snapshot policy measure real
        wall time (it really did pass), while the batch age only counts the time since
@@ -254,6 +255,13 @@ static int k_server_run(k_server *server){
        (one write per batch).  Advance the Raft clock first (it really did pass
        in wall time), then start the batch's own age. */
     k_server_flush_if_ready(server,server->writes_arrived>arrived_before);
+    if(round_t0&&k_monotonic_us(&round_t1)==0){
+      k_u64 round_us=round_t1-round_t0;
+      server->round_us_last=round_us;
+      if(round_us>server->round_us_max) server->round_us_max=round_us;
+      server->round_us_ewma=server->round_us_ewma?((server->round_us_ewma*7u+round_us)/8u):round_us;
+      if(round_us>K_SLOW_ROUND_US) server->slow_rounds++;
+    }
     /* Adaptive flush window, derived from MEASURED cost instead of a guessed constant.
        The window exists only so a batch can accumulate, so it need not exceed the cost
        of the sync the batch will trigger.  At low load the window dominates the latency
