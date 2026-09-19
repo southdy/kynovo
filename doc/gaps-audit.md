@@ -98,7 +98,7 @@ The checked and **gap-free** parts and the **settled trade-offs** are at the end
 |---|---|---|---|
 | C1 | `[verified]` | A lookup that finds no registry entry in `kserver.h` is silently dropped (no log, while adjacent branches do warn) | `3533-3534` vs `3536` |
 | C2 | `[verified]` | Waking `recv_paused` requires all four counters to be **simultaneously** below their caps ⇒ one leaked enum silences it forever | `4236-4240` |
-| C3 | `[verified]` | Generation continuity of the first record in a WAL segment is not checked (`prev_gen=0` reset every segment) | `1465` vs `1478` |
+| **C3** | ~~Generation continuity ...~~ **FIXED (377dc4f)**: enforced across segments, detected/reported/fail-stopped, with a real-store demonstration |
 | C4 | `[verified]` | Startup failure causes are invisible (cfg/WAL meta/allocation/thread failures all print only `failed to start server N`) | `kserver.h:4594-4600,4602,4642,4682`; `kdbsvr.c:300` |
 | C5 | `[verified]` | Header comment disagrees with the implementation: it claims a v1 data directory is "refused and re-initialized", but only refusal happens | `kserver.h:23-26` |
 | C6 | `[verified]` | Layer boundary: the application layer reads `raft->config_new/config_joint/config_learners` directly to decide policy | `kserver.h:4411-4413` |
@@ -240,7 +240,15 @@ The checked and **gap-free** parts and the **settled trade-offs** are at the end
 | **C2** | Re-arming `recv_paused` requires all four counters to be **simultaneously** below their caps (`kserver.h:4258`) | One leaked enum silences every paused connection forever (especially dangerous combined with the fixed A1/gate issue) | Record "why paused" (a reason bit) and wait only for that reason's counter to fall |
 | **C12** | UDP soft errors are swallowed silently with no counter (the `cemon_win_udp_recv_soft_error` branch in `cemon.h`); the UDP fallback branch misuses `recv->buf` (the `else if(bytes>0)` branch in `cemon.h`) | UDP drops are invisible; the fallback branch is currently hard to trigger (`WSARecvFrom` always writes back addr_len) | Add a UDP drop counter + fix the fallback branch |
 
-### Platform-unverifiable (this machine is Windows; the Unix branch takes part in no build)
+### Cross-platform: VERIFIED (this section used to say "platform-unverifiable")
+
+The Unix branch took part in no build when this audit was written; it now builds, runs the same gate, and
+its crash contract is measured.  Evidence, all from the CentOS 7.9 guest: `REGRESS|quick|pass=8 fail=0` with
+the same eight layers Windows runs; every file in `code/` md5-verified against the committed tree before
+each run, so the gate is a verdict about the tree that was built; and every acknowledged write surviving a
+`kill -9` (2000/2000 keys read back, never-written prefix 0/2000, no corruption report).
+`doc/crash-contract.md` states the sequence, the two named platform differences, and the audit showing the
+application layer holds zero platform conditionals.**
 
 | Item | Symptom and evidence | Impact |
 |---|---|---|
@@ -253,7 +261,7 @@ The checked and **gap-free** parts and the **settled trade-offs** are at the end
 | Item | Symptom | Why deferred |
 |---|---|---|
 | **B8** | Verify-after-write reads back only the trailer + a 1-byte end probe (`kserver.h:3936`), not the whole file; the old snapshot is deleted right after | Two generations of rollback material are already retained; the I/O cost and benefit of a whole-file read-back need your confirmation first (possible middle ground: sampled read-back of head/middle/tail) |
-| **C7** | INFO/STATS text is written with unbounded `sprintf` into `char text[2048]` (`kserver.h:3264`) | The current field set does not overflow; a change should go together with a "truncate and warn when fields exceed the limit" policy |
+| **C7** | ~~Unbounded `sprintf` into `char text[2048]`~~ **FIXED (509af05)**: bounded appends, truncation marked and counted, and a ratchet so bare `sprintf` cannot grow | The current field set does not overflow; a change should go together with a "truncate and warn when fields exceed the limit" policy |
 | **C19** | `vfs_open`/`vfs_unlink` expose no error codes | This is an API extension; can be done together with C18's `vfs_size` |
 | **C3** | Generation continuity of the first record in a WAL segment is not checked (`prev_gen=0` per segment, `kserver.h:1465`) | Confirming the impact requires a case for "a cross-segment loss that leaves only term/vote/base records" |
 | **C6** | The application layer reads `raft->config_joint/config_new/config_learners` directly to decide policy (`k_server_silent_standby`) | The mechanism layer has no corresponding query API; adding one is an interface extension that must be settled together with the "layer boundary" trade-off |
