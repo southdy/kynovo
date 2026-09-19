@@ -41,9 +41,13 @@
 #if defined(_WIN32)
 #include <winsock2.h>
 #endif
-#include <pthread.h>
 #if defined(_WIN32)
 #include <windows.h>
+#include <process.h>
+#else
+#include <pthread.h>
+#endif
+#if defined(_WIN32)
 #else
 #include <unistd.h>
 #include <sys/ioctl.h>
@@ -342,8 +346,31 @@ static void *owner_probe_thread(void *arg){
   g_own_destroy_rc=cemon_destroy(g_own_loop);
   return 0;
 }
+/* The probe needs two thread primitives and nothing else.  Including <pthread.h> unconditionally made this
+   file depend on MinGW-w64's winpthreads on Windows, which MSVC 6 of course does not have (it failed with
+   "fatal error C1083: Cannot open include file: 'pthread.h'"), so the project's own test could not be built
+   with the compiler the project claims to support.  Provide the Windows side here instead. */
+#if defined(_WIN32)
+typedef HANDLE test_thread;
+static unsigned __int32 __stdcall owner_probe_thread_win(void *arg){
+  owner_probe_thread(arg);
+  return 0;
+}
+static int test_thread_start(test_thread *th){
+  *th=(HANDLE)_beginthreadex(0,0,owner_probe_thread_win,0,0,0);
+  return *th!=0?0:-1;
+}
+static void test_thread_join(test_thread *th){
+  WaitForSingleObject(*th,INFINITE);
+  CloseHandle(*th);
+}
+#else
+typedef pthread_t test_thread;
+static int test_thread_start(test_thread *th){ return pthread_create(th,0,owner_probe_thread,0); }
+static void test_thread_join(test_thread *th){ pthread_join(*th,0); }
+#endif
 static void test_owner_binding(void){
-  pthread_t th;
+  test_thread th;
   cemon *loop;
   TEST_BEGIN("cemon: owner is explicitly bindable and violations are reported");
   loop=cemon_create();
@@ -353,8 +380,8 @@ static void test_owner_binding(void){
   TEST_ASSERT_I64_EQ(cemon_is_owner(loop),1,"an unbound loop accepts the caller as owner");
   TEST_ASSERT_I64_EQ(cemon_bind_owner(loop),0,"explicit bind from this thread succeeds");
   TEST_ASSERT_I64_EQ(cemon_is_owner(loop),1,"this thread is the owner");
-  TEST_ASSERT(pthread_create(&th,0,owner_probe_thread,0)==0,"probe thread started");
-  pthread_join(th,0);
+  TEST_ASSERT(test_thread_start(&th)==0,"probe thread started");
+  test_thread_join(&th);
   TEST_ASSERT_I64_EQ(g_own_bind_rc,-1,"another thread cannot bind an owned loop");
   TEST_ASSERT_I64_EQ(g_own_is_owner,0,"another thread is not the owner");
   TEST_ASSERT_I64_EQ(g_own_poll_rc,-1,"another thread cannot poll");

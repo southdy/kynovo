@@ -83,12 +83,26 @@ typedef __int64 test_i64;
 typedef unsigned __int64 test_u64;
 #define TEST_I64_FMT "I64d"
 #define TEST_U64_FMT "I64u"
+#define TEST_I64_C(x) x##i64
+#define TEST_U64_C(x) x##ui64
 #else
 typedef long long test_i64;
 typedef unsigned long long test_u64;
 #define TEST_I64_FMT "lld"
 #define TEST_U64_FMT "llu"
+#define TEST_I64_C(x) x##LL
+#define TEST_U64_C(x) x##ULL
 #endif
+/* Decimal parse with no runtime-library call at all.  MSVC 6 declares neither strtoull nor _strtoui64
+   (C4013 "undefined", and the linker then wants __strtoui64, which the CRT does not export), and the name
+   differs across CRTs.  The tests only ever parse a decimal count or seed, so parse it here. */
+static test_u64 test_strtoull(const char *s){
+  test_u64 v=0;
+  if(s==0) return 0;
+  while(*s==' '||*s=='\t') s++;
+  while(*s>='0'&&*s<='9'){ v=v*10u+(test_u64)(*s-'0'); s++; }
+  return v;
+}
 static int _test_run;
 static int _test_fail;
 static int _test_total;

@@ -1411,13 +1411,13 @@ static void test_rx_buffer_admission_accounting(void){
    Same path the server takes for a committed write (feed a client frame, advance until applied).
    Runs under Application Verifier Heaps to catch heap corruption in seconds rather than in tens of
    network soak rounds.  Usage: kserver_test.exe --apply-stress <ops> [keyspace] */
-static int apply_stress(unsigned long long ops,unsigned long long keyspace,int threaded,int nosnap){
+static int apply_stress(test_u64 ops,test_u64 keyspace,int threaded,int nosnap){
   k_server s;
   char base[64];
   k_u8 frame[K_FRAME_HEADER+128];
   k_u32 total,id;
-  unsigned long long i;
-  if(!keyspace) keyspace=4096ull;
+  test_u64 i;
+  if(!keyspace) keyspace=TEST_U64_C(4096);
   sprintf(base,"mem://kstest-applystress-%u",(unsigned)(ops&0xffffu));
   setup(&s,1,base);
   /* threaded=1 uses the REAL runtime backend (worker threads), which is the only configuration in
@@ -1427,30 +1427,30 @@ static int apply_stress(unsigned long long ops,unsigned long long keyspace,int t
   if(elect(&s)!=0){ printf("apply-stress: no leader\n"); k_server_release(&s); return 1; }
   k_server_client_accepted(&s,(void*)(size_t)1);
   if(nosnap){ s.cfg.snapshot_entries=0xffffffffu; s.cfg.snapshot_segments=0xffffffffu; }
-  printf("apply-stress: ops=%llu keyspace=%llu backend=%s snapshots=%s\n",ops,keyspace,threaded?"thread":"sync",nosnap?"disabled":"default");
+  printf("apply-stress: ops=%" TEST_U64_FMT " keyspace=%" TEST_U64_FMT " backend=%s snapshots=%s\n",ops,keyspace,threaded?"thread":"sync",nosnap?"disabled":"default");
   for(i=0;i<ops;i++){
     char key[32];
     unsigned int klen;
-    klen=(unsigned int)sprintf(key,"ph_%llu",(i%(keyspace?keyspace:1ull)));
+    klen=(unsigned int)sprintf(key,"ph_%" TEST_U64_FMT,(i%(keyspace?keyspace:TEST_U64_C(1))));
     id=(k_u32)(i+1u);
     total=make_client_frame(frame,sizeof(frame),K_REQ_SET,id,key,klen,"payload",7u);
-    if(!total){ printf("apply-stress: frame build failed at %llu\n",i); break; }
+    if(!total){ printf("apply-stress: frame build failed at %" TEST_U64_FMT "\n",i); break; }
     k_server_client_received(s.connections,frame,total);
     turn(&s,20u);
 #ifdef K_ALLOC_DEBUG
     /* Between-operation validation: if a freed block was written, this names the VICTIM's
        allocation site and aborts here, so the failing operation index is the writer. */
-    { char where[64]; sprintf(where,"post-free write after op %llu",i); k_dbg_verify(where); }
+    { char where[64]; sprintf(where,"post-free write after op %" TEST_U64_FMT,i); k_dbg_verify(where); }
 #endif
-    if((i%50000ull)==0ull&&i) printf("apply-stress: %llu ops, count=%llu\n",i,(unsigned long long)treap_count(s.tree));
+    if((i%TEST_U64_C(50000))==TEST_U64_C(0)&&i) printf("apply-stress: %" TEST_U64_FMT " ops, count=%" TEST_U64_FMT "\n",i,(test_u64)treap_count(s.tree));
   }
-  printf("apply-stress: done %llu ops\n",ops);
+  printf("apply-stress: done %" TEST_U64_FMT " ops\n",ops);
   k_server_release(&s);
   return 0;
 }
 
 int main(int argc,char **argv){
-  if(argc>=3&&strcmp(argv[1],"--apply-stress")==0) return apply_stress(strtoull(argv[2],0,10),argc>=4?strtoull(argv[3],0,10):4096ull,argc>=5&&strcmp(argv[4],"thread")==0,argc>=6&&strcmp(argv[5],"nosnap")==0);
+  if(argc>=3&&strcmp(argv[1],"--apply-stress")==0) return apply_stress(test_strtoull(argv[2]),argc>=4?test_strtoull(argv[3]):TEST_U64_C(4096),argc>=5&&strcmp(argv[4],"thread")==0,argc>=6&&strcmp(argv[5],"nosnap")==0);
   TEST_PLAN(33);
   g_run_tag=0;
   if(k_monotonic_us(&g_run_tag)!=0) g_run_tag=(k_u64)time(0);

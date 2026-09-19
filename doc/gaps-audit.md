@@ -656,3 +656,51 @@ discriminator excluded the branch that was actually at fault.
 `GET alpha` -> `hello`, `DEL alpha` -> `ok`, `GET alpha` -> `(not found)`.  The same tree passes
 `./build.sh regress quick` locally (`REGRESS|quick|pass=9 fail=0`) with 0 errors and 0 warnings on the
 pinned gcc.
+
+
+---
+
+## P2. Windows XP + MSVC 6.0: the test tier, and the unit suites on the real target
+
+Continuing P1, the XP machine was used to compile and run the project's own test programs.  The four
+unit suites now pass on the target, matching the host baseline exactly:
+
+```
+SUMMARY: 5/5 passed       cemon_test     run_rc=0
+SUMMARY: 16/16 passed     kclient_test   run_rc=0
+SUMMARY: 221/221 passed   raft_test      run_rc=0
+SUMMARY: 33/33 passed     kserver_test   run_rc=0
+```
+
+Five more defects had to be fixed to get there.  Every one of them is invisible to MinGW-w64 (it ships
+winpthreads and a C99-complete compiler) and to Linux/gcc:
+
+1. `tests/cemon_test.c` included `<pthread.h>` unconditionally.  On Windows that header comes from
+   winpthreads, not from the project, and MSVC 6 does not have it at all ("fatal error C1083: Cannot
+   open include file: 'pthread.h'").  The probe needs two primitives and nothing else, so the file now
+   provides the Windows side itself (`_beginthreadex` + `WaitForSingleObject`) and includes pthread.h
+   only where it exists.
+2. `tests/kclient_test.c` used `vsnprintf`, which MSVC 6 does not have (C4013, then a link error).
+   Now guarded, using `_vsnprintf` on MSVC.
+3. `tests/kserver_test.c` used `unsigned long long`, `ull` literals, `%llu` and `strtoull`
+   ("error C2632: 'long' followed by 'long' is illegal", "bad suffix on number").  Converted to the
+   test header's own `test_u64` / `TEST_U64_FMT` / `TEST_U64_C`, and the decimal parse is now a
+   hand-written loop: MSVC 6 declares neither `strtoull` nor `_strtoui64` (C4013, then an unresolved
+   `__strtoui64`), and the name differs across CRTs, so the test no longer calls one.
+4. `code/cemon.h` called `SwitchToThread()` without a visible declaration on that toolchain (C4013),
+   so VC98 assumed an int-returning cdecl extern and the linker asked for `_SwitchToThread` while
+   kernel32 exports the WINAPI form `_SwitchToThread@0`.  The function is now declared explicitly
+   under `_MSC_VER<=1200`.
+5. Harness bug of mine: the XP test script passed `/Fo:name.obj`; MSVC's `/Fo` takes no colon, so the
+   object was never produced and every link failed with LNK1181.  Also, the first revision wrote
+   `%errorlevel%` inside a parenthesised block, which expands at parse time - it printed
+   `build_rc=0` while every compile had in fact failed.  That is the project's own rule about never
+   interpreting a run before confirming the build, applied to the harness itself.
+
+**Known remaining debt.**  `tests/raft_fuzz.c`, `tests/raft_cluster_fuzz.c`,
+`tests/kserver_cluster_fuzz.c`, `tests/lincheck.h`, `tests/bench_persist.c` and `tests/cemon_stress.c`
+still use `long long` / `ULL` / `%llu` throughout, so the fuzz and linearizability tier cannot be
+built with MSVC 6 yet.  The XP run therefore covers the four unit suites only.  Related gate gap: the
+principles ratchet watches bare `%lld` but neither `long long` nor the `LL`/`ULL` suffixes, which is
+why this class reached a real compiler first.  A ratchet rule with the current count as its budget
+(the established pattern in this repository) is the follow-up.

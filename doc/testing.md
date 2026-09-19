@@ -270,3 +270,21 @@ Expected evidence: `kdbctl_cl_rc=0`, `kdbsvr_cl_rc=0`, both `*_link_rc=0`, `dir 
 Foreign toolchains report warnings without enforcing them; the 0-warning contract remains pinned to
 the gcc version this project builds with.  MSVC 6 reports C4244/C4761/C4133 on the same code - see
 the P1 entry in `doc/gaps-audit.md` for which of those were real.
+
+### Measured on the XP machine (see P2 in `doc/gaps-audit.md`)
+
+Build, run and the unit suites, all on Windows XP SP3 with cl 12.00.8804, sources md5-verified
+against the repository before transfer:
+
+- build: `cl` and `link` return 0 for both executables; `dir /b *.exe` lists `kdbsvr.exe` and
+  `kdbctl.exe`;
+- run: `init` -> `server 1 client=127.0.0.1:7101 peer=127.0.0.1:7102` -> `SET`/`GET`/`DEL` reproduce
+  the host baseline line for line (`ok` / `hello` / `ok` / `(not found)`);
+- crash contract: after an abrupt `taskkill` and a restart on the same store, the key written before
+  the kill reads back, and a key that was never written reads `(not found)` - the negative control
+  that keeps the check from being unable to fail;
+- unit suites: `cemon_test 5/5`, `kclient_test 16/16`, `raft_test 221/221`, `kserver_test 33/33`,
+  identical to the local gate.
+
+Scope at the time of writing: the fuzz / linearizability tier does not build with MSVC 6 yet (raw
+`long long` and `LL`/`ULL` literals across those files); see P2 for the list and the follow-up.

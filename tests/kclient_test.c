@@ -57,7 +57,11 @@ static void cap_output(void *ud,const char *fmt,...){
   va_list ap;
   (void)ud;
   va_start(ap,fmt);
+#if defined(_MSC_VER)
+  _vsnprintf(g.out+g.outlen,sizeof(g.out)-(g.outlen<sizeof(g.out)?g.outlen:0),fmt,ap);   /* MSVC 6 has no vsnprintf */
+#else
   vsnprintf(g.out+g.outlen,sizeof(g.out)-(g.outlen<sizeof(g.out)?g.outlen:0),fmt,ap);
+#endif
   va_end(ap);
   g.outlen=strlen(g.out);
 }
