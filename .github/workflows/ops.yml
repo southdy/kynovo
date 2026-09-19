@@ -23,6 +23,10 @@ jobs:
     name: ops
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    env:
+      # gh needs authentication.  Its absence is invisible to a --dry-run, which is why the first real
+      # run reported success while doing nothing: every gh call failed and nothing propagated it.
+      GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v4
 
@@ -43,8 +47,8 @@ jobs:
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Publish the log when the operation failed
-        if: failure()
+      - name: Publish the log (unconditionally - Actions logs need authentication to read)
+        if: always()
         shell: bash
         run: |
           set -e
