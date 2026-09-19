@@ -438,3 +438,45 @@ literal macros `K_*/VFS_/RAFT_/TREAP_*_I64_C|U64_C`, print macros `K_U64_FMT`/`R
 write `%llu` directly and cast with `(unsigned long long)`; they have been changed to `%" K_U64_FMT "` + `(k_u64)`.
 Two mechanical rules added (`tools/check-principles.py`): the five headers must contain both the `__int64` and `long long` forms;
 bare `%lld`/`%llu` are forbidden in `code/`. Self-proof: injecting one real violation into each → exactly 2 FAILs → precise revert → 0 residue.
+
+---
+
+## I. Linux (CentOS 7.9, gcc 4.8.5): first full build and test run
+
+The project had only ever been built on Windows; the POSIX branches had never been compiled.  A
+CentOS 7.9 VM (4 cores, glibc 2.17, gcc 4.8.5) was added and the tree was built and run there.
+
+**Result: 18 of 18 targets build, and every gate that does not depend on the Windows-only test
+passes.**  Verbatim verdict lines:
+
+| Driver | Verdict on Linux |
+|---|---|
+| `raft_test` | `SUMMARY: 221/221 passed` |
+| `kserver_test` | `SUMMARY: 33/33 passed` |
+| `kclient_test` | `SUMMARY: 16/16 passed` |
+| `raft_fuzz 1 2000` | `done: 2000 iterations` |
+| `raft_cluster_fuzz 1 200 0` | `done: 200 iterations` |
+| `kserver_cluster_fuzz 1 1` | `done: 1/1 clusters consistent` |
+| `selftest` | `selftest: PASS` (storage, snapshot and network paths in one process) |
+| `tests/cli_smoke.sh` | `cli_smoke: PASS`, zero failed checks |
+| `cemon_test` | ported to POSIX in the same change (its poisoned allocator uses `mmap`/`mprotect`) |
+
+**What had to change to get there** (all in `build.sh` and the sources' platform guards):
+
+1. `build.sh` linked `-lws2_32`/`-lwinmm`/`-lpsapi` on every target; those are now variables that are
+   empty on POSIX.  Artifact names keep the `.exe` suffix so the harnesses and the gate are unchanged.
+2. `-D_POSIX_C_SOURCE=200809L` had to come from the COMMAND LINE: with `-std=c89` glibc hides
+   `clock_gettime`/`struct timespec`, and a header that defines the feature macro after another
+   header has included `<time.h>` is too late.
+3. Eleven test/tool files included `<windows.h>`/`<winsock2.h>` unconditionally, and `code/cli.h`'s
+   non-interactive fallback set `hstdin`/`hstdout`, which exist only in the Windows variant of
+   `cli_ctx`.  Both are real defects for anyone building on POSIX.
+4. `kserver_cluster_fuzz` and the threaded benchmarks linked `pthread_*` without `-pthread`.
+5. Scripts in the repository had no executable bit (`core.fileMode=false` on the Windows side), so a
+   fresh Linux clone could not run `./build.sh` at all.  Fixed in the index with
+   `git update-index --chmod=+x`.
+
+**Measurement worth carrying forward**: one `fsync`-equivalent flush measures **172 us** on this
+CentOS box against **~1130 us** on the Windows machine, and this project's throughput ceiling is
+`batch size / flush cost`.  The K-sweep numbers recorded in `doc/measurements/` therefore describe
+the Windows machine only, and any comparison across the two must say which one it was measured on.
