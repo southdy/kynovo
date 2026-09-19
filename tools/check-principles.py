@@ -101,7 +101,11 @@ if not GIT:
 
 # 1. line endings
 eol = (git_out('ls-files', '--eol') or '').split('\n')
-report('repository stores LF (index CRLF = 0)', [l for l in eol if 'i/crlf' in l])
+# doc/measurements/ is captured console output and .gitattributes marks it `-text` on purpose: those
+# bytes ARE the observation (a few records legitimately hold CRLF, one holds bare CR).  The exemption
+# is named in the rule itself so nobody has to infer it from the failing output.
+report('repository stores LF (index CRLF = 0; doc/measurements/ excepted as captured evidence)',
+       [l for l in eol if 'i/crlf' in l and 'doc/measurements/' not in l])
 report('no CRLF in shell scripts', [l for l in eol if 'w/crlf' in l and l.split()[-1].endswith(('.sh', '.bash'))])
 
 # 2. build/ purity

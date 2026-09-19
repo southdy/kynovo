@@ -54,6 +54,8 @@ and their `run-*` versions, `selftest`, `kdbsvr`, `kdbctl`, `bench*`, `cemon-ben
 | L4 | network soak (release binaries, 24 rounds, in-round PIPE load + liveness check) | `RUNS=24 bash tools/harness/soak_release.sh` | `rounds_without_full_success=0` and `final liveness: 1` | ~3min |
 | L5 | performance/latency | `tools/harness/perf_matrix.sh`, `burst.sh`, `pipe_frontier.sh`, `pipe_verify.sh`, `watch_counters.sh` | each prints its own ops/s, p50/p99, counters | minutes |
 | L6 | instrumentation | `./build.sh coverage`, `./build.sh run-sanitize`, `K_ALLOC_DEBUG` build + appverif/gdb (see §3) | coverage table / no SIGILL / zero reports | minutes |
+| `tools/harness/git-cn-setup.sh` | GitHub reachability from a China-based machine: ssh keepalives + a 443 alias, read-only fallback remotes (`github-https` direct, `cn-mirror` domestic), and an opt-in repo-local proxy that refuses to write unless its port is listening. `--status` reports, `--proxy off` reverts. |
+| L5 | performance/latency | `tools/harness/perf_matrix.sh`, `burst.sh`, `pipe_frontier.sh`, `pipe_verify.sh`, `watch_counters.sh` | each prints its own ops/s, p50/p99, counters | minutes |
 
 **How to read the verdict line (mandatory)**: always use a verdict grep; **`tail -1` is forbidden**. In a
 suite with progress output, `tail -1` shows an unrelated line and makes a failure read as a pass; a missing
