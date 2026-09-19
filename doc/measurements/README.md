@@ -4,6 +4,15 @@ This directory holds **raw process artifacts**: not build output, and **not repr
 state and other load vary). They once supported throughput/latency trade-offs and tuning decisions, so they were
 kept; `build/` holds artifacts only, historical data lives here.
 
+
+## Platform: these Windows numbers are not Linux numbers
+
+Everything below was measured on the Windows host.  The Linux records added beside them
+(`linux-latency-disk.txt`, `linux-latency-mem.txt`) come from a VMware guest on the SAME physical
+machine, so they are a platform comparison with a virtual disk in the path, not a bare-metal Linux
+baseline - an empty sync measures 1 us there against 78 us here.  Never mix the two sets in one table
+without saying which platform each row came from.
+
 ## Contents
 - `*.txt` (111 of them): the server counters and phase results of each benchmark run.
   The naming rule is **flattened source directory**, e.g. `bench-run3_k1.txt` = what used to be `build/bench-run3/k1.txt`.

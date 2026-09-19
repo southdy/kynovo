@@ -1,0 +1,42 @@
+# Linux platform record -- CentOS Linux release 7.9.2009, kernel 3.10.0, gcc 4.8.5, glibc 2.17, 4 vCPU
+# VMware guest ON THE SAME PHYSICAL HOST as the Windows numbers in this directory, so this is a
+# platform comparison with a virtual disk in the path, NOT a bare-metal Linux baseline.  The flush
+# numbers in particular are affected by that: an empty sync measures 1 us here against 78 us on the
+# Windows host, which is not a property of the kernel.
+# Client: the verbatim stdout of the project's own tools, captured 2026-09-19.
+
+== bench_fsync (flush baseline, same tool/shape as the Windows records) ==
+batch=100   ( 10000 B): median=473 us  spread=[444..511] us  p99max=1689 us  per-item=4 us
+batch=1     (   100 B): median=135 us  spread=[134..164] us  p99max=859 us  per-item=135 us
+batch=0     (empty sync): median=1 us  spread=[1..1] us  p99max=17 us
+
+== bench_pipe, disk:// backend, N=4000, 1 B values, ONE connection ==
+   params   : host=127.0.0.1:9611 N=4000 K={1,4,16,32,64} mode=pipelined single connection
+K=1  : n=4000  throughput=      207 ops/s (single connection)
+        per-op latency: median=  4554 us  p99=    9384 us  max=   30278 us  avg=  4716 us  (ring_drops=0)
+K=4  : n=4000  throughput=     1069 ops/s (single connection)
+        per-op latency: median=  3274 us  p99=    6264 us  max=    8550 us  avg=  3665 us  (ring_drops=0)
+K=16 : n=4000  throughput=     4825 ops/s (single connection)
+        per-op latency: median=  2798 us  p99=    5806 us  max=    6391 us  avg=  3192 us  (ring_drops=0)
+K=32 : n=4000  throughput=     8725 ops/s (single connection)
+        per-op latency: median=  3509 us  p99=    5714 us  max=    6002 us  avg=  3404 us  (ring_drops=0)
+K=64 : n=4000  throughput=    10671 ops/s (single connection)
+        per-op latency: median=  5827 us  p99=    8355 us  max=    8601 us  avg=  5627 us  (ring_drops=0)
+
+== kdbctl PIPE, disk:// backend, N=4000, 1 B ("payload") ==
+pipe mode=SET k=1   n=4000 wall_us=60003845 ops_per_s=58     ok=3509 not_found=0 other=0
+pipe mode=SET k=32  n=4000 wall_us=1225997  ops_per_s=3263   ok=4000 not_found=0 other=0
+pipe mode=SET k=64  n=4000 wall_us=392042   ops_per_s=10205  ok=4000 not_found=0 other=0
+pipe mode=SET k=128 n=4000 wall_us=146266   ops_per_s=27354  ok=4000 not_found=0 other=0
+pipe mode=SET k=256 n=4000 wall_per_s=103054 ops_per_s=38824 ok=4000 not_found=0 other=0
+pipe mode=SET k=512 n=4000 wall_us=76299    ops_per_s=52438  ok=4000 not_found=0 other=0
+pipe mode=GET k=128 n=4000 wall_us=43661    ops_per_s=91637  ok=4000 not_found=0 other=0
+pipe mode=GET k=128 n=8    wall_us=291      ops_per_s=30927  ok=0    not_found=8 other=0   <- control key
+
+== bench_rate (open loop, N=2000 in flight, K=32, disk) ==
+PHASE|n=2000 k=32 wall_us=133055 ops_per_s=15031
+LAT|n=2000 min=872 p50=1159 p90=1968 p99=41958 max=44460      <- p99 42 ms, unexplained, worth a look
+RESP|status=0 leader_id=1 leader=:0 body=
+
+== server counters after the sweeps ==
+rounds=18374 client_requests=29535 flush_batches=4456 flush_by_target=426 wal_records=4230 sync_us_ewma=414 window_ms=1
