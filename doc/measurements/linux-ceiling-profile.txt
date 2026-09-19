@@ -1,0 +1,31 @@
+# Where the Linux ceiling actually is -- profile of one open-loop run -- 2026-09-19
+#
+# tools/harness/rate_profile.sh, VMware guest (CentOS 7.9, 4 vCPU, fsync ~0.17 ms), disk:// unless
+# noted, 1 B values, N=2000, bench_rate (one connection), window 1 ms, items 128.  ONE session, so the
+# rows are comparable to each other and to nothing else.
+#
+# K     ops/s    requests/round   rounds/s   per batch   p50      p99
+#  64   16839          5            3334        52        3358     6270
+# 128   18170          5            3261        37        5405     9852
+# 512   54677          8            6287        91        7833    11043
+# 2000  42872          9            4480        74       11292    17070
+# mem:// K=512 (sync 3 us)  45573-89944 depending on machine state, batch 29-30
+#
+# Read it as: throughput == rounds/s x requests-per-round (5x3334=16.7k, 8x6287=50k).  Two facts follow.
+#
+# 1. Storage is not the wall on this platform.  With 91 requests per batch and a 0.17 ms sync the fsync
+#    ceiling is ~529k ops/s, and the engine reaches 55k - about 10% of it.  mem://, whose sync costs 3 us,
+#    lands in the SAME class (45-90k) instead of two orders higher, which is what a storage-bound engine
+#    would show.  So the event loop, not the disk, sets the ceiling here, and the same holds on Windows
+#    (43-58k with a 1.13 ms sync).
+# 2. Only 5-9 requests are admitted per round even with 2000 in flight, and a round costs ~160-300 us.
+#    That pair IS the throughput.  Raising K does not raise requests/round much, so the limit is not the
+#    client's willingness to have work outstanding; it is how much the loop ingests and finishes per turn.
+#
+# Ranked levers, all measurable next (none of them implemented yet, so this is a direction, not a claim):
+#   a. per-round cost (160-300 us): decompose a round - decode, apply, encode, flush bookkeeping - and
+#      look for per-request work that can be done per batch instead.
+#   b. requests per round (5-9): whether the loop drains every frame already available at the socket
+#      before returning, or one arm per frame keeps it shallow (cemon_recv arms ONE completion).
+#   c. more CPU: the guest has 4 vCPU and the server used ~1.3 cores at 90k ops/s on mem://, so the
+#      remaining vCPU is the cheapest untapped resource - noting the host itself is shared.
