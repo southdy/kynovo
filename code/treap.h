@@ -12,8 +12,10 @@ extern "C" {
 #endif
 #if defined(_MSC_VER)
 typedef unsigned __int64 treap_u64;
+typedef signed __int64 treap_i64;
 #else
 typedef unsigned long long treap_u64;
+typedef signed long long treap_i64;
 #endif
 typedef struct treap treap;
 TREAP_DEF treap *treap_create(treap_u64 seed);
@@ -1063,8 +1065,11 @@ TREAP_DEF int treap_inspect(const treap *t,treap_info *out){
   out->height=height;
   out->max_key_len=max_klen;
   out->max_value_len=max_vlen;
-  out->avg_key_len=node_count>0?(double)sum_klen/(double)node_count:0.0;
-  out->avg_value_len=node_count>0?(double)sum_vlen/(double)node_count:0.0;
+  /* MSVC 6 cannot convert unsigned __int64 to double at all (cl 12.00: "error C2520: conversion from
+     unsigned __int64 to double not implemented"), so go through the signed type first.  The counters
+     are byte/key counts, far below 2^63, so the signed cast is exact in every reachable case. */
+  out->avg_key_len=node_count>0?(double)(treap_i64)sum_klen/(double)(treap_i64)node_count:0.0;
+  out->avg_value_len=node_count>0?(double)(treap_i64)sum_vlen/(double)(treap_i64)node_count:0.0;
   return 0;
 }
 #endif

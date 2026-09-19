@@ -481,7 +481,7 @@ static int k_cli_pipeline_run(k_client_app *app,cemon *loop,const char *line){
     while(queued<count&&k_client_inflight_count(app)<k&&!app->stopping){
       char key[256];
       k_u32 before=k_client_inflight_count(app);
-      snprintf(key,sizeof(key),"%s%u",prefix,(unsigned)queued);
+      k_snprintf(key,sizeof(key),"%s%u",prefix,(unsigned)queued);   /* MSVC 6 has no snprintf (LNK2001 _snprintf) */
       /* k_client_queue returns 0 both when it accepted the request AND when capacity/connect
          state made it refuse it, so count the request only if the in-flight depth actually grew. */
       if(k_client_queue(app,strcmp(mode,"SET")==0?K_REQ_SET:K_REQ_GET,key,(k_u32)strlen(key),

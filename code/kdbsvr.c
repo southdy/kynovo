@@ -195,11 +195,11 @@ static int k_server_serve(k_server *server,cemon *loop){
   server->on_wal_result=k_server_wal_wake;
   if(!cemon_tcp_listen(loop,k_numeric_host(server->cluster.nodes[local_index].host),server->peer_port,k_server_peer_io,server)){
     /* A refused bind was the last silent startup failure: port in use, or a port this user may not bind. */
-    printf("fatal: cannot start server: peer listen on %s:%u failed (port in use or not permitted)\n",k_numeric_host(server->cluster.nodes[local_index].host),(unsigned)server->peer_port);
+    printf("fatal: cannot start server: peer listen on %s:%u failed (last fatal: %s; socket code %d)\n",k_numeric_host(server->cluster.nodes[local_index].host),(unsigned)server->peer_port,cemon_fatal_what(loop),cemon_fatal_code(loop));
     return -1;
   }
   if(!cemon_tcp_listen(loop,k_numeric_host(server->cluster.nodes[local_index].host),server->client_port,k_server_client_io,server)){
-    printf("fatal: cannot start server: client listen on %s:%u failed (port in use or not permitted)\n",k_numeric_host(server->cluster.nodes[local_index].host),(unsigned)server->client_port);
+    printf("fatal: cannot start server: client listen on %s:%u failed (last fatal: %s; socket code %d)\n",k_numeric_host(server->cluster.nodes[local_index].host),(unsigned)server->client_port,cemon_fatal_what(loop),cemon_fatal_code(loop));
     return -1;
   }
   fprintf(stderr,"[cfg] poll_ms=%u flush_timeout_ms=%u flush_item_limit=%u flush_bytes_limit=%u wal_seg_size=%" K_U64_FMT " (batch targets)\n",(unsigned)server->cfg.poll_ms,(unsigned)server->cfg.flush_timeout_ms,(unsigned)server->cfg.flush_item_limit,(unsigned)server->cfg.flush_bytes_limit,server->cfg.wal_seg_size);

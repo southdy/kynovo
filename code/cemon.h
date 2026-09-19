@@ -795,7 +795,14 @@ static int cemon_last_error(void){
   return (int)WSAGetLastError();
 }
 static int cemon_win_iocp_pending(int err){
-  return err==WSA_IO_PENDING;
+  /* Do NOT compare against WSA_IO_PENDING here.  VC98's winsock2.h (and therefore this translation unit on
+     Windows XP SP3, whatever the Platform SDK says) defines WSA_IO_PENDING as 10035 = WSAEWOULDBLOCK, not
+     as ERROR_IO_PENDING = 997.  Comparing against it made a perfectly normal pending AcceptEx look like a
+     hard failure: err was 997, the comparison said "not pending", and the listener died at startup with
+     "socket code 997" that nobody could attribute.  Measured on the VM with a temporary probe:
+       err=997  WSA_IO_PENDING=10035  ERROR_IO_PENDING=997
+     ERROR_IO_PENDING is the correct, ABI-stable value on every Windows version, so use it. */
+  return err==ERROR_IO_PENDING;
 }
 static int cemon_win_udp_recv_soft_error(int err){
   return err==WSAECONNRESET||err==WSAEMSGSIZE||err==ERROR_MORE_DATA;
@@ -1745,9 +1752,11 @@ static int cemon_win_load_ext(cemon *loop,SOCKET fd){
   GUID g1=WSAID_ACCEPTEX;
   GUID g2=WSAID_GETACCEPTEXSOCKADDRS;
   GUID g3=WSAID_CONNECTEX;
-  if(loop->acceptex==0&&cemon_win_guid(fd,&g1,&loop->acceptex)<0) return -1;
-  if(loop->getacceptexsockaddrs==0&&cemon_win_guid(fd,&g2,&loop->getacceptexsockaddrs)<0) return -1;
-  if(loop->connectex==0&&cemon_win_guid(fd,&g3,&loop->connectex)<0) return -1;
+  /* Name the extension that is missing.  Without this the listener died silently: the caller reported
+     "port in use or not permitted" with socket code 0, which is what a Windows XP SP3 VM produced. */
+  if(loop->acceptex==0&&cemon_win_guid(fd,&g1,&loop->acceptex)<0){ cemon_fatal_note(loop,"AcceptEx",cemon_last_error()); return -1; }
+  if(loop->getacceptexsockaddrs==0&&cemon_win_guid(fd,&g2,&loop->getacceptexsockaddrs)<0){ cemon_fatal_note(loop,"GetAcceptExSockaddrs",cemon_last_error()); return -1; }
+  if(loop->connectex==0&&cemon_win_guid(fd,&g3,&loop->connectex)<0){ cemon_fatal_note(loop,"ConnectEx",cemon_last_error()); return -1; }
   return 0;
 }
 static int cemon_bind_any(SOCKET fd,int family){
@@ -1851,7 +1860,7 @@ static int cemon_win_post_accept_one(cemon_socket *sock,int slot){
   if(cemon_socket_is_dead(sock)||accept==0||slot<0||slot>=CEMON_ACCEPT_CREDIT||accept->slotv[slot].fd!=CEMON_BAD_FD) return 0;
   slot_op=&accept->slotv[slot];
   slot_op->fd=WSASocketA(accept->family,SOCK_STREAM,IPPROTO_TCP,0,0,WSA_FLAG_OVERLAPPED);
-  if(slot_op->fd==INVALID_SOCKET) return -1;
+  if(slot_op->fd==INVALID_SOCKET){ cemon_fatal_note(sock->loop,"accept slot socket" ,cemon_last_error()); return -1; }
   cemon_win_op_init(&slot_op->op,sock,CEMON_OV_ACCEPT,slot_op);
   sock->accept_busy++;
   got=0;
@@ -1859,7 +1868,8 @@ static int cemon_win_post_accept_one(cemon_socket *sock,int slot){
   ok=sock->loop->acceptex(sock->fd,slot_op->fd,slot_op->buf,0,CEMON_ACCEPT_ADDR_LEN,CEMON_ACCEPT_ADDR_LEN,&got,&slot_op->op.ol);
   if(!ok){
     int err=cemon_last_error();
-    if(err!=WSA_IO_PENDING){
+    if(!cemon_win_iocp_pending(err)){
+      cemon_fatal_note(sock->loop,"accept slot AcceptEx",err);
       sock->accept_busy--;
       cemon_fd_close(slot_op->fd);
       slot_op->fd=CEMON_BAD_FD;
@@ -2114,7 +2124,7 @@ static int cemon_win_post_connect(cemon_socket *sock,const cemon_addr *addr){
   ok=sock->loop->connectex(sock->fd,(const struct sockaddr*)addr->data,addr->len,0,0,&got,&connect->op.ol);
   if(!ok){
     int err=cemon_last_error();
-    if(err!=WSA_IO_PENDING){
+    if(!cemon_win_iocp_pending(err)){
       connect->busy=0;
       cemon_sock_release(sock);
       return -1;
@@ -3402,7 +3412,22 @@ CEMON_DEF cemon_socket *cemon_tcp_listen(cemon *loop,const char *host,unsigned s
   }
 #if defined(_WIN32)
   sock->accept->family=family;
-  if(cemon_win_load_ext(loop,fd)<0||CreateIoCompletionPort((HANDLE)fd,loop->port,0,0)==0||cemon_win_post_accept(sock)<0){
+  /* Split, because lumping these together hid which one failed and read a stale error: a listening socket
+     on Windows XP SP3 died here with "socket code 997" (WSA_IO_PENDING == ERROR_IO_PENDING), and
+     CreateIoCompletionPort is not a Winsock call, so it must be reported with GetLastError.  Each step now
+     records its own site name, and none of them overwrites a note from a step that already failed. */
+  if(cemon_win_load_ext(loop,fd)<0){
+    cemon_socket_die(sock,cemon_last_error(),0);
+    return 0;
+  }
+  if(CreateIoCompletionPort((HANDLE)fd,loop->port,0,0)==0){
+    cemon_fatal_note(loop,"CreateIoCompletionPort",(int)GetLastError());
+    cemon_socket_die(sock,(int)GetLastError(),0);
+    return 0;
+  }
+  if(cemon_win_post_accept(sock)<0){
+    /* No note here on purpose: the two branches inside post_accept_one record the specific cause, and a
+       note recorded at this level would overwrite the only line that says which one it was. */
     cemon_socket_die(sock,cemon_last_error(),0);
     return 0;
   }

@@ -606,3 +606,53 @@ VM, 100 runs, 11 spikes over 8 ms (client maxima 8068-12759 us):
   corrected `wake_pre_us_max` reads 1.3 ms, and the wake is NOT the mechanism.
   Still open: how much of the queueing can be shaved without giving up group commit (a scheduling-side
   instrument, not another counter here).
+
+
+---
+
+## P1. Windows XP SP3 + MSVC 6.0: first real-machine verification (four defects found and fixed)
+
+The hard constraint (C89 / MSVC 6.0 / Windows XP+) had only ever been supported by inspection - the
+`#if defined(_MSC_VER)` branches existed, but nothing had compiled them.  A Windows XP SP3 VM with
+Visual C++ 6.0 (cl 12.00.8804) plus the Windows Platform SDK was used to build and run the project
+for real (bootstrap over TFTP: the host's SMB1 client is gone and the guest exposed only 135/139/445).
+Four real defects surfaced, every one of them invisible to MinGW-w64 and to Linux/gcc:
+
+1. `code/treap.h`: `(double)` applied to a `treap_u64` counter.  cl 12.00 cannot convert
+   `unsigned __int64` to `double` at all (`error C2520: ... not implemented, use signed __int64`),
+   at both operands of the average-length computation.  Fixed by giving the mechanism layer its own
+   `treap_i64` next to its existing `treap_u64` and casting through it; a `grep -n '(double)'` over
+   `code/` now returns only casts routed through a signed type.
+2. `code/kdbctl.c`: MSVC 6 has no `snprintf` (only `_snprintf`).  The object compiled with C4013
+   ("undefined; assuming extern returning int") and then failed to link (`LNK2001 unresolved
+   external symbol _snprintf`).  Fixed by using the project's own `k_snprintf`.
+3. Build recipe: `/MT` is required (VC98's `process.h` only declares `_beginthreadex` in the
+   multithreaded model).  This lives in the XP build script, not in the repository.
+4. `code/cemon.h`: `WSA_IO_PENDING` is **10035** (= `WSAEWOULDBLOCK`) in VC98's `winsock2.h`, not
+   997.  Measured inside the failing branch with a temporary probe:
+   `err=997  WSA_IO_PENDING=10035  ERROR_IO_PENDING=997`.
+   The pending test therefore rejected a perfectly normal pending `AcceptEx`, the listener died at
+   startup, and the report read `peer listen on 127.0.0.1:7102 failed (port in use or not
+   permitted; socket code 997)` - a message that points at the port and away from the cause.  Fixed
+   by comparing against `ERROR_IO_PENDING` in the single helper `cemon_win_iocp_pending`, now used by
+   every overlapped post site (accept and connect).  Remaining mentions of the macro are comments.
+
+Long-lived diagnostics kept (not temporary instrumentation): the listen path records a named fatal
+for each sub-step - `AcceptEx`, `GetAcceptExSockaddrs`, `ConnectEx`, `bind/listen`,
+`CreateIoCompletionPort` (reported with `GetLastError`; it is not a Winsock call), `accept slot
+socket`, `accept slot AcceptEx` - and startup failure prints `last fatal: <site>; socket code <code>`.
+That is what turned several rounds of "port in use or not permitted" into one line naming the branch.
+
+**RETRACTIONS.**  Two intermediate conclusions of mine were wrong and are withdrawn: (a) that the
+missing declarations meant the Platform SDK was not on the include path - it was, and the SDK does
+declare all four symbols; the real cause was a header that *does* define the macro, with the wrong
+value.  (b) that a socket code of 997 "proves" the pending case and therefore rules out the AcceptEx
+branch - 997 is `WSA_IO_PENDING` only in modern headers, and using the modern value as a
+discriminator excluded the branch that was actually at fault.
+
+**Evidence** (all from the XP machine, sources md5-verified against the repository before transfer):
+`cl` rc=0 for both translation units, `link` rc=0 for both, `dir /b *.exe` lists `kdbsvr.exe` and
+`kdbctl.exe`, and the run reproduces the host baseline line for line: `SET alpha hello` -> `ok`,
+`GET alpha` -> `hello`, `DEL alpha` -> `ok`, `GET alpha` -> `(not found)`.  The same tree passes
+`./build.sh regress quick` locally (`REGRESS|quick|pass=9 fail=0`) with 0 errors and 0 warnings on the
+pinned gcc.

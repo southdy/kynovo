@@ -244,3 +244,29 @@ invoked from anywhere; under `set -u` they all carry sensible defaults and can b
 **Delivery criteria**: L0 0 error/0 warning; L1 all green; L2 PASS; L3 `done`; L4
 `rounds_without_full_success=0` and `final liveness: 1`; no leftovers in the working directory (e.g.
 `kdb-selftest-*` — enforced by the `selftest_cleanup` layer, not by eye); no leftover processes (`ps -W | grep -icE 'kdbsvr|kdbctl'` is 0).
+
+## 7. Windows XP + MSVC 6.0 on real hardware
+
+The constraint "C89 / MSVC 6.0 / Windows XP+" is verified on a real Windows XP SP3 guest with Visual
+C++ 6.0 (cl 12.00.8804) and the Windows Platform SDK, not by inspection.
+
+How it is driven (no sshd on XP; the host's SMB1 client is removed, so SMB is not an option):
+
+- the host serves the 22 sources plus the build/run scripts over TFTP from a read-only root, and
+  accepts uploads into an inbox directory;
+- `go.bat` is a stable bootstrap that never changes (XP's `tftp.exe` refuses to overwrite an existing
+  file, and a running batch is locked), so all mutable logic lives in `kynovo_step.bat`, which the
+  bootstrap deletes and re-fetches every run;
+- the step pulls sources, clears the read-only attribute (`attrib -R`; the tftp limitation plus the
+  read-only bit is what produced the stale-script runs), builds with `cl`, runs the end-to-end
+  sequence, and uploads `build_xp.log` and `run_xp.log`;
+- every script prints its own size (`%~z0`) so the log proves which revision executed, and the step
+  prints `GET failures: N` so a partial pull is impossible to miss.
+
+Expected evidence: `kdbctl_cl_rc=0`, `kdbsvr_cl_rc=0`, both `*_link_rc=0`, `dir /b *.exe` listing
+`kdbsvr.exe` and `kdbctl.exe`, and a run reproducing the host baseline line for line
+(`ok` / `hello` / `ok` / `(not found)`).
+
+Foreign toolchains report warnings without enforcing them; the 0-warning contract remains pinned to
+the gcc version this project builds with.  MSVC 6 reports C4244/C4761/C4133 on the same code - see
+the P1 entry in `doc/gaps-audit.md` for which of those were real.
