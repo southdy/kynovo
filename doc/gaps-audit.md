@@ -426,6 +426,15 @@ the section can, which is exactly the hang the bound removes. The demonstration 
 condition and the warning, and is labelled as forcing the condition rather than as a peer-driven
 reproduction.
 
+**O3 — a UDP datagram was delivered with `len=0` in a probe (2026-09-19).** While producing triggerable
+evidence for issue #10, a probe on one loop bound a server socket on 127.0.0.1:18700 and a client socket,
+armed `cemon_recv(server)`, sent 9 bytes with `cemon_sendto`, and polled: the `CEMON_DATA` callback fired
+**once with `len=0`**. It is not established whether that is a probe-usage error (two sockets on one loop,
+send/arm ordering) or a real zero-byte delivery — the probe was not instrumented far enough to separate
+them before the change was closed. Recorded rather than explained away. If it recurs: print `bytes` at the
+completion handler, the sockets' `recv_armed`/`busy` flags at send time, and the `WSARecvFrom` return
+code, all in one build.
+
 ## G. Open items exposed by compiler differences (raised by CI's gcc 16.2.0, **unclassified**)
 
 **G1 — whether `raft_ready` is fully initialized by `raft_advance`.** **SETTLED, fixed in `raft.h`** (2026-09-19).

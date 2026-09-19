@@ -158,6 +158,7 @@ typedef struct cemon_stats{
   int loop_ownership;
   /* Loop resource topology. */
   unsigned int loop_sock_total;
+  unsigned int loop_udp_soft_errors; /* UDP receives the OS reported as "not really an error" (port unreachable etc) */
   unsigned int loop_timer_count;
   /* Extended loop diagnostics. */
   unsigned int loop_send_cost;
@@ -603,6 +604,7 @@ struct cemon{
   int fatal_code;
   char fatal_what[48];
   unsigned int sock_total;
+  unsigned int udp_soft_errors;   /* see cemon_stats.loop_udp_soft_errors */
   unsigned int send_cost;
   unsigned int send_cost_peak;
   unsigned int post_count;
@@ -2255,6 +2257,10 @@ static void cemon_win_recv_done(cemon_win_recv *recv,DWORD bytes,int err){
   if(err!=0){
     if(err==WSA_OPERATION_ABORTED) return;
     if(sock->kind==CEMON_UDP_SOCK&&cemon_win_udp_recv_soft_error(err)){
+      /* Not a real failure - an ICMP port-unreachable from a previous send, typically - but it used to be
+         discarded without a trace, so a UDP path could be silently re-arming forever with nothing to see
+         (issue #10).  Counted, and visible through cemon_inspect. */
+      if(sock->loop) sock->loop->udp_soft_errors++;
       post_err=0;
       if(cemon_recv_active(sock)) post_err=cemon_win_post_recv(sock);
       if(post_err<0) cemon_socket_die(sock,sock->udp_recv?cemon_last_error():WSAEINVAL,1);
@@ -2272,9 +2278,16 @@ static void cemon_win_recv_done(cemon_win_recv *recv,DWORD bytes,int err){
   sock->recv_armed=0;
   memset(&addr,0,sizeof(addr));
   udp_recv=sock->udp_recv;
-  if(sock->kind==CEMON_UDP_SOCK&&udp_recv&&udp_recv->addr_len>0&&udp_recv->addr_len<=(int)sizeof(addr.data)){
-    addr.len=udp_recv->addr_len;
-    memcpy(addr.data,udp_recv->addr,udp_recv->addr_len);
+  /* A UDP datagram lives in udp_recv->buf whatever the source address did.  This used to fall through to
+     the recv->buf branch below - a TCP-style buffer the UDP receive never filled - whenever WSARecvFrom
+     left the address unusable, handing the application a "complete datagram" of uninitialised bytes
+     (issue #10: it reads recv->buf where udp_recv->buf is meant).  The address is best-effort; the
+     datagram is not. */
+  if(sock->kind==CEMON_UDP_SOCK&&udp_recv){
+    if(udp_recv->addr_len>0&&udp_recv->addr_len<=(int)sizeof(addr.data)){
+      addr.len=udp_recv->addr_len;
+      memcpy(addr.data,udp_recv->addr,udp_recv->addr_len);
+    }
     if(cemon_emit_blockable(sock,CEMON_DATA,0,udp_recv->buf,(int)bytes,&addr)==CEMON_EMIT_SKIP) return;
   }else if(bytes>0){
     if(cemon_emit_blockable(sock,CEMON_DATA,0,recv->buf,(int)bytes,0)==CEMON_EMIT_SKIP) return;
@@ -3149,6 +3162,7 @@ static void cemon_inspect_copy_loop_semantics(cemon_stats *out,unsigned int post
 static void cemon_inspect_copy_loop_post_diagnostics_locked(cemon *loop,cemon_stats *out){
   if(loop==0||out==0) return;
   out->loop_sock_total=loop->sock_total;
+  out->loop_udp_soft_errors=loop->udp_soft_errors;
   out->loop_timer_count=loop->timer_count;
   out->loop_send_cost=loop->send_cost;
   out->loop_send_cost_peak=loop->send_cost_peak;
