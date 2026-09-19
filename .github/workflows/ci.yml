@@ -9,6 +9,7 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:   # also runnable by hand (and triggerable by an agent fixing a red gate)
 
 permissions:
   contents: write   # only so the failure-log publisher below can push to ci-logs
