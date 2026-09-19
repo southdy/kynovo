@@ -1096,9 +1096,15 @@ static void cemon_ingress_leave(cemon *loop){
   pthread_mutex_unlock(&loop->post_lock);
 #endif
 }
+/* How long ingress_close waits for in-flight ingress sections before giving up.  A real section is a
+   post/send call measured in microseconds, so this bound is three orders of magnitude of headroom; hitting
+   it means a producer thread is stuck, and the function then says so instead of spinning forever (#9). */
+#define CEMON_INGRESS_CLOSE_WAIT_US ((cemon_u64)5000000)
 static void cemon_ingress_close(cemon *loop){
   int remaining;
+  cemon_u64 t0;
   if(loop==0) return;
+  t0=cemon_monotonic_us();
   for(;;){
 #if defined(_WIN32)
     EnterCriticalSection(&loop->post_lock);
@@ -1113,6 +1119,13 @@ static void cemon_ingress_close(cemon *loop){
     pthread_mutex_unlock(&loop->post_lock);
 #endif
     if(remaining==0) return;
+    /* BOUNDED, with a visible warning when it gives up: this loop used to spin with no exit condition at
+       all, so one stuck ingress section hung cemon_destroy (and therefore shutdown) with no diagnostic
+       (issue #9).  Returning leaves the loop marked CLOSING, so late ingress is rejected. */
+    if(cemon_monotonic_us()-t0>CEMON_INGRESS_CLOSE_WAIT_US){
+      fprintf(stderr,"cemon: warning: ingress close gave up after 5 s with %d ingress operation(s) still in flight; the loop stays CLOSING and late ingress is rejected (a producer thread is stuck)\n",remaining);
+      return;
+    }
 #if defined(_WIN32)
     SwitchToThread();
 #else
@@ -2958,7 +2971,16 @@ CEMON_DEF int cemon_destroy(cemon *loop){
     ULONG_PTR key=0;   /* GQCS leaves it untouched on failure; an uninitialised read could look like a wake */
     OVERLAPPED *ov;
     BOOL ok=GetQueuedCompletionStatus(loop->port,&bytes,&key,&ov,2000);
-    if(!ok&&ov==0) break;                     /* timed out: do not hang destroy */
+    if(!ok&&ov==0){
+      /* Timed out: do not hang destroy.  Say so, and settle the bookkeeping rather than leaving the loop
+         "holding" a socket that can never complete: the completion port is closed a few lines below, so no
+         handler can run for these operations afterwards (issue #9). */
+      if(loop->sock_total>0){
+        fprintf(stderr,"cemon: warning: destroy abandoned %u outstanding completion(s) after the 2000 ms drain; the completion port is closed next, so none of them can be delivered\n",(unsigned)loop->sock_total);
+        loop->sock_total=0;
+      }
+      break;
+    }
     if(ov) cemon_win_handle((cemon_win_op*)ov,bytes,ok?0:(int)GetLastError());
   }
 #endif
