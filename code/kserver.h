@@ -332,6 +332,8 @@ struct k_request{
    /* conservative live-memory charge for admission control */
   int conflict;          /* CAS: 1 = condition not met (reply CONFLICT) */
   k_u64 admit_ms;        /* server-injected time at admission; the terminal result reports the age */
+  k_u64 submit_ms;       /* when the request was handed to raft: splits the age into "waited for a batch
+                            or a WAL slot" and "waiting for durable + the wake" */
 };
 static k_u32 k_request_bucket(const void *cookie){
   k_u64 v=(k_u64)(size_t)cookie;
@@ -415,6 +417,10 @@ struct k_server{
   k_u64 req_age_ms_last;
   k_u64 req_age_ms_max;
   k_u64 slow_acks;              /* requests held longer than K_SLOW_ACK_MS */
+  k_u64 req_wait_ms_last;       /* admission -> handed to raft (batch window, WAL slot, backpressure) */
+  k_u64 req_wait_ms_max;
+  k_u64 req_svc_ms_last;        /* handed to raft -> terminal result (durability plus the wake) */
+  k_u64 req_svc_ms_max;
   k_u64 client_requests;
   k_u64 request_bytes;
   k_u64 rx_buffer_bytes;
@@ -2693,7 +2699,7 @@ static int k_server_flush_writes(k_server *server){
       /* From here the request is Raft's cookie AND the live payload pointer for its entry: it must
          stay alive until the terminal result arrives.  Record that so freeing it early is caught. */
       request=head;
-      for(i=0;i<count&&request;i++){ request->submitted=1; request=request->write_next; }
+      for(i=0;i<count&&request;i++){ request->submitted=1; request->submit_ms=server->elapsed_total_ms; request=request->write_next; }
     }
     K_FREE(commands);
     if(rc==0){
@@ -3351,8 +3357,8 @@ static int k_server_client_frame(void *ud,k_u8 type,const k_u8 *payload,k_u32 si
     int len;
     memset(&info,0,sizeof(info));
     if(reader.off!=reader.len||raft_inspect(server->raft,&info)!=0||treap_inspect(server->tree,&tree_info)!=0) return -1;
-    len=sprintf(text,"id=%d state=%d leader=%d term=%" K_I64_FMT " commit=%" K_I64_FMT " applied=%" K_I64_FMT " snapshot=%" K_I64_FMT " log=%" K_I64_FMT " count=%" K_U64_FMT " height=%u bytes=%" K_U64_FMT " pending_frees=%" K_U64_FMT " pending_bytes=%" K_U64_FMT " persist_generation=%" K_U64_FMT " wal_segment=%" K_U64_FMT " wal_offset=%" K_U64_FMT " wal_size=%" K_U64_FMT " wal_next_segment=%" K_U64_FMT " wal_next_offset=%" K_U64_FMT " wal_pending=%" K_U64_FMT " wal_events=%" K_U64_FMT " wal_records=%" K_U64_FMT " wal_open_files=%d wal_post_failed=%" K_U64_FMT " sync_us_ewma=%" K_U64_FMT " sync_us_max=%" K_U64_FMT " slow_syncs=%" K_U64_FMT " window_ms=%" K_U64_FMT " flush_by_target=%" K_U64_FMT " flush_by_drain=%" K_U64_FMT " flush_by_window=%" K_U64_FMT " flush_by_bytes=%" K_U64_FMT " flush_by_barrier=%" K_U64_FMT " flush_by_stop=%" K_U64_FMT " write_bytes=%" K_U64_FMT " batch_bytes_limit=%u rounds=%" K_U64_FMT " client_requests=%" K_U64_FMT " snapshot_inflight=%d snapshot_failed=%d snapshot_cleanup_busy=%d cleanup_failed=%d flush_batches=%" K_U64_FMT " flush_writes=%" K_U64_FMT " peer_send_drops=%" K_U64_FMT " round_us_last=%" K_U64_FMT " round_us_max=%" K_U64_FMT " round_us_ewma=%" K_U64_FMT " slow_rounds=%" K_U64_FMT " req_age_ms_last=%" K_U64_FMT " req_age_ms_max=%" K_U64_FMT " slow_acks=%" K_U64_FMT " ",
-      info.id,info.state,info.leader_id,(k_i64)info.term,(k_i64)info.commit_index,(k_i64)info.last_applied,(k_i64)info.last_included_index,(k_i64)info.log_entry_count,(k_u64)tree_info.count,tree_info.height,(k_u64)tree_info.tree_bytes,(k_u64)tree_info.pending_free_count,(k_u64)tree_info.pending_free_bytes,server->persist_generation,server->wal_meta.record.segment,server->wal_meta.record.offset,server->wal_meta.record_size,server->wal_meta.next.segment,server->wal_meta.next.offset,server->wal_pending_items,server->wal_accumulated_events,server->wal_records,server->wal_worker.open_files,server->wal_post_failed,server->wal_worker.sync_us_ewma,server->wal_worker.sync_us_max,server->wal_worker.slow_syncs,(k_u64)server->cfg.flush_timeout_ms,server->flush_by_target,server->flush_by_drain,server->flush_by_window,server->flush_by_bytes,server->flush_by_barrier,server->flush_by_stop,server->write_bytes,(unsigned)server->cfg.flush_bytes_limit,server->rounds,server->client_requests,server->snapshot_inflight,server->snapshot_failed,server->snapshot_cleanup_busy,server->snapshot_cleanup_failed,server->flush_batches,server->flush_writes_total,server->peer_send_drops,server->round_us_last,server->round_us_max,server->round_us_ewma,server->slow_rounds,server->req_age_ms_last,server->req_age_ms_max,server->slow_acks);
+    len=sprintf(text,"id=%d state=%d leader=%d term=%" K_I64_FMT " commit=%" K_I64_FMT " applied=%" K_I64_FMT " snapshot=%" K_I64_FMT " log=%" K_I64_FMT " count=%" K_U64_FMT " height=%u bytes=%" K_U64_FMT " pending_frees=%" K_U64_FMT " pending_bytes=%" K_U64_FMT " persist_generation=%" K_U64_FMT " wal_segment=%" K_U64_FMT " wal_offset=%" K_U64_FMT " wal_size=%" K_U64_FMT " wal_next_segment=%" K_U64_FMT " wal_next_offset=%" K_U64_FMT " wal_pending=%" K_U64_FMT " wal_events=%" K_U64_FMT " wal_records=%" K_U64_FMT " wal_open_files=%d wal_post_failed=%" K_U64_FMT " sync_us_ewma=%" K_U64_FMT " sync_us_max=%" K_U64_FMT " slow_syncs=%" K_U64_FMT " window_ms=%" K_U64_FMT " flush_by_target=%" K_U64_FMT " flush_by_drain=%" K_U64_FMT " flush_by_window=%" K_U64_FMT " flush_by_bytes=%" K_U64_FMT " flush_by_barrier=%" K_U64_FMT " flush_by_stop=%" K_U64_FMT " write_bytes=%" K_U64_FMT " batch_bytes_limit=%u rounds=%" K_U64_FMT " client_requests=%" K_U64_FMT " snapshot_inflight=%d snapshot_failed=%d snapshot_cleanup_busy=%d cleanup_failed=%d flush_batches=%" K_U64_FMT " flush_writes=%" K_U64_FMT " peer_send_drops=%" K_U64_FMT " round_us_last=%" K_U64_FMT " round_us_max=%" K_U64_FMT " round_us_ewma=%" K_U64_FMT " slow_rounds=%" K_U64_FMT " req_age_ms_last=%" K_U64_FMT " req_age_ms_max=%" K_U64_FMT " slow_acks=%" K_U64_FMT " req_wait_ms_last=%" K_U64_FMT " req_wait_ms_max=%" K_U64_FMT " req_svc_ms_last=%" K_U64_FMT " req_svc_ms_max=%" K_U64_FMT " ",
+      info.id,info.state,info.leader_id,(k_i64)info.term,(k_i64)info.commit_index,(k_i64)info.last_applied,(k_i64)info.last_included_index,(k_i64)info.log_entry_count,(k_u64)tree_info.count,tree_info.height,(k_u64)tree_info.tree_bytes,(k_u64)tree_info.pending_free_count,(k_u64)tree_info.pending_free_bytes,server->persist_generation,server->wal_meta.record.segment,server->wal_meta.record.offset,server->wal_meta.record_size,server->wal_meta.next.segment,server->wal_meta.next.offset,server->wal_pending_items,server->wal_accumulated_events,server->wal_records,server->wal_worker.open_files,server->wal_post_failed,server->wal_worker.sync_us_ewma,server->wal_worker.sync_us_max,server->wal_worker.slow_syncs,(k_u64)server->cfg.flush_timeout_ms,server->flush_by_target,server->flush_by_drain,server->flush_by_window,server->flush_by_bytes,server->flush_by_barrier,server->flush_by_stop,server->write_bytes,(unsigned)server->cfg.flush_bytes_limit,server->rounds,server->client_requests,server->snapshot_inflight,server->snapshot_failed,server->snapshot_cleanup_busy,server->snapshot_cleanup_failed,server->flush_batches,server->flush_writes_total,server->peer_send_drops,server->round_us_last,server->round_us_max,server->round_us_ewma,server->slow_rounds,server->req_age_ms_last,server->req_age_ms_max,server->slow_acks,server->req_wait_ms_last,server->req_wait_ms_max,server->req_svc_ms_last,server->req_svc_ms_max);
     len+=sprintf(text+len,"wal_inflight=%d client_connections=%u client_connection_limit=%u pending_requests=%u pending_request_limit=%u pending_request_bytes=%" K_U64_FMT " pending_request_bytes_limit=%" K_U64_FMT,
       server->wal_inflight_count,(unsigned)server->client_connection_count,(unsigned)K_CLIENT_CONNECTION_MAX,(unsigned)server->request_count,(unsigned)K_REQUEST_INFLIGHT_MAX,server->request_bytes,(k_u64)K_REQUEST_BYTES_MAX);
     len+=sprintf(text+len," rx_buffer_bytes=%" K_U64_FMT " rx_buffer_bytes_limit=%" K_U64_FMT,server->rx_buffer_bytes,(k_u64)K_RX_BYTES_MAX);
@@ -3643,10 +3649,20 @@ static int k_server_handle_client_result(k_server *server,const raft_client_resu
      not make before.  Intermediate catch-up results are not terminal and are not counted. */
   if(result->status!=RAFT_CLIENT_CATCHUP_READY&&request->admit_ms){
     k_u64 age_ms=(server->elapsed_total_ms>request->admit_ms)?(server->elapsed_total_ms-request->admit_ms):0u;
+    k_u64 wait_ms=(request->submit_ms&&request->submit_ms>request->admit_ms)?(request->submit_ms-request->admit_ms):0u;
+    k_u64 svc_ms=(request->submit_ms&&server->elapsed_total_ms>request->submit_ms)?(server->elapsed_total_ms-request->submit_ms):0u;
     server->req_age_ms_last=age_ms;
     if(age_ms>server->req_age_ms_max) server->req_age_ms_max=age_ms;
     if(age_ms>K_SLOW_ACK_MS) server->slow_acks++;
+    /* The two halves answer different questions: the wait half is batching policy and backpressure,
+       the service half is durability and the cross-thread wake.  Kept separately so a spike can be
+       attributed to one of them instead of to "the server". */
+    server->req_wait_ms_last=wait_ms;
+    if(wait_ms>server->req_wait_ms_max) server->req_wait_ms_max=wait_ms;
+    server->req_svc_ms_last=svc_ms;
+    if(svc_ms>server->req_svc_ms_max) server->req_svc_ms_max=svc_ms;
     request->admit_ms=0;
+    request->submit_ms=0;
   }
   /* A terminal result ends Raft's use of this request (including its live payload pointer). */
   if(result->status!=RAFT_CLIENT_CATCHUP_READY) request->submitted=0;
