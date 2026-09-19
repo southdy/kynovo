@@ -447,6 +447,14 @@ static const char *final_check(int *leaders_out){
 #define PHASE_STEPS 1500
 typedef struct lcli{ int active; int retry_pending; k_u32 rid; int key; int is_read; int write_val; long inv; int retries; } lcli;
 
+/* What the linearizability checker actually DECIDED.  The verdict line used to report only
+   "clusters consistent", so a run in which the checker recorded or decided nothing printed exactly
+   the same success line as a run that checked dozens of histories - "0 failures" indistinguishable
+   from "0 data" (issue #16).  These counters make the check self-certifying, and a run that decided
+   no history at all is a failure, not a pass. */
+static int g_lin_histories;
+static int g_lin_ops;
+static int g_lin_inconclusive;
 static int lincheck_phase(void){
   lin_op hist[NCKEYS][LIN_MAX];
   int hcount[NCKEYS];
@@ -585,7 +593,9 @@ static int lincheck_phase(void){
     /* A history longer than the op mask is NOT checked -- never report it as a
        violation (LIN_INCONCLUSIVE == -1); the per-key cap below keeps this
        unreachable here, but the checker must not turn "unchecked" into "failed". */
-    if(lr==LIN_INCONCLUSIVE) continue;
+    if(lr==LIN_INCONCLUSIVE){ g_lin_inconclusive++; continue; }
+    g_lin_histories++;
+    g_lin_ops+=hcount[i];
     if(!lr){
       fprintf(stderr,"FAIL linearizability key x%d (ops=%d)\n",i,hcount[i]);
       lin_dump(hist[i],hcount[i]);
@@ -865,5 +875,11 @@ int main(int argc,char **argv){
     if(run_one_cluster(s)) ok++;
   }
   printf("done: %d/%d clusters consistent (OOM stopped nodes in %d runs)\n",ok,count,g_oom_clusters);
+  printf("linearizability: %d histories / %d ops decided by the checker, %d inconclusive\n",
+         g_lin_histories,g_lin_ops,g_lin_inconclusive);
+  if(g_lin_histories<=0){
+    fprintf(stderr,"FAIL: the linearizability checker decided no history at all - a check that never ran is not a pass\n");
+    return 1;
+  }
   return ok==count?0:1;
 }

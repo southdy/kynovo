@@ -379,7 +379,10 @@ do_regress(){
     if [ "$mode" != quick ]; then
         reg_gate raft_fuzz            'done: [0-9]+ iterations' "$BUILD_DIR/raft_fuzz.exe" 1 "${2:-$fz}"
         reg_gate raft_cluster_fuzz    'done: [0-9]+ iterations' "$BUILD_DIR/raft_cluster_fuzz.exe" 1 "${3:-$cf}" 0
-        reg_gate kserver_cluster_fuzz 'clusters consistent'     "$BUILD_DIR/kserver_cluster_fuzz.exe" 1 "${4:-$ks}"
+        # The linearizability checker must SAY what it decided: a run whose checker decided no
+        # history is not a pass (the harness returns non-zero for that), and requiring a non-zero count
+        # here means neither "never ran" nor "decided nothing" can wear the success line.
+        reg_gate kserver_cluster_fuzz 'linearizability: [1-9][0-9]* histories'  "$BUILD_DIR/kserver_cluster_fuzz.exe" 1 "${4:-$ks}"
     fi
     if [ "$mode" = full ]; then
         reg_gate soak_release         'rounds_without_full_success=0' env RUNS="${RUNS:-24}" bash tools/harness/soak_release.sh
