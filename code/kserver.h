@@ -331,6 +331,7 @@ struct k_request{
                                     fault in treap_blob_create). */
    /* conservative live-memory charge for admission control */
   int conflict;          /* CAS: 1 = condition not met (reply CONFLICT) */
+  k_u64 admit_ms;        /* server-injected time at admission; the terminal result reports the age */
 };
 static k_u32 k_request_bucket(const void *cookie){
   k_u64 v=(k_u64)(size_t)cookie;
@@ -389,6 +390,7 @@ struct k_server{
   k_u64 flush_by_window;
   k_u64 flush_by_bytes;         /* batch submitted on the byte target */
 #define K_SLOW_ROUND_US 5000u  /* a round whose work exceeds this is counted in slow_rounds */
+#define K_SLOW_ACK_MS   5u     /* a request the server held longer than this is counted in slow_acks */
 #define K_SLOW_SYNC_US  5000u  /* a record write+sync slower than this is counted in slow_syncs */
   k_u64 flush_by_barrier;       /* submitted on demand: a read/FCALL needed the queue drained */
   k_u64 flush_by_stop;          /* submitted while stopping (the queue must not be stranded) */
@@ -405,6 +407,14 @@ struct k_server{
   k_u64 round_us_max;
   k_u64 round_us_ewma;
   k_u64 slow_rounds;            /* rounds whose work exceeded K_SLOW_ROUND_US */
+  /* Request-age accounting, in the server's own injected time: admission to terminal result - i.e.
+     how long the server itself held a request.  This is the one number round accounting cannot give,
+     because a loop blocked in its poll does no work at all: a latency spike a client reports is the
+     server's only if this age is large.  Diagnostic only, never a decision.  doc/gaps-audit.md J-2. */
+  k_u64 elapsed_total_ms;       /* accumulated injected time (never a substitute for the driver clock) */
+  k_u64 req_age_ms_last;
+  k_u64 req_age_ms_max;
+  k_u64 slow_acks;              /* requests held longer than K_SLOW_ACK_MS */
   k_u64 client_requests;
   k_u64 request_bytes;
   k_u64 rx_buffer_bytes;
@@ -2061,6 +2071,7 @@ static k_request *k_request_create_server(k_server *server,k_conn *conn,k_u32 id
   server->client_requests++;
   request=(k_request *)K_CALLOC(1,sizeof(*request));
   if(!request) return 0;
+  request->admit_ms=server->elapsed_total_ms;
   if(key_len){
     request->key=(k_u8 *)K_MALLOC(key_len);
     if(!request->key){
@@ -3340,8 +3351,8 @@ static int k_server_client_frame(void *ud,k_u8 type,const k_u8 *payload,k_u32 si
     int len;
     memset(&info,0,sizeof(info));
     if(reader.off!=reader.len||raft_inspect(server->raft,&info)!=0||treap_inspect(server->tree,&tree_info)!=0) return -1;
-    len=sprintf(text,"id=%d state=%d leader=%d term=%" K_I64_FMT " commit=%" K_I64_FMT " applied=%" K_I64_FMT " snapshot=%" K_I64_FMT " log=%" K_I64_FMT " count=%" K_U64_FMT " height=%u bytes=%" K_U64_FMT " pending_frees=%" K_U64_FMT " pending_bytes=%" K_U64_FMT " persist_generation=%" K_U64_FMT " wal_segment=%" K_U64_FMT " wal_offset=%" K_U64_FMT " wal_size=%" K_U64_FMT " wal_next_segment=%" K_U64_FMT " wal_next_offset=%" K_U64_FMT " wal_pending=%" K_U64_FMT " wal_events=%" K_U64_FMT " wal_records=%" K_U64_FMT " wal_open_files=%d wal_post_failed=%" K_U64_FMT " sync_us_ewma=%" K_U64_FMT " sync_us_max=%" K_U64_FMT " slow_syncs=%" K_U64_FMT " window_ms=%" K_U64_FMT " flush_by_target=%" K_U64_FMT " flush_by_drain=%" K_U64_FMT " flush_by_window=%" K_U64_FMT " flush_by_bytes=%" K_U64_FMT " flush_by_barrier=%" K_U64_FMT " flush_by_stop=%" K_U64_FMT " write_bytes=%" K_U64_FMT " batch_bytes_limit=%u rounds=%" K_U64_FMT " client_requests=%" K_U64_FMT " snapshot_inflight=%d snapshot_failed=%d snapshot_cleanup_busy=%d cleanup_failed=%d flush_batches=%" K_U64_FMT " flush_writes=%" K_U64_FMT " peer_send_drops=%" K_U64_FMT " round_us_last=%" K_U64_FMT " round_us_max=%" K_U64_FMT " round_us_ewma=%" K_U64_FMT " slow_rounds=%" K_U64_FMT " ",
-      info.id,info.state,info.leader_id,(k_i64)info.term,(k_i64)info.commit_index,(k_i64)info.last_applied,(k_i64)info.last_included_index,(k_i64)info.log_entry_count,(k_u64)tree_info.count,tree_info.height,(k_u64)tree_info.tree_bytes,(k_u64)tree_info.pending_free_count,(k_u64)tree_info.pending_free_bytes,server->persist_generation,server->wal_meta.record.segment,server->wal_meta.record.offset,server->wal_meta.record_size,server->wal_meta.next.segment,server->wal_meta.next.offset,server->wal_pending_items,server->wal_accumulated_events,server->wal_records,server->wal_worker.open_files,server->wal_post_failed,server->wal_worker.sync_us_ewma,server->wal_worker.sync_us_max,server->wal_worker.slow_syncs,(k_u64)server->cfg.flush_timeout_ms,server->flush_by_target,server->flush_by_drain,server->flush_by_window,server->flush_by_bytes,server->flush_by_barrier,server->flush_by_stop,server->write_bytes,(unsigned)server->cfg.flush_bytes_limit,server->rounds,server->client_requests,server->snapshot_inflight,server->snapshot_failed,server->snapshot_cleanup_busy,server->snapshot_cleanup_failed,server->flush_batches,server->flush_writes_total,server->peer_send_drops,server->round_us_last,server->round_us_max,server->round_us_ewma,server->slow_rounds);
+    len=sprintf(text,"id=%d state=%d leader=%d term=%" K_I64_FMT " commit=%" K_I64_FMT " applied=%" K_I64_FMT " snapshot=%" K_I64_FMT " log=%" K_I64_FMT " count=%" K_U64_FMT " height=%u bytes=%" K_U64_FMT " pending_frees=%" K_U64_FMT " pending_bytes=%" K_U64_FMT " persist_generation=%" K_U64_FMT " wal_segment=%" K_U64_FMT " wal_offset=%" K_U64_FMT " wal_size=%" K_U64_FMT " wal_next_segment=%" K_U64_FMT " wal_next_offset=%" K_U64_FMT " wal_pending=%" K_U64_FMT " wal_events=%" K_U64_FMT " wal_records=%" K_U64_FMT " wal_open_files=%d wal_post_failed=%" K_U64_FMT " sync_us_ewma=%" K_U64_FMT " sync_us_max=%" K_U64_FMT " slow_syncs=%" K_U64_FMT " window_ms=%" K_U64_FMT " flush_by_target=%" K_U64_FMT " flush_by_drain=%" K_U64_FMT " flush_by_window=%" K_U64_FMT " flush_by_bytes=%" K_U64_FMT " flush_by_barrier=%" K_U64_FMT " flush_by_stop=%" K_U64_FMT " write_bytes=%" K_U64_FMT " batch_bytes_limit=%u rounds=%" K_U64_FMT " client_requests=%" K_U64_FMT " snapshot_inflight=%d snapshot_failed=%d snapshot_cleanup_busy=%d cleanup_failed=%d flush_batches=%" K_U64_FMT " flush_writes=%" K_U64_FMT " peer_send_drops=%" K_U64_FMT " round_us_last=%" K_U64_FMT " round_us_max=%" K_U64_FMT " round_us_ewma=%" K_U64_FMT " slow_rounds=%" K_U64_FMT " req_age_ms_last=%" K_U64_FMT " req_age_ms_max=%" K_U64_FMT " slow_acks=%" K_U64_FMT " ",
+      info.id,info.state,info.leader_id,(k_i64)info.term,(k_i64)info.commit_index,(k_i64)info.last_applied,(k_i64)info.last_included_index,(k_i64)info.log_entry_count,(k_u64)tree_info.count,tree_info.height,(k_u64)tree_info.tree_bytes,(k_u64)tree_info.pending_free_count,(k_u64)tree_info.pending_free_bytes,server->persist_generation,server->wal_meta.record.segment,server->wal_meta.record.offset,server->wal_meta.record_size,server->wal_meta.next.segment,server->wal_meta.next.offset,server->wal_pending_items,server->wal_accumulated_events,server->wal_records,server->wal_worker.open_files,server->wal_post_failed,server->wal_worker.sync_us_ewma,server->wal_worker.sync_us_max,server->wal_worker.slow_syncs,(k_u64)server->cfg.flush_timeout_ms,server->flush_by_target,server->flush_by_drain,server->flush_by_window,server->flush_by_bytes,server->flush_by_barrier,server->flush_by_stop,server->write_bytes,(unsigned)server->cfg.flush_bytes_limit,server->rounds,server->client_requests,server->snapshot_inflight,server->snapshot_failed,server->snapshot_cleanup_busy,server->snapshot_cleanup_failed,server->flush_batches,server->flush_writes_total,server->peer_send_drops,server->round_us_last,server->round_us_max,server->round_us_ewma,server->slow_rounds,server->req_age_ms_last,server->req_age_ms_max,server->slow_acks);
     len+=sprintf(text+len,"wal_inflight=%d client_connections=%u client_connection_limit=%u pending_requests=%u pending_request_limit=%u pending_request_bytes=%" K_U64_FMT " pending_request_bytes_limit=%" K_U64_FMT,
       server->wal_inflight_count,(unsigned)server->client_connection_count,(unsigned)K_CLIENT_CONNECTION_MAX,(unsigned)server->request_count,(unsigned)K_REQUEST_INFLIGHT_MAX,server->request_bytes,(k_u64)K_REQUEST_BYTES_MAX);
     len+=sprintf(text+len," rx_buffer_bytes=%" K_U64_FMT " rx_buffer_bytes_limit=%" K_U64_FMT,server->rx_buffer_bytes,(k_u64)K_RX_BYTES_MAX);
@@ -3625,6 +3636,17 @@ static int k_server_handle_client_result(k_server *server,const raft_client_resu
   if(!request){
     printf("warning: result (status=%d) for an unknown request cookie %p dropped\n",(int)result->status,result->cookie);
     return 0;
+  }
+  /* Age of a TERMINAL result, in injected milliseconds: how long the server held this request after
+     admitting it.  A large value here means the server owns the latency; a small one with a slow
+     client means the time went somewhere the server never saw, which is the split this project could
+     not make before.  Intermediate catch-up results are not terminal and are not counted. */
+  if(result->status!=RAFT_CLIENT_CATCHUP_READY&&request->admit_ms){
+    k_u64 age_ms=(server->elapsed_total_ms>request->admit_ms)?(server->elapsed_total_ms-request->admit_ms):0u;
+    server->req_age_ms_last=age_ms;
+    if(age_ms>server->req_age_ms_max) server->req_age_ms_max=age_ms;
+    if(age_ms>K_SLOW_ACK_MS) server->slow_acks++;
+    request->admit_ms=0;
   }
   /* A terminal result ends Raft's use of this request (including its live payload pointer). */
   if(result->status!=RAFT_CLIENT_CATCHUP_READY) request->submitted=0;
@@ -4645,6 +4667,8 @@ static void k_server_advance(k_server *server,unsigned int elapsed_ms){
 static void k_server_advance_at(k_server *server,unsigned int elapsed_ms,unsigned int batch_ms){
   unsigned int write_ms;
   if(!server) return;
+  if(server->elapsed_total_ms<=~(k_u64)0-(k_u64)elapsed_ms) server->elapsed_total_ms+=(k_u64)elapsed_ms;
+  else server->elapsed_total_ms=~(k_u64)0;
   if(server->runtime&&runtime_should_stop(server->runtime)) k_server_begin_stop(server);
   write_ms=batch_ms;
   if(server->write_count){
