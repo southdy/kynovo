@@ -47,6 +47,7 @@ and their `run-*` versions, `selftest`, `kdbsvr`, `kdbctl`, `bench*`, `cemon-ben
 | L1c | client unit | `./build/kclient_test.exe` | `SUMMARY: 16/16 passed` | ~0.1s |
 | L1d | cemon event-loop unit | `./build/cemon_test.exe` | `SUMMARY: 5/5 passed` | ~2s (includes a 2s long wait) |
 | L1e | end-to-end self-test (single process, with membership change/bootstrap/election) | `./build/selftest.exe` | `selftest: PASS` | ~1–3s |
+| L1f | harness cleanliness: the self-test's store artifacts are gone | (gate layer `selftest_cleanup`) | `selftest-cleanup: 0 leftover file(s)` | ~0s |
 | L2 | CLI semantics smoke (real process + real socket) | `bash tests/cli_smoke.sh` | `cli_smoke: PASS` | ~10s |
 | L3a | single-node randomised fuzzing (API/OOM rollback) | `./build/raft_fuzz.exe <seed> <n>` | `done: <n> iterations` / `FAIL: …` | n=2000 ~10s |
 | L3b | **multi-node cluster fuzzing** (real pull-mode wire messages: drop/reorder/duplicate/partition/crash-restart/membership change/OOM injection) | `./build/raft_cluster_fuzz.exe <seed> <n> [persist_delay]` | `done: <n> iterations` / `FAIL: …` | n=2000 ~30s |
@@ -185,7 +186,7 @@ The **single stable entry point** for automation (agents, cron and CI all use it
 command lists):
 
 ```bash
-./build.sh regress quick     # default: principles + build (0-warning assertion) + 4 unit suites + selftest + CLI smoke   ~2.5 min
+./build.sh regress quick     # default: principles + build (0-warning assertion) + 4 unit suites + selftest + cleanliness + CLI smoke   ~2.5 min
 ./build.sh regress fuzz      # adds raft_fuzz 2000 / raft_cluster_fuzz 200 / kserver_cluster_fuzz 1                       ~5 min (**this is what CI runs on every push/PR**)
 ./build.sh regress full      # fuzz with release-sized parameters (20k/2000/10) plus a 24-round release soak              ~20 min (nightly)
 ```
@@ -193,7 +194,7 @@ command lists):
 - Every layer prints one line `GATE|<layer>|pass|FAIL|<verdict line>|<seconds>`; **the verdict line must
   appear** — a silent run (exit 0 but no verdict line) is judged **FAIL**; this is where "0 failures does
   not mean 0 data" is made concrete;
-- **the last line is machine-readable**: `REGRESS|quick|pass=8 fail=0 duration=144s` (the `principles` layer
+- **the last line is machine-readable**: `REGRESS|quick|pass=9 fail=0 duration=144s` (the `principles` layer
   added: `python tools/check-principles.py`) (an agent can decide by reading this line alone);
 - on failure it prints that layer's log path and the last 12 lines; logs live in `build/regress/<layer>.log`;
 - the gate's own failure path is self-tested: `bash tools/harness/regress_selftest.sh` (expects `pass=1 fail=2`).
@@ -242,4 +243,4 @@ invoked from anywhere; under `set -u` they all carry sensible defaults and can b
 
 **Delivery criteria**: L0 0 error/0 warning; L1 all green; L2 PASS; L3 `done`; L4
 `rounds_without_full_success=0` and `final liveness: 1`; no leftovers in the working directory (e.g.
-`kdb-selftest-*`); no leftover processes (`ps -W | grep -icE 'kdbsvr|kdbctl'` is 0).
+`kdb-selftest-*` — enforced by the `selftest_cleanup` layer, not by eye); no leftover processes (`ps -W | grep -icE 'kdbsvr|kdbctl'` is 0).

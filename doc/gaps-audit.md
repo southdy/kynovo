@@ -243,8 +243,8 @@ The checked and **gap-free** parts and the **settled trade-offs** are at the end
 ### Cross-platform: VERIFIED (this section used to say "platform-unverifiable")
 
 The Unix branch took part in no build when this audit was written; it now builds, runs the same gate, and
-its crash contract is measured.  Evidence, all from the CentOS 7.9 guest: `REGRESS|quick|pass=8 fail=0` with
-the same eight layers Windows runs; every file in `code/` md5-verified against the committed tree before
+its crash contract is measured.  Evidence, all from the CentOS 7.9 guest: `REGRESS|quick|pass=9 fail=0` with
+the same nine layers Windows runs; every file in `code/` md5-verified against the committed tree before
 each run, so the gate is a verdict about the tree that was built; and every acknowledged write surviving a
 `kill -9` (2000/2000 keys read back, never-written prefix 0/2000, no corruption report).
 `doc/crash-contract.md` states the sequence, the two named platform differences, and the audit showing the

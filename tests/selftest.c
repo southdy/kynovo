@@ -585,8 +585,11 @@ static int k_selftest_boot_node(k_server *server4,k_cluster *cluster4,runtime_ct
   k_server_init(server4,new_id,cluster4->nodes[0].client_port,cluster4->nodes[0].peer_port,base4,cluster4);
   server4->bootstrap=1;
   *rt4=runtime_create("thread",1,k_server_worker,0);
-  if(!*rt4){ k_server_release(server4); return 0; }
-  if(runtime_task_post(*rt4,0,server4)!=0){ runtime_destroy(*rt4); k_server_release(server4); return 0; }
+  /* Every failure return must clean the store this node just created: the base is built here, and an
+     early return used to leave kdb-selftest-<tag>-<pid>-n<id>.{cfg,wal.meta} in the working directory
+     (two such files sat in the guest's repo root until they were spotted by hand). */
+  if(!*rt4){ k_server_release(server4); k_selftest_node_cleanup(base4); return 0; }
+  if(runtime_task_post(*rt4,0,server4)!=0){ runtime_destroy(*rt4); k_server_release(server4); k_selftest_node_cleanup(base4); return 0; }
   runtime_wait_workers_ready(*rt4);
   if(server4->started!=1){
     printf("selftest: %s node start failed\n",tag);
@@ -616,7 +619,7 @@ static int k_selftest_bootstrap(const k_cluster *cluster,int leader_index,unsign
   /* no pre-listed bootstrap source: the new node starts with only itself and
      must learn the cluster from whichever live member contacts it (Sec 4.4
      dynamic membership - a static single-source config is the anti-pattern) */
-  if(!k_selftest_boot_node(&server4,&cluster4,&rt4,base4,"boot",new_id,base_port)) return -1;
+  if(!k_selftest_boot_node(&server4,&cluster4,&rt4,base4,"boot",new_id,base_port)){ k_selftest_node_cleanup(base4); return -1; }
   ids4[0]=new_id;
   strcpy(hosts4[0],"127.0.0.1");
   cp4[0]=cluster4.nodes[0].client_port;

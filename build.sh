@@ -375,6 +375,10 @@ do_regress(){
     reg_gate kclient_test   'SUMMARY: [0-9]+/[0-9]+ passed' "$BUILD_DIR/kclient_test.exe"
     reg_gate cemon_test     'SUMMARY: [0-9]+/[0-9]+ passed' "$BUILD_DIR/cemon_test.exe"
     reg_gate selftest       'selftest: PASS'                "$BUILD_DIR/selftest.exe"
+    # Leftover guard: the selftest writes its store into the working directory (the repo root), so a
+    # failure path that returns early leaves kdb-selftest-* artifacts behind - two of them sat in the
+    # guest's root until someone noticed by hand.  Cleanup defects become a red layer instead.
+    reg_gate selftest_cleanup 'selftest-cleanup: 0 leftover' bash -c 'n=$(ls -1 kdb-selftest-* 2>/dev/null | wc -l); printf "selftest-cleanup: %s leftover file(s) %s\n" "$n" "$(ls kdb-selftest-* 2>/dev/null | head -3 | tr "\n" " ")"; [ "$n" = 0 ]'
     reg_gate cli_smoke      'cli_smoke: PASS'               bash tests/cli_smoke.sh
     if [ "$mode" != quick ]; then
         reg_gate raft_fuzz            'done: [0-9]+ iterations' "$BUILD_DIR/raft_fuzz.exe" 1 "${2:-$fz}"
