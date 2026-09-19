@@ -119,6 +119,7 @@ struct cli_ctx{
   struct termios old_termios;
   int old_flags;
 #endif
+  unsigned int print_truncated;   /* prints that did not fit; a non-zero value is a real signal */
 };
 typedef struct cli_abuf{
   char b[1024];
@@ -757,19 +758,34 @@ CLI_DEF int cli_poll(cli_ctx *cli){
   }
   return 0;
 }
+/* The STATS counter line grew past 1 KB, and a print that silently cut it made a measurement look
+   complete when it was not.  4096 covers the lines this tool actually prints; anything longer is
+   marked and reported rather than quietly shortened. */
 #ifndef CLI_PRINT_BUFSIZE
-#define CLI_PRINT_BUFSIZE 1024
+#define CLI_PRINT_BUFSIZE 4096
 #endif
+#define CLI_PRINT_TRUNC "...[TRUNCATED]"
 #if defined(_MSC_VER)
 #define vsnprintf _vsnprintf
 #endif
 CLI_DEF void cli_print(cli_ctx *cli,const char *fmt,...){
   char msgbuf[CLI_PRINT_BUFSIZE];
   va_list args;
+  int need;
   va_start(args,fmt);
-  vsnprintf(msgbuf,sizeof(msgbuf),fmt,args);
+  need=vsnprintf(msgbuf,sizeof(msgbuf),fmt,args);
   va_end(args);
   msgbuf[sizeof(msgbuf)-1]='\0';
+  /* Never let a long line look complete when it is not.  C99 vsnprintf returns the length it would
+     have needed; MSVC 6's _vsnprintf returns -1 on truncation, so both mean "it did not fit". */
+  if(need<0||(size_t)need>=sizeof(msgbuf)){
+    size_t keep=sizeof(msgbuf)-1u;
+    size_t mlen=(size_t)strlen(CLI_PRINT_TRUNC);
+    if(keep>mlen){
+      memcpy(msgbuf+keep-mlen,CLI_PRINT_TRUNC,mlen);
+    }
+    if(cli) cli->print_truncated++;
+  }
   if(cli&&cli->tty&&cli->prompt_shown){
     cli_clear_line(cli);
     printf("%s\r\n",msgbuf);

@@ -242,6 +242,20 @@ static int k_server_run(k_server *server){
      /* DATA callbacks run inside cemon_poll, so compare the counter across the
        whole poll+drive round.  Sampling after poll would classify every busy
        round as drained and defeat structural group commit. */
+    /* Wake, split from work: the worker stamped wal_post_us when it posted a finished bundle; this
+       point is the START of the loop's next round, so the gap is how long the loop was not running.
+       wake_us_* (below, after the round) adds that round's work on top. */
+    if(server->wal_post_us&&server->wal_post_us!=server->wake_pre_seen){
+      k_u64 wp=0;
+      server->wake_pre_seen=server->wal_post_us;
+      if(k_monotonic_us(&wp)==0&&wp>=server->wal_post_us){
+        k_u64 pre=wp-server->wal_post_us;
+        server->wake_pre_us_last=pre;
+        if(pre>server->wake_pre_us_max) server->wake_pre_us_max=pre;
+        if(pre>K_SLOW_WAKE_US) server->slow_wake_pres++;
+        server->wake_pre_samples++;
+      }
+    }
     if(k_monotonic_us(&round_t0)!=0) round_t0=0;   /* round work starts here, after the poll's wait */
     elapsed_ms=k_server_elapsed_ms(server);
     /* Two quantities: Raft timers, reconnects and the snapshot policy measure real

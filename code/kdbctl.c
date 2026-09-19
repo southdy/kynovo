@@ -523,6 +523,7 @@ static int k_cli_pipeline_run(k_client_app *app,cemon *loop,const char *line){
 }
 
 static char g_cli_last[1024];
+static unsigned int g_cli_out_truncated;   /* non-zero means a printed body did not fit */
 #if defined(_MSC_VER)
 #define k_bounded_vsnprintf _vsnprintf
 #else
@@ -531,14 +532,29 @@ static char g_cli_last[1024];
 /* Count the CLI's output so one-shot mode knows when its single command has finished, then
    forward to the normal sink (note: the sink itself is variadic). */
 static void k_client_output_counted(void *ud,const char *fmt,...){
-  char text[1024];
+  /* 1024 was the third silent clamp of the same kind: a STATS line over 1 KB was cut here before it
+     ever reached cli_print, so the "loud truncation" added there never fired.  4096 covers what this
+     tool prints, and anything longer is marked and reported. */
+  char text[4096];
   va_list ap;
+  int need;
   g_cli_out_count++;
   va_start(ap,fmt);
-  if(k_bounded_vsnprintf(text,sizeof(text),fmt,ap)<0) text[0]='\0';
+  need=k_bounded_vsnprintf(text,sizeof(text),fmt,ap);
   va_end(ap);
-  { size_t n=strlen(text); if(n>=sizeof(g_cli_last)) n=sizeof(g_cli_last)-1u;
-    memcpy(g_cli_last,text,n); g_cli_last[n]='\0'; }
+  if(need<0||(size_t)need>=sizeof(text)){
+    size_t keep=sizeof(text)-1u,mlen=(size_t)strlen(CLI_PRINT_TRUNC);
+    if(keep>mlen) memcpy(text+keep-mlen,CLI_PRINT_TRUNC,mlen);
+    text[sizeof(text)-1]='\0';
+    g_cli_out_truncated++;
+  }
+  { /* Same rule as cli_print: keep what fits and SAY so, never truncate in silence. */
+    size_t n=strlen(text),cap=sizeof(g_cli_last)-1u;
+    int cut=(n>cap);
+    if(cut) n=cap;
+    memcpy(g_cli_last,text,n);
+    if(cut&&n>15u) memcpy(g_cli_last+n-15u,"...[TRUNCATED]",15u);
+    g_cli_last[n]='\0'; }
   k_client_output_cli(ud,"%s",text);
 }
 static int k_client_run(const char *seed_list,const char *one_shot){
