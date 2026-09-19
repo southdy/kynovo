@@ -25,6 +25,8 @@ K=64 : n=4000  throughput=    10671 ops/s (single connection)
 
 == kdbctl PIPE, disk:// backend, N=4000, 1 B ("payload") ==
 pipe mode=SET k=1   n=4000 wall_us=60003845 ops_per_s=58     ok=3509 not_found=0 other=0
+#  ^ NOT a throughput: this run hit the tool's own 60 s cap (see gaps-audit J-1).  The next line of
+#    output, which said "error: PIPE exceeded 60s", was filtered out by a grep when captured.
 pipe mode=SET k=32  n=4000 wall_us=1225997  ops_per_s=3263   ok=4000 not_found=0 other=0
 pipe mode=SET k=64  n=4000 wall_us=392042   ops_per_s=10205  ok=4000 not_found=0 other=0
 pipe mode=SET k=128 n=4000 wall_us=146266   ops_per_s=27354  ok=4000 not_found=0 other=0
@@ -35,7 +37,9 @@ pipe mode=GET k=128 n=8    wall_us=291      ops_per_s=30927  ok=0    not_found=8
 
 == bench_rate (open loop, N=2000 in flight, K=32, disk) ==
 PHASE|n=2000 k=32 wall_us=133055 ops_per_s=15031
-LAT|n=2000 min=872 p50=1159 p90=1968 p99=41958 max=44460      <- p99 42 ms, unexplained, worth a look
+LAT|n=2000 min=872 p50=1159 p90=1968 p99=41958 max=44460
+#  ^ a single-request tail (p99==max).  Unreproduced in 8 later runs, and mem:// shows the same class
+#    with a 6 us flush cost, so it is not storage.  Open: see gaps-audit J-2.
 RESP|status=0 leader_id=1 leader=:0 body=
 
 == server counters after the sweeps ==

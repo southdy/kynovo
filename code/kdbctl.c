@@ -422,12 +422,16 @@ static int k_pipe_cmp_u32(const void *a,const void *b){
   k_u32 x=*(const k_u32 *)a,y=*(const k_u32 *)b;
   return x<y?-1:(x>y?1:0);
 }
+/* Why the PIPE loop stopped.  A run cut short by the 60 s cap or by the stall detector used to
+   print a verdict line identical in shape to a completed one, so a truncated run read as a slow run:
+   k=1 n=4000 reported ok=3509, which is "as many as fitted in 60 s", not a throughput.  Say so. */
+static const char *g_pipe_end="complete";
 static void k_pipe_report(const char *mode,k_u32 k,k_u32 count,k_u64 wall_us,k_u32 done){
   k_u32 pct;
-  printf("pipe mode=%s k=%u n=%u wall_us=%" K_U64_FMT " ops_per_s=%" K_U64_FMT " ok=%u not_found=%u other=%u\n",
+  printf("pipe mode=%s k=%u n=%u wall_us=%" K_U64_FMT " ops_per_s=%" K_U64_FMT " ok=%u not_found=%u other=%u end=%s\n",
          mode,(unsigned)k,(unsigned)count,(k_u64)wall_us,
          (k_u64)(wall_us?(k_u64)done*1000000u/(k_u64)wall_us:0u),
-         (unsigned)g_pipe_status_ok,(unsigned)g_pipe_status_nf,(unsigned)g_pipe_status_other);
+         (unsigned)g_pipe_status_ok,(unsigned)g_pipe_status_nf,(unsigned)g_pipe_status_other,g_pipe_end);
   if(g_pipe_lat_n){
     k_u32 *sorted=(k_u32 *)K_MALLOC(g_pipe_lat_n*sizeof(k_u32));
     k_u32 i;
@@ -465,6 +469,7 @@ static int k_cli_pipeline_run(k_client_app *app,cemon *loop,const char *line){
     return -1;
   }
   g_pipe_lat_n=0;
+  g_pipe_end="complete";
   g_pipe_status_ok=g_pipe_status_nf=g_pipe_status_other=0;
   g_pipe_us_sum=0;
   g_pipe_first_id=app->next_id+1u;   /* the first request THIS run will queue */
@@ -488,7 +493,7 @@ static int k_cli_pipeline_run(k_client_app *app,cemon *loop,const char *line){
     if(k_monotonic_us(&app->now_us)!=0) break;
     k_client_poll(app);
     if(k_monotonic_us(&now)!=0) break;
-    if(t0&&now-t0>60000000u){ printf("error: PIPE exceeded 60s\n"); break; }
+    if(t0&&now-t0>60000000u){ printf("error: PIPE exceeded 60s\n"); g_pipe_end="cap60s"; break; }
     if(queued>=count&&k_client_inflight_count(app)==0) break;
     if(app->stopping) break;
     /* Stall detector: if neither the queued count nor the completion count moved for 5s, the run
@@ -504,6 +509,7 @@ static int k_cli_pipeline_run(k_client_app *app,cemon *loop,const char *line){
         printf("pipe: stalled after %" K_U64_FMT " s (queued=%u done=%u in_flight=%u)\n",
                (k_u64)((now-t0)/1000000u),(unsigned)queued,(unsigned)app->done_count,
                (unsigned)k_client_inflight_count(app));
+        g_pipe_end="stalled";
         break;
       }
     }

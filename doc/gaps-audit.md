@@ -483,3 +483,31 @@ passes.**  Verbatim verdict lines:
 CentOS box against **~1130 us** on the Windows machine, and this project's throughput ceiling is
 `batch size / flush cost`.  The K-sweep numbers recorded in `doc/measurements/` therefore describe
 the Windows machine only, and any comparison across the two must say which one it was measured on.
+
+## J. The two Linux measurement anomalies
+
+Asked to run these down.  One is closed, one stays open with its evidence.  Both were first seen in
+the Linux records beside the Windows ones.
+
+**J-1 (closed, not a defect): `kdbctl PIPE 1 4000` reported `ok=3509` at 58 ops/s.**
+`code/kdbctl.c` polls with `cemon_poll(loop,10)` and leaves the queueing loop as soon as the single
+in-flight slot is busy, so at k=1 every request costs a 10 ms poll plus a 4.6 ms round trip.  60 s /
+~15 ms = ~3900, and 3509 is simply how many fitted before the tool's own 60 s cap
+(`wall_us=60003845`).  The line that said so - `error: PIPE exceeded 60s` - was lost because I had
+piped the output through `grep '^pipe mode'`, which hides precisely the diagnosis.  Windows shows the
+same arithmetic (k=1 n=4000 -> ok=3865, capped), so the mechanism is the client on both platforms,
+and 58 ops/s was never a throughput.  Fixed at the reporting layer: the verdict line now ends with
+`end=complete|cap60s|stalled`, proven both ways - a normal run prints `end=complete`, and a
+deliberate k=1 n=4000 run prints `end=cap60s` after its error line.
+
+**J-2 (open, recorded not explained): a 42 ms p99 on one open-loop run (`bench_rate`, 2000 in flight,
+k=32, disk).**  What the evidence says, and does not:
+  - Not storage.  `mem://` shows the same class of spike (p99 10805 us with `sync_us_ewma=6`).
+  - Intermittent and unreproduced since: eight further open-loop runs peaked at 14.4 / 7.1 / 4.1 /
+    3.2 / 3.1 / 2.8 / 2.6 ms, and three *identical* consecutive disk runs gave p99 3.0 / 14.4 / 3.2 ms.
+  - A single-request tail, not a distribution shift: p99 == max on every run that shows it.
+  - The guest's timing is coarse (a 1 ms `time.sleep` measures ~2 ms), but a 300-sample idle probe
+    never exceeded 3 ms, so "the guest is merely descheduled" is not established.
+  - The machine is a VMware guest on a host that was running builds while these were taken.
+  Next step if it matters: repeat on an idle guest, or add a per-round duration histogram to the
+  server loop so the spike can be attributed to a round instead of to a request.
