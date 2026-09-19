@@ -241,11 +241,14 @@ typedef struct k_pipe{
   k_u64 lat_ring[K_PIPE_RING];
   int ring_head,ring_tail;
   k_u64 ring_drops;
-  char stats[1024];        /* body of the last STATS reply (sentinel cookie below) */
+  char stats[4096];        /* body of the last STATS reply (sentinel cookie below).  The counter line
+                              grew past 1 KB; at 1024 the tail was silently clipped, which made every
+                              per-run reading a guess.  If it ever outgrows this, the string says so. */
   int stats_len;
 } k_pipe;
 
 #define K_PIPE_STATS_COOKIE 0xfffffff0u
+#define K_PIPE_STATS_TRUNC  "...[TRUNCATED]"
 
 static int k_pipe_frame(void *ud,k_u8 type,const k_u8 *payload,k_u32 size){
   k_pipe *p=(k_pipe *)ud;
@@ -256,8 +259,22 @@ static int k_pipe_frame(void *ud,k_u8 type,const k_u8 *payload,k_u32 size){
   memset(&r,0,sizeof(r));
   if(k_response_decode(&r,payload,size)!=0) return -1;
   if(r.request_id==K_PIPE_STATS_COOKIE&&r.body){
-    p->stats_len=(r.body_size<(k_u32)sizeof(p->stats)-1u)?(int)r.body_size:(int)sizeof(p->stats)-1;
-    memcpy(p->stats,r.body,(size_t)p->stats_len);
+    /* A STATS body that does not fit must never look complete.  The old clamp copied the first
+       sizeof-1 bytes and said nothing, so a growing counter line turned every reading into a guess -
+       exactly the silent-drop this project forbids.  Keep what fits, mark it, and warn. */
+    k_u32 cap=(k_u32)sizeof(p->stats)-1u;
+    k_u32 mark_len=(k_u32)strlen(K_PIPE_STATS_TRUNC);
+    if(r.body_size<=cap){
+      p->stats_len=(int)r.body_size;
+      memcpy(p->stats,r.body,(size_t)p->stats_len);
+    }else{
+      k_u32 keep=(cap>mark_len)?(cap-mark_len):0u;
+      memcpy(p->stats,r.body,(size_t)keep);
+      memcpy(p->stats+keep,K_PIPE_STATS_TRUNC,(size_t)mark_len);
+      p->stats_len=(int)cap;
+      printf("warning: STATS body is %u bytes, display buffer is %u; truncated and marked\n",
+             (unsigned)r.body_size,(unsigned)sizeof(p->stats));
+    }
     p->stats[p->stats_len]='\0';
   }
   for(i=0;i<K_PIPE_MAX;i++){
