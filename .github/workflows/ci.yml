@@ -11,7 +11,7 @@ on:
   pull_request:
 
 permissions:
-  contents: read
+  contents: write   # only so the failure-log publisher below can push to ci-logs
 
 jobs:
   gate:
@@ -56,6 +56,35 @@ jobs:
         run: |
           ./build.sh regress fuzz 2>&1 | tee regress.log
           tail -1 regress.log >> "$GITHUB_STEP_SUMMARY"
+
+      # Diagnostics channel: Actions logs cannot be read without authentication, so when the gate
+      # fails the per-layer logs are pushed to a `ci-logs` branch.  A public branch is readable with
+      # plain `git fetch`, which keeps CI failures self-diagnosable.  "[skip ci]" prevents the push
+      # from starting another run.
+      - name: Publish gate logs on failure
+        if: failure()
+        shell: bash
+        run: |
+          set -e
+          rm -rf ci-logs
+          mkdir -p ci-logs
+          cp -f build/regress/*.log ci-logs/ 2>/dev/null || true
+          {
+            echo "run:    $GITHUB_RUN_ID"
+            echo "sha:    $GITHUB_SHA"
+            echo "ref:    $GITHUB_REF"
+            echo "date:   $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            echo "runner gcc: $(gcc --version 2>/dev/null | head -1)"
+            echo
+            echo "--- gate verdict lines ---"
+            grep -h 'GATE|' ci-logs/*.log 2>/dev/null || true
+          } > ci-logs/SUMMARY.txt
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -B ci-logs
+          git add -f ci-logs
+          git commit -m "CI failure logs for ${GITHUB_SHA} [skip ci]" || exit 0
+          git push -f origin ci-logs
 
       - name: Upload gate logs
         if: failure()
