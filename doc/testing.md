@@ -1,55 +1,63 @@
-# kynovo 测试与回归方法（完整版）
+# kynovo testing and regression method (complete)
 
-本文是工程当前的**唯一权威测试说明**：分层、逐条命令、判定行、耗时、故障注入的架构缝、调试设施、
-以及本项目在多轮排查中沉淀下来的**回归纪律**与已知陷阱。凡与本文不一致的旧脚本注释，以本文为准。
+This document is the project's **single authoritative testing specification**: the layers, the exact
+commands, the verdict lines, the durations, the architectural seams used for fault injection, the debugging
+facilities, and the **regression discipline** and known pitfalls this project has accumulated over many
+rounds of investigation. Wherever an older script comment disagrees with this document, this document wins.
 
-- 适用范围：`code/`（6 个头文件 + 2 个应用）、`tests/`（15 个文件）、`build/*.sh`（28 个脚本）、`tools/`（11 个工具）。
-- 目标平台：**Windows XP 起**（`_WIN32_WINNT=0x0501`）、**MSVC 6.0 兼容的 C89**、单头文件库。
-- 一切命令在仓库根目录、git-bash 下执行；构建产物只落 `build/`（不入 `%TEMP%`，理由见 `build.sh` 头注释：无签名 MinGW 二进制在临时目录最易触发杀软误报）。
+- Scope: `code/` (6 headers + 2 applications), `tests/` (15 files), `build/*.sh` (28 scripts), `tools/` (11 tools).
+- Target platform: **Windows XP and later** (`_WIN32_WINNT=0x0501`), **MSVC 6.0 compatible C89**, single-header library.
+- All commands run from the repository root under git-bash; build artifacts land only in `build/` (never in
+  `%TEMP%`; reason in the `build.sh` header comment: unsigned MinGW binaries in a temporary directory are
+  the most likely to trip antivirus false positives).
 
 ---
 
-## 0. 工具链与构建门（L0）
+## 0. Toolchain and build gate (L0)
 
 ```bash
-export PATH="/d/MinW64-15.2.0/bin:$PATH"      # 必须：PATH 上的 /d/MinGW 9.2.0 会因缺 LPFN_ACCEPTEX 失败
-export MSYS2_ARG_CONV_EXCL='*'               # 必须：否则 MSYS 会改写传给原生程序的参数
-./build.sh                                   # 构建全部目标（10 个驱动 + 8 个基准）
+export PATH="/d/MinW64-15.2.0/bin:$PATH"      # required: /d/MinGW 9.2.0 on PATH fails for lack of LPFN_ACCEPTEX
+export MSYS2_ARG_CONV_EXCL='*'               # required: otherwise MSYS rewrites the argv passed to native programs
+./build.sh                                   # build every target (10 drivers + 8 benchmarks)
 ```
 
-- `build.sh` 会把 `$MINGW_BIN` 前置进 PATH 并校验版本（期望 **15.2.0**）。
-- **测试驱动与生产二进制同优化级别（`-O2`）且同告警门**：`-Wall -Wextra -Wdeclaration-after-statement`
-  （外加 `-Wno-unused-function`，因为单头库会暴露驱动未调用的公共 API）。原则：**测试不得比生产宽松**。
-- `-Wdeclaration-after-statement` 专门捕 MSVC 6.0 会拒绝的"语句后声明"。
-- **L0 判定**：`./build.sh` 的 rc=0 且 `build/build.log` 中 `grep -cE ' error|warning'` 为 **0**。
-  > 纪律：**先确认构建成功，再解读任何运行结果**。本项目出现过三次"以为修正无效、其实跑的是编译失败后的旧二进制"。
+- `build.sh` prepends `$MINGW_BIN` to PATH and checks the version (expects **15.2.0**).
+- **Test drivers use the same optimisation level as the production binaries (`-O2`) and the same warning
+  gate**: `-Wall -Wextra -Wdeclaration-after-statement`
+  (plus `-Wno-unused-function`, because a single-header library exposes public APIs the driver never
+  calls). Principle: **tests must not be looser than production**.
+- `-Wdeclaration-after-statement` specifically catches the "declaration after statement" MSVC 6.0 rejects.
+- **L0 verdict**: `./build.sh` rc=0 and `grep -cE ' error|warning'` over `build/build.log` is **0**.
+  > Discipline: **confirm the build succeeded before interpreting any run result**. This project has three
+  > times believed a fix was ineffective when it was in fact running the stale binary a failed compile left behind.
 
-目标速查（`./build.sh <target>`）：`test fuzz cfuzz kclient kserver kclusterfuzz cemon-test`
-与其 `run-*` 版本、`selftest`、`kdbsvr`、`kdbctl`、`bench*`、`cemon-bench`、`cemon-stress`、
-**`coverage`**（gcov 行/分支聚合）、**`sanitize` / `run-sanitize`**（UBSan trap 模式，UB → SIGILL）、`clean`。
+Target quick reference (`./build.sh <target>`): `test fuzz cfuzz kclient kserver kclusterfuzz cemon-test`
+and their `run-*` versions, `selftest`, `kdbsvr`, `kdbctl`, `bench*`, `cemon-bench`, `cemon-stress`,
+**`coverage`** (gcov line/branch aggregation), **`sanitize` / `run-sanitize`** (UBSan trap mode, UB → SIGILL), `clean`.
 
 ---
 
-## 1. 测试分层
+## 1. Test layers
 
-| 层 | 内容 | 命令 | 判定行 | 量级 |
+| Layer | Content | Command | Verdict line | Magnitude |
 |---|---|---|---|---|
-| L0 | 编译门 | `./build.sh` | rc=0 且 `build.log` 0 告警 | ~90s |
-| L1a | raft 单元 | `./build/raft_test.exe` | `SUMMARY: 221/221 passed` | ~1s |
-| L1b | 服务端单元（含压力模式） | `./build/kserver_test.exe` | `SUMMARY: 33/33 passed` | ~30s |
-| L1c | 客户端单元 | `./build/kclient_test.exe` | `SUMMARY: 16/16 passed` | ~0.1s |
-| L1d | cemon 事件循环单元 | `./build/cemon_test.exe` | `SUMMARY: 5/5 passed` | ~2s（含 2s 长等待） |
-| L1e | 端到端自检（单进程，含成员变更/引导/选主） | `./build/selftest.exe` | `selftest: PASS` | ~1–3s |
-| L2 | CLI 语义冒烟（真进程 + 真 socket） | `bash tests/cli_smoke.sh` | `cli_smoke: PASS` | ~10s |
-| L3a | 单节点随机模糊（API/OOM 回滚） | `./build/raft_fuzz.exe <seed> <n>` | `done: <n> iterations` / `FAIL: …` | n=2000 ~10s |
-| L3b | **多节点集群模糊**（真实拉模式报文：丢包/重排/复制/分区/崩溃重启/成员变更/OOM 注入） | `./build/raft_cluster_fuzz.exe <seed> <n> [persist_delay]` | `done: <n> iterations` / `FAIL: …` | n=2000 ~30s |
-| L3c | 服务端集群模糊（含线性一致性检查 `tests/lincheck.*`） | `./build/kserver_cluster_fuzz.exe <seed> <n>` | `done: 1/1 clusters consistent` | ~10s |
-| L4 | 网络 soak（发布版二进制、24 轮、轮内 PIPE 压测 + 存活检查） | `RUNS=24 bash tools/harness/soak_release.sh` | `rounds_without_full_success=0`、`final liveness: 1` | ~3min |
-| L5 | 性能/延时 | `tools/harness/perf_matrix.sh`、`burst.sh`、`pipe_frontier.sh`、`pipe_verify.sh`、`watch_counters.sh` | 各自输出 ops/s、p50/p99、计数器 | 分钟级 |
-| L6 | 仪器化 | `./build.sh coverage`、`./build.sh run-sanitize`、`K_ALLOC_DEBUG` 构建 + appverif/gdb（见 §3） | 覆盖率表 / SIGILL 无发生 / 零报告 | 分钟级 |
+| L0 | compile gate | `./build.sh` | rc=0 and 0 warnings in `build.log` | ~90s |
+| L1a | raft unit | `./build/raft_test.exe` | `SUMMARY: 221/221 passed` | ~1s |
+| L1b | server unit (with stress mode) | `./build/kserver_test.exe` | `SUMMARY: 33/33 passed` | ~30s |
+| L1c | client unit | `./build/kclient_test.exe` | `SUMMARY: 16/16 passed` | ~0.1s |
+| L1d | cemon event-loop unit | `./build/cemon_test.exe` | `SUMMARY: 5/5 passed` | ~2s (includes a 2s long wait) |
+| L1e | end-to-end self-test (single process, with membership change/bootstrap/election) | `./build/selftest.exe` | `selftest: PASS` | ~1–3s |
+| L2 | CLI semantics smoke (real process + real socket) | `bash tests/cli_smoke.sh` | `cli_smoke: PASS` | ~10s |
+| L3a | single-node randomised fuzzing (API/OOM rollback) | `./build/raft_fuzz.exe <seed> <n>` | `done: <n> iterations` / `FAIL: …` | n=2000 ~10s |
+| L3b | **multi-node cluster fuzzing** (real pull-mode wire messages: drop/reorder/duplicate/partition/crash-restart/membership change/OOM injection) | `./build/raft_cluster_fuzz.exe <seed> <n> [persist_delay]` | `done: <n> iterations` / `FAIL: …` | n=2000 ~30s |
+| L3c | server cluster fuzzing (with the linearizability check `tests/lincheck.*`) | `./build/kserver_cluster_fuzz.exe <seed> <n>` | `done: 1/1 clusters consistent` | ~10s |
+| L4 | network soak (release binaries, 24 rounds, in-round PIPE load + liveness check) | `RUNS=24 bash tools/harness/soak_release.sh` | `rounds_without_full_success=0` and `final liveness: 1` | ~3min |
+| L5 | performance/latency | `tools/harness/perf_matrix.sh`, `burst.sh`, `pipe_frontier.sh`, `pipe_verify.sh`, `watch_counters.sh` | each prints its own ops/s, p50/p99, counters | minutes |
+| L6 | instrumentation | `./build.sh coverage`, `./build.sh run-sanitize`, `K_ALLOC_DEBUG` build + appverif/gdb (see §3) | coverage table / no SIGILL / zero reports | minutes |
 
-**判定行的读法（强制）**：一律用 verdict grep，**禁止 `tail -1`**。带进度输出的套件里 `tail -1`
-会显示无关行，使失败读成通过；缺失判决行同样按**失败**处理。
+**How to read the verdict line (mandatory)**: always use a verdict grep; **`tail -1` is forbidden**. In a
+suite with progress output, `tail -1` shows an unrelated line and makes a failure read as a pass; a missing
+verdict line is likewise treated as a **failure**.
 
 ```bash
 grep -E "SUMMARY|FAIL|done:|consistent|PASS" <log> | tail -3
@@ -57,131 +65,176 @@ grep -E "SUMMARY|FAIL|done:|consistent|PASS" <log> | tail -3
 
 ---
 
-## 2. 故障注入：只走架构已有的"缝"
+## 2. Fault injection: only through the seams the architecture already has
 
-测试基础设施**不得侵入业务代码**。若某个 failpoint 需要在业务路径埋点，则**宁可不要**。允许的注入面只有四缝：
+Test infrastructure **must not intrude into production code**. If a failpoint would need an instrumented
+point on a production path, **do without it**. The only surfaces that may be injected through are four seams:
 
-| 缝 | 位置 | 用途 |
+| Seam | Location | Purpose |
 |---|---|---|
-| transport vtable | `k_server_transport` | 报文丢弃/重排/复制、分区、崩溃（`raft_destroy`） |
-| `elapsed_ms` 时钟注入 | `raft_advance(r, elapsed_ms, …)` | 选举超时/心跳节律、确定性"小步"尾段 |
-| runtime backend | `runtime_create("thread"\|"inline", …)` | 同负载下"同步后端 vs 真线程后端"对照（最快判别跨线程缺陷） |
-| vfs backend | `vfs_backend` | 磁盘错误、CRUD 钩子 |
+| transport vtable | `k_server_transport` | message drop/reorder/duplicate, partition, crash (`raft_destroy`) |
+| `elapsed_ms` clock injection | `raft_advance(r, elapsed_ms, …)` | election timeout/heartbeat cadence, deterministic "small-step" tail |
+| runtime backend | `runtime_create("thread"\|"inline", …)` | "synchronous backend vs real thread backend" comparison under the same load (the fastest way to tell a cross-thread defect apart) |
+| vfs backend | `vfs_backend` | disk errors, CRUD hooks |
 
-OOM 注入走库自身的分配器钩子（`RAFT_MALLOC` 等），并按"第 N 次分配失败一次"语义武装；
-**必须按 seed 重置触发基**（`fuzz_alloc_calls`），否则同一 seed 会随**调用规模**改变行为（已修）。
-
----
-
-## 3. 调试设施（生产零影响）
-
-1. **自描述分配器**（`code/kbase.h`，`#ifdef K_ALLOC_DEBUG`）
-   - 隔离区 + 头/尾金丝雀 + 活块登记表 + 每操作 `k_dbg_verify()`；报告"分配点 / **释放点** / 首个坏字节偏移"。
-   - **必须加锁**：全局登记表在多线程下会被并发 free 搞乱，产出与真缺陷无法区分的假报告（曾自造 9 次
-     `Invalid address specified to RtlFreeHeap`）；入口（alloc/free/verify）一律串行化。
-   - 覆盖范围：`K_MALLOC` **以及**各层自带宏（`TREAP_*`/`CEMON_*`/`RUNTIME_*`）——否则仪器对"最可能被破坏的对象"（treap 节点/blob、socket、队列节点）**完全失明**。
-   - 调试构建：`gcc -std=c89 -O0 -g -Wall -Wextra -Wno-unused-function -pthread -DK_ALLOC_DEBUG -o build/kserver_test_dbg.exe tests/kserver_test.c`
-2. **`--apply-stress <ops> [keyspace] [thread]`**（`kserver_test` 的内置模式）：把原本要数十轮网络 soak 才复现的
-   跨线程缺陷压到**秒级**，并可与同步后端对照（`… thread` vs 默认）。
-3. **Windows 页堆**：`appverif.exe -enable Heaps -for build/<exe>` → `gdb --batch -ex run -ex quit --args …`
-   → **务必** `appverif.exe -disable Heaps -for build/<exe>`（机器级开关）。注意：应用验证器的 Heaps 只给
-   "检测"，不提供写入时故障；无 paged-heap 工具时不要停在原地，改用**定向 A/B**（编译期开关关掉可疑机制再跑同一门）。
-4. **gdb 配方**：`-O0 -g` **同一份源码**构建；grep 证据行（`^#[0-9]+ `、`received signal`、`exited`）而非 `tail`；
-   崩溃的可疑帧常在真凶**下层**（框架的有效性检查先解引用悬垂指针）。
+OOM injection goes through the library's own allocator hooks (`RAFT_MALLOC` etc.), armed with "fail once on
+the Nth allocation" semantics; the **trigger base must be reset per seed** (`fuzz_alloc_calls`), otherwise
+the same seed changes behaviour with the **call volume** (fixed).
 
 ---
 
-## 4. 回归纪律（本项目用代价换来的条目）
+## 3. Debugging facilities (zero production impact)
 
-1. **改前先跑 L0–L1e** 建立基线；改后跑**完整阶梯** L0→L4（重大改动再加 L5/L6）。
-2. **同构建 A/B**：任何对照实验必须在**同一个二进制**里用开关切换；跨构建比较会把"打印位置变化"读成路径差异。
-3. **低概率缺陷的证据强度**：单次干净运行**不构成证据**（同一二进制几分钟内可从 2/3 失败变 0/8 通过，取决于机器负载）。
-   用**数十次采样**或**长程门**（例如 60 轮页堆网络 soak），并在修复后**重跑那个曾经复现的门**。
-4. **先找"第一处分歧"**：多不变量 harness 报出的失败是链条**末端**。先在事件流里定位**最早一处"两个独立记录对同一状态不一致"**
-   （模型 vs 组件上报、镜像 vs 上报 durable、applied vs durable），再针对**那个事件**二分。
-   判据：**两个以上各自论证无误的修复却让 pass/fail 纹丝不动 ⇒ 停止修补、去找第一处分歧**。
-5. **测量装置必须先自证**：跑之前建立"正信号"断言（服务端探活、每轮 `ok=<N>`），并把既非成功也非失败的轮次计为
-   `unexpected` 并中止——否则"0 次失败"可能只是"0 条数据"（本项目犯过一次：argv 缺参导致 20 轮空跑被报成 clean）。
-6. **仪器必须回退**：探针（临时打印/埋点）在定案后全部移除，用**精确标签 grep** 核对残留；
-   保留的只应是**修复本身**与**有长期价值的诊断**（如 `--apply-stress`、`SEED` 标记）。
-7. **不要把假设写成结论、不要截断证据**：`grep … | head -N` 会藏掉致命行（本项目因此误判过一次"tree 只被主循环访问"）；
-   被否证的假设要在文档里**显式撤回**。
-8. **不逐行批量改控制流**：本项目一次批量行编辑把"有保护的关闭"改成无条件关闭，制造了服务端主动踢客户端的回归。
-9. **句柄/所有权**：关闭点一律"**先存后清再关**"；跨层传递指针时，释放点必须在**契约终点**（不是"数据已复制"处）。
-10. **平台约束是回归的一部分**：新增代码必须过 `-Wdeclaration-after-statement`；不得引入 C99（`inline`/VLA/`stdint.h`）、
-    不得用 `long long` 字面量后缀 `ULL`（MSVC 6.0 不接受），`__int64` 由 `kbase.h` 封装。
-
----
-
-## 5. 已知陷阱（harness 侧，本项目实测）
-
-1. **驱动模型必须与"库自报的持久状态"一致**：`raft_cluster_fuzz` 曾因三处模型缺陷连累库被误判为有 bug：
-   - 镜像按**增量/心跳视图**整体重写 ⇒ 把已持久化的配置条目清零 ⇒ 崩溃后恢复**旧成员** ⇒ 覆盖已提交条目（LEADER COMPLETENESS）；
-   - 截断判据改为"同 index 不同 term 即截断"后，**旧镜像条目**又顶掉**已提交的新条目**（LOG MATCHING）；
-     ⇒ 唯一正确的权威是**库自己的日志尖端**：库不再持有的才丢、库还持有的必须留、合并按 index 覆盖 term。
-   - 黑盒日志尖端（`last_index`）取自 persist 视图 ⇒ 增量视图的尖端只是快照边界 ⇒ 重启后的新 leader 被算成"缺条目"
-     ⇒ 误报 leader completeness ⇒ 必须**由库日志推导**。
-2. **镜像不变量需要单一收口**：所有改镜像的路径末尾调用同一个归一化函数（自 `disk_lii` 起的**连续前缀**），
-   否则会出现"边界 1 + 首条目 3"这类**空洞镜像**，库会正确地拒绝恢复，节点死在无故障尾段里表现为**假 LIVENESS 失败**。
-3. **事件缓冲容量**：环缓冲（`EV_MAX`）太小会把失败种子的前半段事件挤掉（症状：oracle 记的"首次应用"在 dump 里找不到）
-   ⇒ 要么放大，要么失败时把整个环落盘。
-4. **seed 必须可指认**：在事件流里打 `SEED n`，否则只能按调用规模二分去找失败种子。
-5. **调用规模影响行为**：任何跨 seed 未重置的全局（尤其**绝对**分配序号形式的 OOM 武装）都会让"同一 seed 在不同 `count` 下结果不同"。
+1. **Self-describing allocator** (`code/kbase.h`, `#ifdef K_ALLOC_DEBUG`)
+   - quarantine + head/tail canaries + a live-block registry + `k_dbg_verify()` on every operation; it
+     reports "allocation site / **free site** / offset of the first bad byte".
+   - **It must take a lock**: under multiple threads a global registry is scrambled by concurrent frees and
+     produces bogus reports indistinguishable from real defects (it once manufactured 9
+     `Invalid address specified to RtlFreeHeap` by itself); the entry points (alloc/free/verify) are all
+     serialised.
+   - Coverage: `K_MALLOC` **and** the per-layer macros (`TREAP_*`/`CEMON_*`/`RUNTIME_*`) — otherwise the
+     instrumentation is **completely blind** to the "objects most likely to be corrupted" (treap
+     nodes/blobs, sockets, queue nodes).
+   - Debug build: `gcc -std=c89 -O0 -g -Wall -Wextra -Wno-unused-function -pthread -DK_ALLOC_DEBUG -o build/kserver_test_dbg.exe tests/kserver_test.c`
+2. **`--apply-stress <ops> [keyspace] [thread]`** (a built-in mode of `kserver_test`): compresses a
+   cross-thread defect that would otherwise take dozens of rounds of network soak to reproduce down to
+   **seconds**, and can be compared against the synchronous backend (`… thread` vs the default).
+3. **Windows page heap**: `appverif.exe -enable Heaps -for build/<exe>` → `gdb --batch -ex run -ex quit --args …`
+   → **always** `appverif.exe -disable Heaps -for build/<exe>` (a machine-wide switch). Note: Application
+   Verifier's Heaps only "detects", it gives no fault at the moment of the write; when no paged-heap tool
+   is available, do not stand still — switch to a **targeted A/B** (turn the suspect mechanism off with a
+   compile-time switch and re-run the same gate).
+4. **gdb recipe**: build the **same source** with `-O0 -g`; grep the evidence lines (`^#[0-9]+ `,
+   `received signal`, `exited`) instead of `tail`; the suspect frame of a crash is often **below** the true
+   culprit (the framework's validity check dereferences the dangling pointer first).
 
 ---
 
-## 5b. 一键门：`./build.sh regress`
+## 4. Regression discipline (items this project bought with real cost)
 
-自动化的**唯一稳定入口**（agent、cron、CI 都用它，不要各自拼命令）：
+1. **Run L0–L1e before the change** to establish a baseline; run the **full ladder** L0→L4 afterwards (add
+   L5/L6 for major changes).
+2. **Same-build A/B**: any controlled experiment must flip a switch inside **the same binary**; comparing
+   across builds reads "a change of print position" as a difference of code path.
+3. **Evidential strength for low-probability defects**: one clean run is **not evidence** (the same binary
+   can go from 2/3 failing to 0/8 passing within minutes, depending on machine load). Use **dozens of
+   samples** or a **long-run gate** (e.g. a 60-round page-heap network soak), and after a fix **re-run the
+   gate that used to reproduce**.
+4. **Look for the "first divergence" first**: the failure a multi-invariant harness reports is the **end** of
+   the chain. In the event stream, first locate **the earliest place where "two independent records disagree
+   about the same state"** (model vs component report, image vs reported durable, applied vs durable), then
+   bisect on **that event**. The criterion: **two or more separately sound fixes leave pass/fail utterly
+   unmoved ⇒ stop patching and go find the first divergence**.
+5. **The measuring apparatus must prove itself first**: establish "positive signal" assertions before
+   running (server liveness probe, per-round `ok=<N>`), and count a round that is neither a success nor a
+   failure as `unexpected` and abort — otherwise "0 failures" may just be "0 data" (this project did it
+   once: a missing argv argument got 20 empty rounds reported as clean).
+6. **Instrumentation must be reverted**: probes (temporary prints/instrumented points) are all removed once
+   the case is closed, and leftovers are checked with an **exact-tag grep**; all that should remain is **the
+   fix itself** and **diagnostics of lasting value** (e.g. `--apply-stress`, the `SEED` marker).
+7. **Do not write a hypothesis as a conclusion, and do not truncate evidence**: `grep … | head -N` hides the
+   fatal line (this project misjudged "the tree is only accessed by the main loop" once because of it); a
+   refuted hypothesis must be **explicitly retracted** in the documents.
+8. **Do not edit control flow line-by-line in bulk**: one bulk line edit in this project turned a "guarded
+   close" into an unconditional close and created a regression where the server actively kicked clients.
+9. **Handles/ownership**: every close site is "**stash, then clear, then close**"; when a pointer crosses
+   layers, the release point must be at the **contract end point** (not at the "data has been copied" site).
+10. **Platform constraints are part of the regression**: new code must pass
+    `-Wdeclaration-after-statement`; it must not introduce C99 (`inline`/VLA/`stdint.h`), and must not use the
+    `long long` literal suffix `ULL` (MSVC 6.0 will not take it); `__int64` is wrapped by `kbase.h`.
+
+---
+
+## 5. Known pitfalls (harness side, measured in this project)
+
+1. **The driver's model must agree with "the persistent state the library reports"**: `raft_cluster_fuzz`
+   once had the library wrongly judged buggy because of three model defects:
+   - rewriting the image wholesale from the **incremental/heartbeat view** ⇒ zeroing config entries that were
+     already persisted ⇒ restoring **old members** after a crash ⇒ overwriting committed entries (LEADER
+     COMPLETENESS);
+   - after the truncation criterion became "same index, different term ⇒ truncate", the **old image
+     entries** then displaced **committed newer entries** (LOG MATCHING);
+     ⇒ the only correct authority is **the library's own log tip**: drop only what the library no longer
+     holds, keep whatever the library still holds, and merge by overwriting the term at each index.
+   - the black-box log tip (`last_index`) was taken from the persist view ⇒ the tip of the incremental view
+     is just the snapshot boundary ⇒ a new leader after restart was counted as "missing entries" ⇒ a bogus
+     leader-completeness report ⇒ it must be **derived from the library's log**.
+2. **The image invariant needs a single choke point**: every path that mutates the image calls the same
+   normalisation function at its end (the **contiguous prefix** starting at `disk_lii`), otherwise you get a
+   **hole-ridden image** such as "boundary 1 + first entry 3", the library correctly refuses to restore it,
+   and the node dies in a fault-free tail, showing up as a **bogus LIVENESS failure**.
+3. **Event buffer capacity**: a ring buffer (`EV_MAX`) that is too small squeezes the first half of the
+   events out for a failing seed (symptom: the "first apply" the oracle recorded cannot be found in the
+   dump) ⇒ either enlarge it, or write the whole ring to disk on failure.
+4. **The seed must be identifiable**: print `SEED n` into the event stream, otherwise you can only bisect by
+   call volume to find the failing seed.
+5. **Call volume affects behaviour**: any global that is not reset across seeds (especially OOM arming in
+   the form of an **absolute** allocation ordinal) makes "the same seed give different results at different
+   `count`".
+
+---
+
+## 5b. One-shot gate: `./build.sh regress`
+
+The **single stable entry point** for automation (agents, cron and CI all use it; do not assemble your own
+command lists):
 
 ```bash
-./build.sh regress quick     # 默认：principles + build(0 告警断言) + 4 个单元 + selftest + CLI smoke   ~2.5 min
-./build.sh regress fuzz      # 再加 raft_fuzz 2000 / raft_cluster_fuzz 200 / kserver_cluster_fuzz 1  ~5 min（**CI 在每次 push/PR 跑的就是它**）
-./build.sh regress full      # fuzz 用发布级参数(20k/2000/10) 并追加 release soak 24 轮                ~20 min（nightly）
+./build.sh regress quick     # default: principles + build (0-warning assertion) + 4 unit suites + selftest + CLI smoke   ~2.5 min
+./build.sh regress fuzz      # adds raft_fuzz 2000 / raft_cluster_fuzz 200 / kserver_cluster_fuzz 1                       ~5 min (**this is what CI runs on every push/PR**)
+./build.sh regress full      # fuzz with release-sized parameters (20k/2000/10) plus a 24-round release soak              ~20 min (nightly)
 ```
 
-- 每层输出一行 `GATE|<层>|pass|FAIL|<判定行>|<秒>`；**判定行必须出现**——空跑（exit 0 但无判定行）判 **FAIL**，
-  这就是"0 failures 不等于 0 data"的落地；
-- **末行机器可读**：`REGRESS|quick|pass=8 fail=0 duration=144s`（新增 `principles` 层：`python tools/check-principles.py`）（agent 只读这一行即可判定）；
-- 失败时打印该层的日志路径与末尾 12 行；日志在 `build/regress/<层>.log`；
-- 门自身的失败路径有自检：`bash tools/harness/regress_selftest.sh`（期望 `pass=1 fail=2`）。
+- Every layer prints one line `GATE|<layer>|pass|FAIL|<verdict line>|<seconds>`; **the verdict line must
+  appear** — a silent run (exit 0 but no verdict line) is judged **FAIL**; this is where "0 failures does
+  not mean 0 data" is made concrete;
+- **the last line is machine-readable**: `REGRESS|quick|pass=8 fail=0 duration=144s` (the `principles` layer
+  added: `python tools/check-principles.py`) (an agent can decide by reading this line alone);
+- on failure it prints that layer's log path and the last 12 lines; logs live in `build/regress/<layer>.log`;
+- the gate's own failure path is self-tested: `bash tools/harness/regress_selftest.sh` (expects `pass=1 fail=2`).
 
-## 6. 推荐门序与时间预算
+## 6. Recommended gate order and time budgets
 
-| 场景 | 命令序列 | 预算 |
+| Scenario | Command sequence | Budget |
 |---|---|---|
-| 日常小改 | L0 + L1a/b/c/d/e + L2 | ~2.5min |
-| 触及 raft/集群语义 | 上一行 + `raft_fuzz 1 2000` + `raft_cluster_fuzz 1 2000 0`（默认延迟再跑一次）+ `kserver_cluster_fuzz 1 5` | ~5min |
-| 触及服务端/传输/快照 | 上一行 + L4（24 轮）+ `--apply-stress`（`K_ALLOC_DEBUG` 构建 + appverif/gdb） | ~10min |
-| 发布前 | 上一行 + L6（`coverage`、`run-sanitize`）+ `perf_matrix.sh` | ~20min |
+| daily small change | L0 + L1a/b/c/d/e + L2 | ~2.5min |
+| touches raft/cluster semantics | the row above + `raft_fuzz 1 2000` + `raft_cluster_fuzz 1 2000 0` (re-run once with the default delay) + `kserver_cluster_fuzz 1 5` | ~5min |
+| touches server/transport/snapshot | the row above + L4 (24 rounds) + `--apply-stress` (`K_ALLOC_DEBUG` build + appverif/gdb) | ~10min |
+| before release | the row above + L6 (`coverage`, `run-sanitize`) + `perf_matrix.sh` | ~20min |
 
-**过程产物与清理**：
-- **`build/` 是纯产物目录，初始应为空**：`./build.sh` 生成的全部内容都在这里，`./build.sh clean` 会**整目录删除**（等同全新 checkout）。
-  **不要把任何手写文件放进 `build/`** —— 脚本与数据已各自归位（见下）。
-- 工具脚本分两处：`tools/harness/`（12 个可复用 harness，见下表）与 `tools/archive/`（16 个早期一次性调查脚本，
-  其结论汇总在 `doc/investigations.md`）。
-- 测量与调查记录归档在 `doc/measurements/`（`*.txt` = 每次基准的 `STATS/PHASE/LAT` 原始数据，
-  `*.out/.err` = 调查脚本输出；**不可字节级复现**）。读法见该目录的 `README.md`。
-- 需要历史数据时先查 `doc/measurements/README.md` 的头部数字，再决定是否重测。
+**Working artifacts and cleanup**:
+- **`build/` is a pure output directory and should start empty**: everything `./build.sh` generates lives
+  here, and `./build.sh clean` **deletes the whole directory** (equivalent to a fresh checkout). **Do not put
+  any hand-written file into `build/`** — scripts and data have their own homes (see below).
+- Tool scripts live in two places: `tools/harness/` (12 reusable harnesses, see the table below) and
+  `tools/archive/` (16 early one-off investigation scripts, whose conclusions are summarised in
+  `doc/investigations.md`).
+- Measurement and investigation records are archived in `doc/measurements/` (`*.txt` = the raw
+  `STATS/PHASE/LAT` data of each benchmark, `*.out/.err` = investigation-script output; **not
+  byte-reproducible**). For how to read them see that directory's `README.md`.
+- When you need historical data, check the headline numbers in `doc/measurements/README.md` first, then
+  decide whether to re-measure.
 
-## 可复用 harness 索引（tools/harness/）
+## Reusable harness index (tools/harness/)
 
-全部脚本会自行切到仓库根目录并设置工具链环境，可在任意位置调用；`set -u` 下均带合理默认值，可裸跑。
+Every script changes to the repository root itself and sets up the toolchain environment, so it can be
+invoked from anywhere; under `set -u` they all carry sensible defaults and can be run bare.
 
-| harness | 用途 | 命令 | 判定行 | 前提 |
+| harness | Purpose | Command | Verdict line | Precondition |
 |---|---|---|---|---|
-| `soak_release.sh` | 发布版重复深流水 + 每轮存活检查 | `RUNS=24 bash tools/harness/soak_release.sh` | `rounds_without_full_success=0`、`final liveness: 1` | 端口 9481/9482 空闲 |
-| `pipe_verify.sh` | 真实客户端流水线 + 三道正确性门 | `bash tools/harness/pipe_verify.sh [K]` | 三档均 `ok=<n> not_found=0` | 端口 9931/9932 |
-| `pipe_frontier.sh` | 吞吐/延时前沿（逐响应计时） | `bash tools/harness/pipe_frontier.sh` | 各档 `ops_per_s` 与分位 | 同上 |
-| `burst.sh` | 开环容量（K≥N，不受客户端自限） | `bash tools/harness/burst.sh` | 峰值 `ops_per_s` | 同上 |
-| `perf_matrix.sh` | 归因矩阵：轮次/每写/WAL(mem vs disk)/载荷/合批 | `N=2000 bash tools/harness/perf_matrix.sh` | 各格 `ops_per_s` + `flush_by_*` | 需 `proc_time` 已构建 |
-| `watch_counters.sh` | 反复压测 + 打印准入计数器（找单调增长＝泄漏） | `RUNS=16 bash tools/harness/watch_counters.sh` | 计数器是否增长 | 同上 |
-| `cpu_probe.sh` | 服务端 CPU vs wall（CPU-bound 还是等待） | `bash tools/harness/cpu_probe.sh [tag]` | CPU% | `tools/proc_time.c` |
-| `conn_leak.sh` | 多个短连接后是否仍能接受新连接 | `bash tools/harness/conn_leak.sh` | 每轮是否被接受 | 同上 |
-| `stall_hunt.sh` | 卡死控制实验（release vs debug+Heaps） | `RUNS=20 bash tools/harness/stall_hunt.sh` | `stalls=0` 且 `server_alive=1` | 自带探活与"无 ok= 即中止" |
-| `crash_hunt.sh` | gdb 下重复深流水直至崩溃，留 backtrace | `bash tools/harness/crash_hunt.sh` | gdb 栈帧 | 需 gdb |
-| `pageheap_hunt.sh` | appverif Heaps + 重复深流水（写时定位） | `RUNS=60 bash tools/harness/pageheap_hunt.sh` | 无 `Free Heap block …` / 存活 | 需 `appverif`（用完必须 disable） |
-| `diag_deep.sh` | 深 K 下连接是否被服务端关闭 | `bash tools/harness/diag_deep.sh` | 服务端日志与客户端报告 | 端口空闲 |
+| `soak_release.sh` | repeated deep pipelining on the release build + a liveness check each round | `RUNS=24 bash tools/harness/soak_release.sh` | `rounds_without_full_success=0` and `final liveness: 1` | ports 9481/9482 free |
+| `pipe_verify.sh` | real client pipelining + three correctness gates | `bash tools/harness/pipe_verify.sh [K]` | all three tiers `ok=<n> not_found=0` | ports 9931/9932 |
+| `pipe_frontier.sh` | throughput/latency frontier (per-response timing) | `bash tools/harness/pipe_frontier.sh` | `ops_per_s` and percentiles per tier | as above |
+| `burst.sh` | open-loop capacity (K≥N, not self-limited by the client) | `bash tools/harness/burst.sh` | peak `ops_per_s` | as above |
+| `perf_matrix.sh` | attribution matrix: rounds/per-write/WAL(mem vs disk)/payload/batching | `N=2000 bash tools/harness/perf_matrix.sh` | `ops_per_s` + `flush_by_*` per cell | `proc_time` must be built |
+| `watch_counters.sh` | repeated load + print the admission counters (look for monotonic growth = a leak) | `RUNS=16 bash tools/harness/watch_counters.sh` | whether the counters grow | as above |
+| `cpu_probe.sh` | server CPU vs wall (CPU-bound or waiting) | `bash tools/harness/cpu_probe.sh [tag]` | CPU% | `tools/proc_time.c` |
+| `conn_leak.sh` | whether new connections are still accepted after many short connections | `bash tools/harness/conn_leak.sh` | whether each round is accepted | as above |
+| `stall_hunt.sh` | stall control experiment (release vs debug+Heaps) | `RUNS=20 bash tools/harness/stall_hunt.sh` | `stalls=0` and `server_alive=1` | ships its own liveness probe and "abort when there is no ok=" |
+| `crash_hunt.sh` | repeat deep pipelining under gdb until it crashes, leaving a backtrace | `bash tools/harness/crash_hunt.sh` | gdb stack frames | gdb required |
+| `pageheap_hunt.sh` | appverif Heaps + repeated deep pipelining (locates the write itself) | `RUNS=60 bash tools/harness/pageheap_hunt.sh` | no `Free Heap block …` / alive | `appverif` required (must be disabled afterwards) |
+| `diag_deep.sh` | whether the server closes the connection at deep K | `bash tools/harness/diag_deep.sh` | server log and client report | ports free |
 
-**交付判据**：L0 0 error/0 warning；L1 全绿；L2 PASS；L3 `done`；L4 `rounds_without_full_success=0` 且 `final liveness: 1`；
-工作目录无残留（如 `kdb-selftest-*`）；无残留进程（`ps -W | grep -icE 'kdbsvr|kdbctl'` 为 0）。
+**Delivery criteria**: L0 0 error/0 warning; L1 all green; L2 PASS; L3 `done`; L4
+`rounds_without_full_success=0` and `final liveness: 1`; no leftovers in the working directory (e.g.
+`kdb-selftest-*`); no leftover processes (`ps -W | grep -icE 'kdbsvr|kdbctl'` is 0).

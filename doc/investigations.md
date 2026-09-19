@@ -1,46 +1,48 @@
-# 早期调查档案（tools/archive/）
+# Early investigation archive (tools/archive/)
 
-本文件汇总 `tools/archive/` 下 **16 个一次性调查脚本**：当时要回答的问题、**当时的结论**（引证其输出记录
-`doc/measurements/<name>.out`）、以及它对当前工程的影响。这些脚本是**历史证据**，不是日常门禁——
-日常回归请用 `doc/testing.md` 里的分层门与 `tools/harness/` 下的 harness。
+This file collects the **16 one-off investigation scripts** under `tools/archive/`: the question each was meant to
+answer, **the conclusion at the time** (citing its output record `doc/measurements/<name>.out`), and what influence it
+has on the current project. These scripts are **historical evidence**, not day-to-day gates —
+for routine regression use the tiered gates in `doc/testing.md` and the harnesses under `tools/harness/`.
 
-> 记录诚实的部分：若干 `.out` 是**问题尚未修复时**的快照（输出为空或状态异常），已逐条标注为"记录不完整"。
+> A note in the interest of honesty: several `.out` files are snapshots from **before the problem was fixed** (empty output or abnormal state) and are marked one by one as "incomplete record".
 
-## 集群与协议
+## Cluster and protocol
 
-| 脚本 | 目的 | 当时的结论 | 影响 |
+| Script | Purpose | Conclusion at the time | Impact |
 |---|---|---|---|
-| `cl3.sh` | 同机 3 进程集群（真实对端协议走环回） | 选主成功（leader 8101），多节点提交 **30,003 ops/s @K=32**，p50 871µs | 首个可信的多节点基线 |
-| `cl4.sh` | 3 节点（8111–8113）提交吞吐基线 | leader 由日志判定 = 8111；建立"leader 必须从状态里解出、不能猜"的做法 | 后续所有脚本沿用该约定 |
-| `cl12.sh` | 为何三个端口都报 `state=3`？区分"真并发的多主"与"三个独立单节点集群" | 三者都是 `id=1, term=1`、commit 各自前进（2/5/8 → 12/15/18）⇒ **是三个独立单节点**（peer 链接未建立） | 定位到**集群 spec/参数**问题；促成后来 `cl29`/`diag3` 对启动参数的排查 |
-| `cl29.sh` | 一次性 `kdbctl` 能否对 **3 节点**集群工作（此前只测过单节点） | 记录不完整（当时端口/leader 解析尚未稳定，`.out` 输出为空） | 促成 `tests/cli_smoke.sh`（现为 L2 门）覆盖单节点语义 |
-| `diag3.sh` | 3 节点启动参数诊断（SPEC 格式与端口占用） | 记录为当时的启动日志 | 与 `cl12` 一起把"参数误用"与"库缺陷"区分开 |
+| `cl3.sh` | 3-process cluster on one machine (the real peer protocol over loopback) | leader election succeeded (leader 8101), multi-node commit **30,003 ops/s @K=32**, p50 871µs | the first trustworthy multi-node baseline |
+| `cl4.sh` | commit-throughput baseline for 3 nodes (8111–8113) | the leader was determined from the log = 8111; established the practice that "the leader must be solved from state, never guessed" | every later script follows that convention |
+| `cl12.sh` | why did all three ports report `state=3`? distinguish "a genuinely concurrent multi-leader" from "three independent single-node clusters" | all three were `id=1, term=1` with their commits advancing independently (2/5/8 → 12/15/18) ⇒ **three independent single nodes** (the peer links were never established) | pinned the problem to the **cluster spec/parameters**; led to the later `cl29`/`diag3` investigation of the startup parameters |
+| `cl29.sh` | can a one-shot `kdbctl` work against a **3-node** cluster (only single-node had been tested before) | incomplete record (port/leader parsing was not yet stable at the time, the `.out` output is empty) | led to `tests/cli_smoke.sh` (now an L2 gate) covering single-node semantics |
+| `diag3.sh` | diagnostics for 3-node startup parameters (SPEC format and port occupancy) | recorded as the startup log of the time | together with `cl12`, separated "parameter misuse" from "library defect" |
 
-## 延迟归因（性能主线）
+## Latency attribution (the performance main line)
 
-| 脚本 | 目的 | 当时的结论 | 影响 |
+| Script | Purpose | Conclusion at the time | Impact |
 |---|---|---|---|
-| `cl5.sh` | 3 节点、K=8、200 个 37 字节值 | **977 ops/s**，p50 6.3ms；回读验证通过 | 确立了"早期慢"的基线数字 |
-| `cl6.sh` | 同一集群同一形状的 **cold vs warm** 四阶段 | cold 690 / warm 737–761 ops/s ⇒ **冷热无显著差异** | 排除"首次写入慢"的解释，把矛头指向**合批/fsync 策略** |
-| `cl7.sh` | ~8ms/请求的延迟在哪里？单节点 K 扫描（完全无复制） | K=8 → 953；K=32 → 13,191；K=128 → 21,290；K=256 → 32,673 ops/s ⇒ **延迟在"每请求的 flush 窗口"，不在复制** | 直接促成自适应 flush 窗口（EWMA 由实测 sync 成本推导）与深流水优化 |
-| `cl8.sh` | **是否在 leader fsync 之前就 ack 了客户端？** 逐次采样 leader 计数 | 每次都是 `ok(waited for a fsync)` ⇒ **ack 确实等 fsync** | 排除"提前 ack"这一最严重的可能误解 |
-| `cl9.sh` | 写往 follower 的快路径：leader 是否真的 fsync+提交了该突发 | follower 侧 **91,776 ops/s @K=32**（p50 287µs），leader 计数同步前进 ⇒ **是合法的中继/流水提交** | 确认高吞吐不是"漏提交" |
-| `cl10.sh` | 写 follower 的真实语义 + 从 follower 读 | 写被拒并附 leader 提示（`RESP|` 空体）；从 follower 读 50 次全 `empty` | 对应论文 §6.2：follower 不承接读写 |
+| `cl5.sh` | 3 nodes, K=8, 200 values of 37 bytes | **977 ops/s**, p50 6.3ms; read-back verification passed | established the baseline number for "slow in the early days" |
+| `cl6.sh` | four phases of **cold vs warm** on the same cluster, same shape | cold 690 / warm 737–761 ops/s ⇒ **no significant cold/warm difference** | ruled out "the first write is slow" and pointed the finger at the **batching/fsync policy** |
+| `cl7.sh` | where does the ~8ms/request latency come from? a single-node K sweep (no replication at all) | K=8 → 953; K=32 → 13,191; K=128 → 21,290; K=256 → 32,673 ops/s ⇒ **the latency is in the per-request flush window, not in replication** | directly produced the adaptive flush window (EWMA derived from the measured sync cost) and the deep-pipelining optimization |
+| `cl8.sh` | **does it ack the client before the leader fsyncs?** sampling the leader counters one by one | every sample was `ok(waited for a fsync)` ⇒ **the ack really does wait for the fsync** | ruled out premature ack, the most serious possible misreading |
+| `cl9.sh` | the fast path for writes to a follower: did the leader really fsync+commit that burst | on the follower side **91,776 ops/s @K=32** (p50 287µs) with the leader counters advancing in step ⇒ **a legitimate relay/pipelined commit** | confirmed the high throughput was not a missed commit |
+| `cl10.sh` | the true semantics of writing to a follower + reading from a follower | the write was rejected with a leader hint (`RESP|` empty body); 50 reads from the follower were all `empty` | matches the paper §6.2: a follower serves neither reads nor writes |
 
-## 客户端与 CLI
+## Client and CLI
 
-| 脚本 | 目的 | 当时的结论 | 影响 |
+| Script | Purpose | Conclusion at the time | Impact |
 |---|---|---|---|
-| `cl11.sh` | 把探针指向 follower，检查是否被告知 leader 地址并重连（§6.2 推荐做法） | 记录不完整（该次运行 `sync_call_failed`，状态解析未稳定） | 该行为后来由 `cl10` 的空 `RESP|` 体 + `kclient` 重定向逻辑覆盖 |
-| `cl13.sh` | 验证"无 TTY 的一次性 `kdbctl`"与 `bench_rate` 的 ok/err 标注 | 记录显示当时 CLI 输出为空、`PROBE_VALID|yes` 标注可用 | 促成 `kdbctl` 无控制台降级与本轮 F 系列对 `PROBE_VALID` 的坚持 |
-| `cl14.sh` | 服务器是否可启动 + 带插桩的一次性 CLI（对照管道 REPL） | `CL14_DONE` / `EXIT=0`（当时纯管道 REPL 无输出） | 与 `cl13` 一起定位 CLI 交互模式问题 |
-| `cl15.sh` | 修复后：`kdbctl` 必须**在没有控制台**时可用（输出重定向到文件） | 记录为空（该次运行未捕获输出） | 后续由 `tests/cli_smoke.sh` 固化为门禁 |
-| `repro_deep.sh` | 复现 K=512 深流水突发并抓取：CLI 报告、服务端日志、存活、退出状态 | 复现了"服务端在深流水下死亡/无应答" | 直接导向崩溃①②的定位与修复（见 `doc/gaps-audit.md`） |
+| `cl11.sh` | point the probe at a follower and check whether it is told the leader's address and reconnects (the approach §6.2 recommends) | incomplete record (that run hit `sync_call_failed`, state parsing was not stable) | the behaviour is now covered by `cl10`'s empty `RESP|` body plus the `kclient` redirect logic |
+| `cl13.sh` | validate "a one-shot `kdbctl` with no TTY" and the ok/err annotations of `bench_rate` | the record shows the CLI output was empty at the time while the `PROBE_VALID|yes` annotation worked | led to the no-console fallback in `kdbctl` and this round's F series insisting on `PROBE_VALID` |
+| `cl14.sh` | can the server start + a one-shot CLI with instrumentation (against a piped REPL) | `CL14_DONE` / `EXIT=0` (a purely piped REPL produced no output at the time) | together with `cl13`, located the CLI interaction-mode problem |
+| `cl15.sh` | after the fix: `kdbctl` must work **with no console** (output redirected to a file) | empty record (that run captured no output) | later frozen into a gate by `tests/cli_smoke.sh` |
+| `repro_deep.sh` | reproduce the K=512 deep-pipelining burst and capture: the CLI report, the server log, liveness, exit status | reproduced "the server dies / stops answering under deep pipelining" | led directly to locating and fixing crashes ①② (see `doc/gaps-audit.md`) |
 
-## 与当前门禁的对应关系
+## Correspondence with the current gates
 
-- 这些脚本关心的问题，现在都有**常规门**覆盖：
-  集群/协议 → `raft_cluster_fuzz`、`kserver_cluster_fuzz`；CLI → `tests/cli_smoke.sh`；
-  深流水/存活 → `tools/harness/soak_release.sh`、`stall_hunt.sh`、`watch_counters.sh`；
-  性能归因 → `tools/harness/perf_matrix.sh`、`burst.sh`、`pipe_frontier.sh`。
-- 因此它们**不必**进入日常回归；需要复现历史现象时再单独运行（脚本已改为按自身位置推导仓库根，可在任意目录调用）。
+- Every question these scripts cared about now has a **routine gate** covering it:
+  cluster/protocol → `raft_cluster_fuzz`, `kserver_cluster_fuzz`; CLI → `tests/cli_smoke.sh`;
+  deep pipelining/liveness → `tools/harness/soak_release.sh`, `stall_hunt.sh`, `watch_counters.sh`;
+  performance attribution → `tools/harness/perf_matrix.sh`, `burst.sh`, `pipe_frontier.sh`.
+- They therefore **do not** belong in routine regression; run them individually when a historical phenomenon needs
+  reproducing (the scripts now derive the repo root from their own location and can be invoked from any directory).

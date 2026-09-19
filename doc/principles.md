@@ -1,110 +1,117 @@
-# kynovo 工程原则（及其强制方式）
+# kynovo engineering principles (and how they are enforced)
 
-> **本文件的判据**：一条原则只有在**被违反时会响亮报错**才算真的存在；只写在文档或注释里、
-> 依赖"记得别那么做"的，都记在 §7 的**危险清单**里。
+> **The criterion for this file**: a principle only really exists if **violating it fails loudly**; anything that
+> lives only in prose or comments and relies on "remember not to do that" is filed in the **danger list**
+> in §7.
 
-机械检查：`python tools/check-principles.py` → `PRINCIPLES|OK|rules=13 fail=0`（非零退出即违规）。
-它已接入 `./build.sh regress`（每层一行 `GATE|principles|…`），因此**本地与 CI 都会跑**。
-设计约束（都是踩过的坑）：**注释必须被剥离**（否则"the worker inline"这类散文会误报，误报的检查最终被人忽略）；
-`long long` **不在禁用之列**（本仓有意用 `unsigned long long` 定义 64 位类型，见 §7-1）；对**已知且已挂账**的
-违规用**预算（ratchet）**：只减不增，且消息里点名对应卡片；`doc/measurements/` 下的 CRLF **明确豁免**——
-那是抓取到的归档证据，重排它就是毁掉它。
+Mechanical check: `python tools/check-principles.py` → `PRINCIPLES|OK|rules=13 fail=0` (a non-zero exit is a violation).
+It is wired into `./build.sh regress` (one `GATE|principles|…` line per tier), so it **runs both locally and in CI**.
+Design constraints (all of them scar tissue): **comments must be stripped** (otherwise prose such as "the worker inline"
+would be a false positive, and a checker that reports false positives ends up being ignored); `long long` is
+**not on the ban list** (this repo deliberately uses `unsigned long long` to define 64-bit types, see §7-1); for
+**known and already-known** violations use a **budget (ratchet)**: it may only shrink, never grow, and the message
+names the corresponding card; CRLF under `doc/measurements/` is **explicitly exempt** —
+that is captured archival evidence, and reflowing it destroys it.
 
-## 1. 语言与平台（硬约束）
+## 1. Language and platform (hard constraints)
 
-| 原则 | 为什么 | 代码落点 | 当前强制方式 |
+| Principle | Why | Code location | Current enforcement |
 |---|---|---|---|
-| C89：无 `inline`、无 VLA、无 `stdint.h`、不在语句后声明 | 目标含 MSVC 6.0 与 Windows XP | `code/*` | **机械**：checker（禁 `inline`/`stdint.h`）+ 编译门 `-std=c89 -Wdeclaration-after-statement` |
-| 不用 `ULL` 字面量 | MSVC 6 不认 | `code/*` | **机械**：checker（`tests/`、`tools/` 豁免——它们只由 gcc 编译，已在消息中注明） |
-| 64 位类型/字面量/打印格式一律走各头文件自带宏（`k_u64`/`vfs_u64`/…、`*_U64_C`、`*_U64_FMT`） | MSVC 6 没有 `long long`，其 printf 只认 `"I64d"` | 每个头文件 | **机械**：checker 断言五个头文件都含 `__int64` 与 `long long` 双形式，且 `code/` 中无裸 `%lld`/`%llu` |
-| 只用 XP 及更早的 Win32 API | 目标 XP+ | `code/*` | **机械**：checker 黑名单（`GetQueuedCompletionStatusEx`/`GetTickCount64`/`CreateFile2`/…），注释里的说明不算 |
-| 换行一律 LF | 脚本要能在 bash 下跑；`sed`/`grep` 行为一致 | 全仓 | **机械**：checker 断言**仓库索引** `i/crlf = 0`（仓库实际存储 ✓）+ 脚本 `w/crlf = 0`；CI 另有 LF 步骤 |
-| 归档证据不重排、不"规范化" | 复现判断依赖原始记录 | `doc/measurements/` | 纪律 + 上面那条**豁免**即是执行（CRLF 记录被有意保留） |
+| C89: no `inline`, no VLA, no `stdint.h`, no declarations after statements | the targets include MSVC 6.0 and Windows XP | `code/*` | **Mechanical**: checker (bans `inline`/`stdint.h`) + compile gate `-std=c89 -Wdeclaration-after-statement` |
+| No `ULL` literals | MSVC 6 does not recognize them | `code/*` | **Mechanical**: checker (`tests/`, `tools/` exempt — they are compiled by gcc only, and the message says so) |
+| 64-bit types/literals/print formats always go through the macros each header carries (`k_u64`/`vfs_u64`/…, `*_U64_C`, `*_U64_FMT`) | MSVC 6 has no `long long`, and its printf only understands `"I64d"` | every header | **Mechanical**: the checker asserts that all five headers contain both the `__int64` and the `long long` form, and that `code/` has no bare `%lld`/`%llu` |
+| Use only XP-and-earlier Win32 APIs | the target is XP+ | `code/*` | **Mechanical**: checker blacklist (`GetQueuedCompletionStatusEx`/`GetTickCount64`/`CreateFile2`/…); an explanation inside a comment does not count |
+| Line endings are always LF | the scripts must run under bash; `sed`/`grep` behave consistently | whole repo | **Mechanical**: the checker asserts the **repo index** `i/crlf = 0` (actual repo storage ✓) + scripts `w/crlf = 0`; CI has a separate LF step |
+| Archival evidence is not reflowed or "normalized" | reproduction judgements depend on the original record | `doc/measurements/` | Discipline + the **exemption** above is the enforcement (the CRLF records are kept on purpose) |
 
-## 2. 目录与产物
+## 2. Directories and artifacts
 
-| 原则 | 强制方式 |
+| Principle | Enforcement |
 |---|---|
-| `build/` 是纯产物目录、初始为空、**不得手写文件**、`clean` 整体删除 | **机械**：checker（`git ls-files build/` 必须为空） |
-| 手写材料各有其家：可复用 harness → `tools/harness/`；一次性调查 → `tools/archive/`（结论写入 `doc/investigations.md`）；原始记录 → `doc/measurements/` | 纪律（新脚本的落点由 code review 把关） |
-| 脚本内的仓库根**必须自推导**，不得硬编码 | **机械**：checker（被跟踪 `*.sh` 中不得出现盘符路径；`disk://` 这类 URI 前缀不算） |
+| `build/` is a pure artifact directory, starts empty, **must never contain hand-written files**, and `clean` deletes it wholesale | **Mechanical**: checker (`git ls-files build/` must be empty) |
+| Hand-written material each has its home: reusable harness → `tools/harness/`; one-off investigation → `tools/archive/` (conclusions go into `doc/investigations.md`); raw records → `doc/measurements/` | Discipline (code review gatekeeps where a new script lands) |
+| The repo root inside a script **must be self-derived**, never hard-coded | **Mechanical**: checker (no drive-letter paths in tracked `*.sh`; URI prefixes such as `disk://` do not count) |
 
-## 3. 契约与所有权
+## 3. Contracts and ownership
 
-| 原则 | 为什么 | 强制方式 |
+| Principle | Why | Enforcement |
 |---|---|---|
-| **`ready` 必须完整上报**：应用层一切状态从 `raft_advance` 返回的 ready 获取，`raft_inspect` **仅供观测端点** | 否则观测接口会渗进决策路径 | **机械 ratchet**：应用层与测试中 `raft_inspect` 站点预算 = **1**（唯一合法站点 = STATS 端点 `kserver.h:3326`），增长即报错 |
-| 快照视图对**非属主线程只读**；`capture` 与 `finish` 必须在属主线程 | 快照线程流式读取期间主线程仍在改 treap | 纪律（`treap.h` 头注释写明不变量） |
-| 释放点必须在**契约终点**，不是"数据被复制的地方" | 请求交给 raft 后仍是它的 cookie 与载荷 | 纪律 + 回归（`k_request_free` 唯一释放点） |
-| 每个 close 站点：**先存、后清、再关** | cemon 关闭后对象即失效，残留句柄 = 延迟 UAF | 纪律 + 崩溃类回归 |
-| **不丢请求**：任何接受请求的路径必须以应答或可见日志结束 | 静默丢弃曾让客户端永久挂起 | 部分机械（`selftest`/`cli_smoke` 回归） |
-| **fatal 必须打印原因** | 静默退出曾被当成"没发生" | ⚠ 纪律（缺口 C4 已挂卡片 `t_469a3143`） |
-| 事务副本禁止 `capture`/`save`/`load` | treap 的复制语义 | 纪律（`treap.h` 注释） |
-| 不得改动 `raft.h`/`treap.h` 契约而不先对齐论文语义 | 语义基准是 Ongaro 论文 | **提示性机械**：checker 检测到这两个文件被改动会打印 NOTE（要求消息里注明依据段落） |
+| **`ready` must be reported in full**: all application-layer state comes from the ready returned by `raft_advance`, and `raft_inspect` is **for the observation endpoint only** | otherwise the observation interface leaks into the decision path | **Mechanical ratchet**: budget for `raft_inspect` sites in the application layer and the tests = **1** (the only legal site = the STATS endpoint, `kserver.h:3326`); growth is an error |
+| The snapshot view is **read-only for non-owner threads**; `capture` and `finish` must run on the owner thread | while the snapshot thread stream-reads, the main thread is still mutating the treap | Discipline (the `treap.h` header comment states the invariant) |
+| The free point must be the **contract endpoint**, not "the place where the data was copied" | once a request has been handed to raft it is still that request's cookie and payload | Discipline + regression (single free point, `k_request_free`) |
+| At every close site: **save first, clear second, close third** | once cemon has closed, the object is void; a leftover handle = a delayed UAF | Discipline + crash-class regressions |
+| **Lose no request**: any path that accepts a request must end in a reply or a visible log | silent drops once hung clients forever | Partly mechanical (`selftest`/`cli_smoke` regressions) |
+| **fatal must print the reason** | a silent exit was once taken for "it did not happen" | ⚠ Discipline (gap C4 is tracked on card `t_469a3143`) |
+| Transaction replicas must not call `capture`/`save`/`load` | the copy semantics of the treap | Discipline (`treap.h` comment) |
+| Do not change the `raft.h`/`treap.h` contracts without first aligning with the paper's semantics | the semantic baseline is Ongaro's paper | **Advisory-mechanical**: the checker prints a NOTE when it detects that either of those two files changed (the message must name the paragraph it relies on) |
 
-## 4. 分层（机制层 vs 策略层）
+## 4. Layering (mechanism layer vs. policy layer)
 
-| 原则 | 强制方式 |
+| Principle | Enforcement |
 |---|---|
-| 机制层只对**合法输入与用法**负责，前置条件由调用方保证（`treap.h`：seed 由上层决定；`treap_load` 不校验有序/重复） | 纪律 |
-| 应用层**不得直读** raft 内部字段（`config_new`/`config_joint`/`config_learners`）做策略判定 | **机械 ratchet**：预算 = **3**（缺口 C6，卡片 `t_972b67e8`），增长即报错 |
-| 故障注入只走**架构已有的四缝**（transport vtable / `elapsed_ms` / runtime backend / vfs backend），不得新增侵入式钩子 | 纪律 |
-| 测试代码统一放 `tests/`，不侵入业务代码 | 纪律 |
+| The mechanism layer is responsible only for **legal input and usage**; preconditions are guaranteed by the caller (`treap.h`: the seed is decided by the layer above; `treap_load` does not validate ordering/duplicates) | Discipline |
+| The application layer **must not read** raft internal fields (`config_new`/`config_joint`/`config_learners`) directly to make policy decisions | **Mechanical ratchet**: budget = **3** (gap C6, card `t_972b67e8`); growth is an error |
+| Fault injection goes only through the **four seams the architecture already has** (transport vtable / `elapsed_ms` / runtime backend / vfs backend); no new intrusive hooks | Discipline |
+| Test code lives in `tests/` and does not intrude into production code | Discipline |
 
-## 5. 并发与生命周期
+## 5. Concurrency and lifetime
 
-| 原则 | 强制方式 |
+| Principle | Enforcement |
 |---|---|
-| 引用计数**只在成功提交时归因** | 纪律 |
-| 绝不在非属主线程 free/改写共享状态 | 纪律（崩溃类 ③ 的根因） |
-| 关闭后立即清句柄（`void *dead=h; h=0; close(dead);`） | 纪律 + 回归 |
-| 多线程调试分配器必须加锁 | 纪律（仪器自伤过一次；已加锁） |
+| Reference counts are **attributed only on a successful commit** | Discipline |
+| Never free/rewrite shared state on a non-owner thread | Discipline (root cause of crash class ③) |
+| Clear the handle immediately after closing (`void *dead=h; h=0; close(dead);`) | Discipline + regression |
+| A multi-threaded debug allocator must be locked | Discipline (the instrumentation hurt itself once; it is locked now) |
 
-## 6. 测量与证据
+## 6. Measurement and evidence
 
-| 原则 | 强制方式 |
+| Principle | Enforcement |
 |---|---|
-| **"0 failures" 不等于 "0 data"**：装置必须自证（断言正向信号 `ok=<N>`/`done:`/存活） | **机械**：`regress` 的判定行机制（无判定行 = FAIL）+ `tools/harness/regress_selftest.sh` |
-| 单一来源信任：`PHASE` 行不算证据 ⇒ 需 `PROBE`/`RESP` 为 accepted + commit 前移 + 读回 | 纪律（`kynovo-storage` 技能） |
-| **同构建 A/B**，不跨构建比较 | 纪律 |
-| 单次干净运行不是证据（低概率缺陷用数十次采样或长程门） | 纪律 |
-| 多不变量 harness 失败 ⇒ **先找第一处分歧**，不从失败点往回推 | 纪律（`AGENTS.md`） |
-| 仪器必须回退；临时打印必须带**自标识标签** | **机械**：checker 禁残留标签（`TEMP-INSTR`/`TEMP-AB`/`INSTR-<X>`/`XXX-`/`HACK-`）——注释里的说明不算，**代码里的才算** |
-| 被否证的假设必须**显式撤回**（写在 `doc/gaps-audit.md`） | 纪律（那是该文件的意义） |
+| **"0 failures" is not "0 data"**: the rig must prove itself (assert a positive signal, `ok=<N>`/`done:`/liveness) | **Mechanical**: the verdict-line mechanism of `regress` (no verdict line = FAIL) + `tools/harness/regress_selftest.sh` |
+| Single-source trust: a `PHASE` line is not evidence ⇒ you need `PROBE`/`RESP` accepted + the commit advanced + a read-back | Discipline (the `kynovo-storage` skill) |
+| **Same-build A/B**, never compare across builds | Discipline |
+| A single clean run is not evidence (for low-probability defects use dozens of samples or a long-run gate) | Discipline |
+| When a multi-invariant harness fails ⇒ **find the first divergence**; do not work backwards from the failure point | Discipline (`AGENTS.md`) |
+| Instrumentation must be reverted; temporary prints must carry a **self-identifying tag** | **Mechanical**: the checker bans leftover tags (`TEMP-INSTR`/`TEMP-AB`/`INSTR-<X>`/`XXX-`/`HACK-`) — an explanation in a comment does not count, **one in code does** |
+| A falsified hypothesis must be **explicitly retracted** (written into `doc/gaps-audit.md`) | Discipline (that is the point of that file) |
 
-## 7. 危险清单：只靠纪律（无机械强制）的原则
+## 7. Danger list: principles left to discipline alone (no mechanical enforcement)
 
-这些是**最容易被误打破**的一类 ✓。按风险排序，以及可选的机械化方向：
+These are the class that is **easiest to break by mistake** ✓. Ordered by risk, with optional directions for mechanization:
 
-1. **（原 §7-1「MSVC 6 × `long long` 从未被验证」—— ✗ 已撤回，见下）**
-   我曾据此断言"MSVC 6.0 兼容从未在工具链层被验证" ✗。**这是误报**：我只 grep 到 `typedef unsigned long long …`
-   的 `#else` 分支就下了结论，没读它的条件编译 ✗。实际上**仓库早就有一套跨平台 64 位设施**，且每个头文件各自携带：
+1. **(formerly §7-1 "MSVC 6 × `long long` was never validated" — ✗ retracted, see below)**
+   I once asserted on this basis that "MSVC 6.0 compatibility was never validated at the toolchain layer" ✗.
+   **This was a false positive**: I grep'd only the `#else` branch of `typedef unsigned long long …` and drew the
+   conclusion without reading its conditional compilation ✗. In fact **the repo has had a cross-platform 64-bit
+   facility all along**, and every header carries its own:
 
-   | 头文件 | 64 位类型（`_MSC_VER` / 其它） | 字面量宏 | 打印宏 |
+   | Header | 64-bit type (`_MSC_VER` / other) | Literal macro | Print macro |
    |---|---|---|---|
-   | `kbase.h:27-42` | `signed/unsigned __int64` / `long long` | `K_I64_C`/`K_U64_C` | `K_U64_FMT`（`"I64u"` / `"llu"`） |
+   | `kbase.h:27-42` | `signed/unsigned __int64` / `long long` | `K_I64_C`/`K_U64_C` | `K_U64_FMT` (`"I64u"` / `"llu"`) |
    | `vfs.h:63-67` | `unsigned __int64 vfs_u64` / `unsigned long long` | `VFS_U64_C` | — |
-   | `cemon.h:13` | `unsigned __int64 cemon_u64` / `unsigned long long` | （暂无字面量宏） | — |
-   | `raft.h:92-107` | `raft_u64`/`raft_i64` 双分支 | `RAFT_U64_C`/`RAFT_I64_C` | `RAFT_U64_FMT`/`RAFT_I64_FMT` |
-   | `treap.h:113-116` | `treap_u64` 双分支 | `TREAP_U64_C` | — |
+   | `cemon.h:13` | `unsigned __int64 cemon_u64` / `unsigned long long` | (no literal macro yet) | — |
+   | `raft.h:92-107` | `raft_u64`/`raft_i64`, both branches | `RAFT_U64_C`/`RAFT_I64_C` | `RAFT_U64_FMT`/`RAFT_I64_FMT` |
+   | `treap.h:113-116` | `treap_u64`, both branches | `TREAP_U64_C` | — |
 
-   而且 `raft.h:99` 有一条**明确写成注释的原则**：*"MSVC 6.0 has no `long long`, so its printf spells a 64-bit
+   And `raft.h:99` carries **a principle written explicitly as a comment**: *"MSVC 6.0 has no `long long`, so its printf spells a 64-bit
    conversion "I64d"; gcc spells it "lld". Never write `%lld` literally."*
 
-   **由此得到的真原则（已机械化，2 条规则）** ✓：
-   - 每个定义 64 位类型的头文件**必须**同时含 `_MSC_VER` 分支、`__int64` 形式与 `long long` 形式 ✓；
-   - `code/` 中**禁止裸 `%lld`/`%llu`**，必须走该头文件的 `*_U64_FMT` ✓。
+   **The real principles that follow from this (mechanized, 2 rules)** ✓:
+   - every header that defines a 64-bit type **must** contain the `_MSC_VER` branch and both the `__int64` form and the `long long` form ✓;
+   - bare `%lld`/`%llu` are **banned in `code/`**; they must go through that header's `*_U64_FMT` ✓.
 
-   **这次修正实际命中了一处真违规** ✗：`code/kdbctl.c` 三行直接写 `%llu`（且参数用 `(unsigned long long)` 直转 ✗），
-   已改为 `%" K_U64_FMT "` + `(k_u64)` ✓ —— 即"原则确实被误打破过"，只不过打破它的**不是 typedef，而是格式串** ✓。
+   **This correction did in fact hit one real violation** ✗: three lines in `code/kdbctl.c` wrote `%llu` directly
+   (with the argument hard-cast as `(unsigned long long)` ✗), and have been changed to `%" K_U64_FMT "` + `(k_u64)` ✓ —
+   i.e. "the principle really was broken by mistake", except that what broke it was **not the typedef but the format string** ✓.
 
-2. **快照视图所有权**（capture/finish 在属主线程）：可机械化的方向 = 在 `treap.h` 里加 `owner_thread` 断言。
-3. **fatal 必须有原因**（C4）：可机械化的方向 = 一个"每个 `exit(1)` 附近必须有 printf"的检查（噪声大，暂缓）。
-4. **不丢请求**：可机械化的方向 = 在每个"接受即丢弃"的分支插自标识标签，再由 harness 断言零命中。
-5. **同构建 A/B / 单次干净不算证据 / 先找第一处分歧**：方法论，不可机械化——但它们已经写进 `AGENTS.md` 与技能，
-   由每次评审把关。
+2. **Snapshot view ownership** (capture/finish on the owner thread): a direction for mechanization = add an `owner_thread` assertion in `treap.h`.
+3. **fatal must have a reason** (C4): a direction for mechanization = a check that "there must be a printf near every `exit(1)`" (noisy, deferred).
+4. **Lose no request**: a direction for mechanization = insert a self-identifying tag in every "accept and drop" branch, then have a harness assert zero hits.
+5. **Same-build A/B / a single clean run is not evidence / find the first divergence**: methodology, not mechanizable — but they are already written into `AGENTS.md` and the skills,
+   and every review enforces them.
 
-## 8. 改动本文件的规矩
+## 8. Rules for changing this file
 
-新增一条机械规则时：**先证明它能失败**（注入一处真违规 → 看到它报红 → 精确回退 → 残留计数为 0），
-再接入 `regress`。做不到"能失败"的规则不要加——加进 §7 反而更诚实。
+When adding a mechanical rule: **first prove that it can fail** (inject one real violation → watch it go red → revert
+precisely → the leftover count is 0), then wire it into `regress`. A rule that cannot "fail" should not be added —
+putting it in §7 is the more honest move.

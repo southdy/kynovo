@@ -1,26 +1,28 @@
-# 过程测量归档（doc/measurements）
+# Process measurement archive (doc/measurements)
 
-本目录是**原始过程产物**，不是构建输出、也**不可字节级复现**（机器状态、其他负载会变）。
-它们曾支撑过吞吐/延时取舍与调参决策，因此被保留；`build/` 只放产物，历史数据在这里。
+This directory holds **raw process artifacts**: not build output, and **not reproducible byte for byte** (machine
+state and other load vary). They once supported throughput/latency trade-offs and tuning decisions, so they were
+kept; `build/` holds artifacts only, historical data lives here.
 
-## 内容
-- `*.txt`（111 个）：每次基准运行的服务器计数器与阶段结果。
-  命名规则为**源目录展平**，例如 `bench-run3_k1.txt` = 原 `build/bench-run3/k1.txt`。
-- `*.out` / `*.err`：早期调查脚本（现位于 `tools/archive/`）的**结论输出**。
+## Contents
+- `*.txt` (111 of them): the server counters and phase results of each benchmark run.
+  The naming rule is **flattened source directory**, e.g. `bench-run3_k1.txt` = what used to be `build/bench-run3/k1.txt`.
+- `*.out` / `*.err`: the **conclusion output** of the early investigation scripts (now under `tools/archive/`).
 
-## 一份记录怎么读
+## How to read a record
 ```
 STATS_BEFORE|id=… state=… commit=… wal_records=… flush_by_target=… rounds=…
-PHASE|n=<请求数> k=<在飞深度> wall_us=<总耗时> ops_per_s=<吞吐>
-LAT|n=… min=… p50=… p90=… p99=… max=…         (仅有该行时才有分位数据)
+PHASE|n=<request count> k=<in-flight depth> wall_us=<total wall time> ops_per_s=<throughput>
+LAT|n=… min=… p50=… p90=… p99=… max=…         (percentiles are available only when this line is present)
 STATS_AFTER|… flush_by_target/flush_by_drain/flush_by_window/flush_by_bytes=…
 ```
-- `flush_by_*` 的四类计数说明**合批是被哪一条件触发**的（达目标条数 / drain / 时间窗 / 字节数），是判断"瓶颈在轮次还是在 fsync"的关键；
-- `rounds` 是事件循环轮次；`wal_records` 是 WAL 记录数（≈ 每次 fsync 一条）。
+- The four `flush_by_*` counters say **which condition triggered the batching** (target record count / drain / time
+  window / byte count); they are the key to telling "whether the bottleneck is the rounds or the fsync";
+- `rounds` is the event-loop round count; `wal_records` is the WAL record count (≈ one per fsync).
 
-## 头部数字（103/111 份含 PHASE 的记录）
-**各在飞深度 K 的最优吞吐**（跨全部记录取最大）：
-| K | 最优 ops/s |
+## Headline numbers (103/111 of the records that contain a PHASE line)
+**Best throughput at each in-flight depth K** (maximum taken across all records):
+| K | best ops/s |
 |---|---|
 | 1 | 3,113 |
 | 8 | 73,778 |
@@ -31,13 +33,19 @@ STATS_AFTER|… flush_by_target/flush_by_drain/flush_by_window/flush_by_bytes=�
 | 512 | 53,079 |
 | 2000 | 62,295 |
 
-**载荷与合批的影响**（同期记录）：1B 值、K=1 时约 3.1k ops/s；4KiB 值、K=32 时约 1.1k ops/s；
-512KiB 值、K=1 时降到约 80 ops/s ⇒ **大值 + 浅流水是最差组合**（值拷贝与 fsync 双重代价）。
-**延时**：69 份记录含分位数据；典型 K=8 时 p50 86µs、K=256 时 p50 2.1ms（深流水换吞吐、牺牲单请求延时）。
-**已确认的边界**：`cl8` 的逐步采样结论是 **ack 等待 leader fsync**（"ok(waited for a fsync)"，无提前 ack）；
-`cl9` 显示写往 follower 的突发由 leader 统一 fsync+提交（91,776 ops/s @K=32，合法中继路径）。
+**Effect of payload and batching** (records from the same period): 1B values at K=1 ≈ 3.1k ops/s; 4KiB values at
+K=32 ≈ 1.1k ops/s; 512KiB values at K=1 drop to ≈ 80 ops/s ⇒ **large values + shallow pipelining is the worst
+combination** (the double cost of the value copy and the fsync).
+**Latency**: 69 records contain percentile data; typical p50 is 86µs at K=8 and 2.1ms at K=256 (deep pipelining trades
+single-request latency for throughput).
+**Confirmed boundaries**: the step-by-step sampling in `cl8` concludes that **the ack waits for the leader fsync**
+("ok(waited for a fsync)", no premature ack); `cl9` shows a burst written to a follower is fsynced+committed by the
+leader as a whole (91,776 ops/s @K=32, a legitimate relay path).
 
-## 使用建议
-1. 先查这里有没有**同形状**的记录（同 K、同载荷、同 mem/disk、同节点数），再决定是否重测；
-2. 重测时用 `tools/harness/` 里对应的 harness，并把新结果写回本目录（保持同一命名规则）；
-3. 比较时**必须**记录二进制是否同版本、以及当时机器是否有其他负载——否则数字不可比。
+## How to use this
+1. First check whether a **same-shape** record already exists here (same K, same payload, same mem/disk, same node
+   count) before deciding to re-measure;
+2. when re-measuring, use the corresponding harness under `tools/harness/` and write the new results back into this
+   directory (keeping the same naming rule);
+3. when comparing you **must** record whether the binary is the same version and whether the machine carried other
+   load at the time — otherwise the numbers are not comparable.

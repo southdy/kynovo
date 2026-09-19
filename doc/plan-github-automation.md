@@ -1,195 +1,195 @@
-# 规划：接入 GitHub 与 Hermes Agent 自动化开发维护
+# Plan: onboarding GitHub and Hermes Agent for automated development and maintenance
 
-**状态**：已拍板并执行中 —— 决策见 §6（已定），P0 完成，P1 进行中。**依据**：本文件 §1 的实测核查 + Hermes 官方技能（`hermes-agent`）关于
-项目上下文文件与后台系统的权威说明。**执行前提**：§6 的五个决策点需先拍板。
+**Status**: decided and being executed —— see §6 for the decisions (settled), P0 complete, P1 in progress. **Basis**: the measured verification in §1 of this file + the authoritative Hermes official skill (`hermes-agent`) on
+project context files and background systems. **Precondition for execution**: the five decision points in §6 must be decided first.
 
 ---
 
-## 1. 现状分析（实测，非印象）
+## 1. Current-state analysis (measured, not impressions)
 
-### 1.1 有利条件
-| 项 | 事实 |
+### 1.1 Favorable conditions
+| Item | Fact |
 |---|---|
-| 依赖 | **零外部依赖**：单头文件库 + MinGW/ws2_32/winmm。仅 `tools/cov_report.py`、`tests/lincheck.py` 需要 Python |
-| 换行符 | 抽查 `build.sh`/`code/kbase.h`/`code/raft.h`/`tests/selftest.c`/`doc/testing.md` 全为 **LF**（符合既定要求） |
-| 凭据 | 全树未见口令/密钥/令牌（`cli.h`、`dissertation.md` 的命中是普通词） |
-| 产物 | 二进制与命令产物全在 `build/`（现已为纯产物目录，`clean` 后消失） |
-| 文档 | `doc/` 六项：`dissertation`（语义基准）、`gaps-audit`（缺口/backlog）、`testing`（门禁与方法）、`investigations`（历史调查）、`code-review-2026-09`（审查）、`measurements`（178 份原始记录） |
-| 工具 | `git 2.28` 与 `python 3.11.16` 可用 |
-| 门禁 | 已分层且有判定行约定（`doc/testing.md`）；关键门当前全绿 |
+| Dependencies | **Zero external dependencies**: single-header library + MinGW/ws2_32/winmm. Only `tools/cov_report.py` and `tests/lincheck.py` need Python |
+| Line endings | Spot-checked `build.sh`/`code/kbase.h`/`code/raft.h`/`tests/selftest.c`/`doc/testing.md` are all **LF** (meets the established requirement) |
+| Credentials | No password/key/token found anywhere in the tree (the hits in `cli.h` and `dissertation.md` are ordinary words) |
+| Artifacts | Binaries and command outputs all live under `build/` (now a pure artifact directory, gone after `clean`) |
+| Docs | Six items in `doc/`: `dissertation` (semantic baseline), `gaps-audit` (gaps/backlog), `testing` (gates and method), `investigations` (historical investigations), `code-review-2026-09` (review), `measurements` (178 raw records) |
+| Tooling | `git 2.28` and `python 3.11.16` available |
+| Gates | Already layered, with a verdict-line convention (`doc/testing.md`); key gates currently all green |
 
-### 1.2 阻碍项（按对 GitHub/自动化的影响排序）
-| # | 阻碍 | 证据 | 影响 |
+### 1.2 Blockers (ordered by impact on GitHub/automation)
+| # | Blocker | Evidence | Impact |
 |---|---|---|---|
-| B1 | **`doc/dissertation.md` 是第三方论文**（Ongaro 博士论文全文） | 8k 行、非本项目版权 | **不得进入公开仓库**；私有仓库也建议移出 |
-| B2 | **无 LICENSE / 无 README** | 根目录仅 `build/ build.sh code/ doc/ tests/ tools/` | GitHub 首屏与合规缺失 |
-| B3 | **28 个文件硬编码 `D:/kynovo`**（数据路径，如 `disk://D:/kynovo/build/...`） | `grep -rl` 计数 28 | 任何非本机/CI 环境跑不了带数据的脚本 |
-| B4 | **`python3` 在本机是 WindowsApps 存根**（Permission denied） | 实测 | 脚本/CI 必须用 `python` 或做探测 |
-| B5 | **仅 Windows 可运行**（5 个头文件含 `windows.h`/`winsock2.h`；非 Windows 分支从未编译） | `grep -lc` | CI 必须用 `windows-latest`；不可宣称跨平台 |
-| B6 | **无版本控制**（无 `.git`） | `ls -a` | 无回滚、无 diff、无法协作——**最高性价比的修复项** |
-| B7 | 无"一键门"入口：完整回归要手工敲 8 条命令 | `doc/code-review-2026-09.md` T-1 | 自动化与 cron 缺少稳定入口 |
-| B8 | 无机器可读结果：判定靠人读输出 | 同上 | agent 无法可靠断言"通过/失败" |
+| B1 | **`doc/dissertation.md` is a third-party paper** (the full text of Ongaro's PhD dissertation) | 8k lines, not this project's copyright | **Must not enter a public repo**; recommended to move it out of a private repo as well |
+| B2 | **No LICENSE / no README** | the root holds only `build/ build.sh code/ doc/ tests/ tools/` | GitHub landing page and compliance missing |
+| B3 | **28 files hardcode `D:/kynovo`** (data paths, e.g. `disk://D:/kynovo/build/...`) | `grep -rl` counts 28 | No off-machine/CI environment can run the data-bearing scripts |
+| B4 | **`python3` on this machine is the WindowsApps stub** (Permission denied) | measured | Scripts/CI must use `python` or probe for it |
+| B5 | **Runs only on Windows** (5 headers include `windows.h`/`winsock2.h`; the non-Windows branch has never been compiled) | `grep -lc` | CI must use `windows-latest`; no cross-platform claim may be made |
+| B6 | **No version control** (no `.git`) | `ls -a` | No rollback, no diff, no collaboration——**the highest-value-for-effort fix** |
+| B7 | No "one-shot gate" entry point: a full regression means typing 8 commands by hand | `doc/code-review-2026-09.md` T-1 | Automation and cron lack a stable entry point |
+| B8 | No machine-readable result: the verdict relies on a human reading the output | same as above | The agent cannot reliably assert "pass/fail" |
 
 ---
 
-## 2. GitHub 接入准备
+## 2. GitHub onboarding preparation
 
-### 2.1 仓库形态
-- 私有仓库优先（B1 的存在使公开仓需先做版权处理）；`main` 为唯一长期分支，改动一律走短命 feature 分支 + PR。
-- 提交信息：首行 ≤72 字符、祈使句；正文写**为什么**与**验证方式**（哪几个门、判定行结果）。避免把调试过程写进历史。
-- 标签策略：`v0.x.y`（当前无生产使用，先 0.x）。
+### 2.1 Repository shape
+- Private repo preferred (because of B1, a public repo needs copyright handling first); `main` is the only long-lived branch, all changes go through short-lived feature branches + PRs.
+- Commit messages: first line ≤72 characters, imperative; the body states **why** and **how it was verified** (which gates, verdict-line results). Keep the debugging process out of history.
+- Tagging policy: `v0.x.y` (no production use yet, so 0.x for now).
 
-### 2.2 必备文件（本规划交付物，执行阶段生成）
-| 文件 | 内容要点 |
+### 2.2 Required files (deliverables of this plan, produced during execution)
+| File | Content outline |
 |---|---|
-| `.gitattributes` | `* text=auto eol=lf`、`*.md text eol=lf`、`*.c/*.h text eol=lf`、`*.exe binary` —— 强制 LF（既定要求） |
-| `.gitignore` | `build/`、`*.exe`、`*.log`、`*.o`、`*.gcov`、临时数据盘目录；**不忽略** `doc/measurements/`、`tools/` |
-| `README.md` | 20–40 行：单头文件 Raft KV 是什么、Windows XP+ 与 MSVC6/C89 约束、依赖、`./build.sh` 目标表、最小运行示例（`init` → `server` → `kdbctl SET/GET`）、指向 `doc/testing.md` |
-| `LICENSE` | **Apache-2.0**（官方全文；与 README 的版权行一致） |
-| `AGENTS.md` | 见 §3.1（同时是 Hermes 的项目上下文入口） |
-| `.github/workflows/ci.yml` | 见 §2.3 |
-| `.github/pull_request_template.md` | 要求填写：改了什么、**跑了哪些门**、判定行结果、风险与回滚方式 |
+| `.gitattributes` | `* text=auto eol=lf`, `*.md text eol=lf`, `*.c/*.h text eol=lf`, `*.exe binary` —— enforce LF (established requirement) |
+| `.gitignore` | `build/`, `*.exe`, `*.log`, `*.o`, `*.gcov`, temporary data-disk directories; **do not ignore** `doc/measurements/`, `tools/` |
+| `README.md` | 20–40 lines: what the single-header Raft KV is, the Windows XP+ and MSVC6/C89 constraints, dependencies, table of `./build.sh` targets, minimal run example (`init` → `server` → `kdbctl SET/GET`), pointer to `doc/testing.md` |
+| `LICENSE` | **Apache-2.0** (official full text; consistent with the copyright line in the README) |
+| `AGENTS.md` | see §3.1 (it is also Hermes's project-context entry point) |
+| `.github/workflows/ci.yml` | see §2.3 |
+| `.github/pull_request_template.md` | requires: what changed, **which gates were run**, verdict-line results, risk and rollback method |
 
-### 2.3 CI 设计（Windows runner，按"分钟预算"分层）
-| 阶段 | 内容 | 预算 | 触发 |
+### 2.3 CI design (Windows runner, layered by "minute budget")
+| Stage | Content | Budget | Trigger |
 |---|---|---|---|
-| build | `./build.sh` + **0 error/0 warning 断言** | ~2 min | 每次 push/PR |
-| unit | `raft_test` / `kserver_test` / `kclient_test` / `cemon_test` / `selftest` | ~1 min | 同上 |
-| smoke | `tests/cli_smoke.sh`（真进程 + 真 socket） | ~10 s | 同上 |
-| fuzz-fast | `raft_fuzz 1 2000`、`raft_cluster_fuzz 1 200 0`、`kserver_cluster_fuzz 1 1` | ~1 min | 同上 |
-| nightly | `raft_cluster_fuzz 1 20000 0`（可切分并行）、`soak_release.sh RUNS=24`、`./build.sh coverage`、`./build.sh run-sanitize` | ~20 min | 每日 cron |
-- 工具链：MSYS2 + `mingw-w64-x86_64-gcc`（**不钉 15.2.0**，在 CI 里记录实际版本；本地仍钉 15.2.0）。若某版本缺 `LPFN_ACCEPTEX`（9.2.0 的已知问题）CI 会立刻暴露。
-- 产物：nightly 上传 `build/*.exe` 与 `build/perf/` 日志为 artifact；`doc/measurements/` 由本地人工归档，CI 不写仓库。
-- 安全：`GITHUB_TOKEN` 只读；Actions 建议 pin 到 SHA；无任何 secret 需求（零依赖、零外部服务）。
+| build | `./build.sh` + **0 error/0 warning assertion** | ~2 min | every push/PR |
+| unit | `raft_test` / `kserver_test` / `kclient_test` / `cemon_test` / `selftest` | ~1 min | same as above |
+| smoke | `tests/cli_smoke.sh` (real processes + real socket) | ~10 s | same as above |
+| fuzz-fast | `raft_fuzz 1 2000`, `raft_cluster_fuzz 1 200 0`, `kserver_cluster_fuzz 1 1` | ~1 min | same as above |
+| nightly | `raft_cluster_fuzz 1 20000 0` (splittable, parallelizable), `soak_release.sh RUNS=24`, `./build.sh coverage`, `./build.sh run-sanitize` | ~20 min | daily cron |
+- Toolchain: MSYS2 + `mingw-w64-x86_64-gcc` (**do not pin 15.2.0**; record the actual version in CI; locally still pinned to 15.2.0). If some version lacks `LPFN_ACCEPTEX` (a known issue in 9.2.0), CI exposes it immediately.
+- Artifacts: nightly uploads `build/*.exe` and `build/perf/` logs as artifacts; `doc/measurements/` is archived by hand on the local machine, CI does not write to the repo.
+- Security: `GITHUB_TOKEN` read-only; pin Actions to SHA where possible; no secret requirements at all (zero dependencies, zero external services).
 
 ---
 
-## 3. Hermes Agent 自动化准备
+## 3. Hermes Agent automation preparation
 
-### 3.1 项目上下文文件：`AGENTS.md`（唯一，cwd-only）
-权威约定：`.hermes.md`（可向 git 根以上继承）与 `AGENTS.md`（**仅 cwd**、可移植到 Codex/Claude Code/OpenCode）
-**先匹配者生效**。本项目扁平、且希望其他 agent 也能用 ⇒ 选 **`AGENTS.md`**，内容控制在 20,000 字符内，细节引用 `doc/testing.md`。
+### 3.1 Project context file: `AGENTS.md` (single, cwd-only)
+Authoritative convention: `.hermes.md` (can be inherited upward beyond the git root) and `AGENTS.md` (**cwd only**, portable to Codex/Claude Code/OpenCode)
+**First match wins**. This project is flat and should be usable by other agents too ⇒ choose **`AGENTS.md`**, keep the content within 20,000 characters, and reference `doc/testing.md` for details.
 
-建议骨架（执行阶段落文件）：
+Suggested skeleton (written to file during execution):
 ```
-# kynovo — agent 工作须知
-## 硬约束（违反即拒绝）
-- C89 / MSVC 6.0 兼容 / Windows XP+；禁止 C99 设施（inline、VLA、stdint.h、long long 字面量后缀 ULL）
-- 换行一律 LF；不得手写任何文件到 build/（纯产物目录）
-- 不得改动 raft.h/treap.h 的契约而不先对齐 doc/dissertation.md 的论文语义并说明
-## 工作流
-1) 改前先跑基线门；2) 改后跑 `./build.sh regress`（全门 + 判定行 + 机器可读摘要）；
-3) 报告必须带证据（判定行 / 日志路径 / 退出码），禁止"应该没问题"式结论
-## 纪律（本项目用代价换来的）
-- 先确认构建成功，再解读运行结果（曾三次跑旧二进制得出错误结论）
-- 同构建 A/B；低概率缺陷用数十次采样或长程门；单次干净运行不算证据
-- 多不变量 harness 失败：先找"第一处分歧"，不要从失败点往回推
-- 仪器（临时打印/埋点）必须回退；保留的只能是修复本身与长期诊断
-- 不得逐行批量改控制流；释放点必须在契约终点；关闭一律"先存后清再关"
-## 关键入口
-- 门禁与方法：doc/testing.md   backlog：doc/gaps-audit.md   harness：tools/harness/
-- 历史调查与结论：doc/investigations.md   原始测量：doc/measurements/
+# kynovo — agent working notes
+## Hard constraints (violation means rejection)
+- C89 / MSVC 6.0 compatible / Windows XP+; C99 facilities forbidden (inline, VLA, stdint.h, long long literal suffix ULL)
+- Line endings always LF; never hand-write any file into build/ (pure artifact directory)
+- Do not change the contracts of raft.h/treap.h without first aligning with the paper semantics in doc/dissertation.md and saying so
+## Workflow
+1) run the baseline gates before changing; 2) run `./build.sh regress` after changing (all gates + verdict lines + machine-readable summary);
+3) reports must carry evidence (verdict line / log path / exit code); "should be fine"-style conclusions are forbidden
+## Discipline (bought with real cost in this project)
+- Confirm the build succeeded before interpreting run results (three times a stale binary led to wrong conclusions)
+- A/B within the same build; for low-probability defects use dozens of samples or a long-run gate; one clean run is not evidence
+- Multi-invariant harness failure: find the "first divergence" first; do not reason backwards from the failure point
+- Instrumentation (temporary prints/probes) must be reverted; only the fix itself and long-term diagnostics may remain
+- Do not bulk-edit control flow line by line; release points must be at contract endpoints; shutdown is always "save first, then clear, then close"
+## Key entry points
+- Gates and method: doc/testing.md   backlog: doc/gaps-audit.md   harness: tools/harness/
+- Historical investigations and conclusions: doc/investigations.md   raw measurements: doc/measurements/
 ```
 
-### 3.2 一键门：`./build.sh regress`（自动化与 cron 的稳定入口）
-- `./build.sh regress [--quick|--full|--fuzz N]`：按 `doc/testing.md` §6 的顺序执行；
-- **末行输出机器可读摘要**：`REGRESS|quick|pass=7 fail=0 duration=142s`（agent 只需读这一行）；
-- 失败即停并打印失败门的**判定行**与日志路径；`--full` 追加 L4/L6；
-- 与 `doc/testing.md` 的表格一一对应，避免两处漂移。
+### 3.2 One-shot gate: `./build.sh regress` (the stable entry point for automation and cron)
+- `./build.sh regress [--quick|--full|--fuzz N]`: executes in the order given in `doc/testing.md` §6;
+- **last line prints a machine-readable summary**: `REGRESS|quick|pass=7 fail=0 duration=142s` (the agent only needs to read this line);
+- stops on failure and prints the failing gate's **verdict line** and log path; `--full` appends L4/L6;
+- one-to-one with the table in `doc/testing.md`, avoiding drift between the two.
 
-### 3.3 技能（skills）固化
-现状已有：`kynovo-storage`、`performance-benchmarking`、`debug-instrumentation`、`consensus-fuzz-testing`、`code-audit-remediation`。
-建议新增/修订（执行阶段）：
-| 技能 | 内容 | 与现有分工 |
+### 3.3 Codifying skills
+Already present: `kynovo-storage`, `performance-benchmarking`, `debug-instrumentation`, `consensus-fuzz-testing`, `code-audit-remediation`.
+Proposed additions/revisions (execution phase):
+| Skill | Content | Division of labour with the existing ones |
 |---|---|---|
-| `kynovo-build-verify` | 一键门用法、判定行、常见假失败（端口占用、appverif 未 disable、旧二进制） | 新 |
-| `kynovo-release` | 打 tag、构建产物、更新 `doc/measurements/` 基线 | 新 |
-| `kynovo-raft-contract` | 论文语义 ↔ 代码落点映射（`raft.h` 契约条目与行号） | 与 `raft-consensus-review` 互补 |
-> 原则：技能写**过程与判定**，`AGENTS.md` 写**约束与纪律**，`doc/` 写**事实与证据**，三者不重复。
+| `kynovo-build-verify` | one-shot gate usage, verdict lines, common false failures (port in use, appverif not disabled, stale binary) | new |
+| `kynovo-release` | tagging, build artifacts, updating the `doc/measurements/` baseline | new |
+| `kynovo-raft-contract` | paper semantics ↔ code location mapping (`raft.h` contract entries and line numbers) | complementary to `raft-consensus-review` |
+> Principle: skills state **process and verdicts**, `AGENTS.md` states **constraints and discipline**, `doc/` states **facts and evidence**; the three do not repeat each other.
 
-### 3.4 后台与自动化（按权威能力设计）
-| 手段 | 用法 | 注意 |
+### 3.4 Background and automation (designed around the authoritative capabilities)
+| Mechanism | Usage | Caveat |
 |---|---|---|
-| `cron` | 夜间：`workdir: D:\kynovo`（自动加载 `AGENTS.md`）+ `script` 预跑 `./build.sh regress --quick` 收集数据 + agent 任务解读并只在**失败**时报告 | **每次运行 3 分钟硬中断** ⇒ 长任务（20k 轮 fuzz、24 轮 soak）必须由脚本以**后台终端进程**启动并落日志，agent 只读日志 |
-| `cron` 链 | `context_from` 把"夜间门禁摘要"喂给"次日评审/修复任务" | 保持主会话角色交替，不镜像 |
-| `kanban` | 把 `doc/gaps-audit.md` 的条目转成任务卡（ID/验收标准/证据要求）；orchestrator 分派，worker 只做一卡 | 持久、可重试；与 GitHub Issues 二选一或双写（决策点 D3） |
-| `delegate_task` | 读多写少的分析（审计、交叉验证、撰写报告）并行 | **不持久**：进程退出即丢 ⇒ 只用于分钟级子任务 |
-| 工作树 | 并行写代码的 agent 用 `hermes -w`（worktree） | 避免同分支冲突；合并交给 merge-reconciler |
+| `cron` | nightly: `workdir: D:\kynovo` (auto-loads `AGENTS.md`) + `script` pre-runs `./build.sh regress --quick` to collect data + an agent task interprets it and reports **only on failure** | **3-minute hard interrupt per run** ⇒ long tasks (20k-round fuzz, 24-round soak) must be launched by a script as a **background terminal process** and logged to disk; the agent only reads the logs |
+| `cron` chain | `context_from` feeds the "nightly gate summary" into the "next-day review/fix task" | keeps the main session's roles alternating, do not mirror |
+| `kanban` | turn `doc/gaps-audit.md` entries into task cards (ID/acceptance criteria/evidence requirements); the orchestrator dispatches, a worker does exactly one card | durable, retryable; either/or with GitHub Issues, or double-write (decision point D3) |
+| `delegate_task` | parallel read-heavy, write-light analysis (audits, cross-checking, report writing) | **not durable**: lost as soon as the process exits ⇒ use only for minute-scale subtasks |
+| Worktrees | agents writing code in parallel use `hermes -w` (worktree) | avoids same-branch conflicts; hand merges to merge-reconciler |
 
-### 3.5 "ai 可信"的验收约定（写进 `AGENTS.md`）
-1. 任何"完成/修复"声明必须附**可复核证据**：判定行 + 日志路径 + 退出码；
-2. 高风险改动（raft 语义、持久化、并发）要求**两处独立证据**（例如单测 + 集群 fuzz 同绿）；
-3. 修复必须**重跑曾经复现的那一道门**，并把结果写进 `doc/gaps-audit.md`；
-4. 被否证的假设要显式撤回（本仓库已有此惯例，见 `doc/gaps-audit.md` E/F 节）。
+### 3.5 Acceptance conventions for "AI can be trusted" (written into `AGENTS.md`)
+1. Any "done/fixed" claim must carry **reviewable evidence**: verdict line + log path + exit code;
+2. High-risk changes (raft semantics, persistence, concurrency) require **two independent pieces of evidence** (e.g. unit test + cluster fuzz both green);
+3. A fix must **re-run the very gate that once reproduced the problem**, and write the result into `doc/gaps-audit.md`;
+4. Falsified hypotheses must be explicitly retracted (this repo already has that convention; see sections E/F of `doc/gaps-audit.md`).
 
 ---
 
-## 4. 分阶段执行计划（每阶段可独立交付/回滚）
+## 4. Phased execution plan (each phase can be delivered/rolled back independently)
 
-| 阶段 | 产出 | 验收 | 预估 |
+| Phase | Output | Acceptance | Estimate |
 |---|---|---|---|
-| **P0 版本控制基线** ✅ 已完成 | `git init`；`.gitattributes`、`.gitignore`；移出 `doc/dissertation.md`（改由文档说明获取方式）；首次提交 | `git status` 干净；`grep -c dissertation .gitignore` 命中；`./build.sh clean && ./build.sh` 后 `git status` 仍干净（证明 `build/` 被忽略） | 0.5 天 |
-| **P1 可自动化**（`AGENTS.md` ✅、`regress` ✅；余：数据路径参数化、`python` 探测） | `AGENTS.md`；`./build.sh regress`（含 `REGRESS|` 摘要）；统一 `python` 探测；数据路径参数化（`KDB_DATA`，默认 `build/data`） | `./build.sh regress --quick` 绿且末行可解析；在非 `D:\kynovo` 目录复制一份也能跑（验证无绝对路径依赖） | 1 天 |
-| **P2 GitHub + CI**（`ci.yml`/`nightly.yml`/PR 模板 ✅ 已就绪；待远端与认证） | 私有仓库；`ci.yml`（build/unit/smoke/fuzz-fast）；PR 模板；nightly 工作流 | PR 触发 CI 全绿；故意引入一个告警 ⇒ CI 红（证明断言有效） | 1 天 |
-| **P3 自动化闭环** | 技能三件（§3.3）；cron 夜间门禁 + 失败才报告；kanban/Issues 与 backlog 对齐 | 连续 3 个夜间任务按预期只在失败时报告；一条 backlog 卡片走完"分派 → 改 → regress → PR" | 1 天 |
-| **P4 常态维护** | 按 backlog 驱动：每任务 = 分支 → 改 → `regress` → PR → 报告（附证据） | 每周回顾：门的绿/红趋势、`doc/measurements/` 是否更新、技能是否需修订 | 持续 |
+| **P0 Version-control baseline** ✅ complete | `git init`; `.gitattributes`, `.gitignore`; move `doc/dissertation.md` out (document how to obtain it instead); first commit | `git status` clean; `grep -c dissertation .gitignore` hits; after `./build.sh clean && ./build.sh`, `git status` is still clean (proving `build/` is ignored) | 0.5 day |
+| **P1 Automatable** (`AGENTS.md` ✅, `regress` ✅; remaining: data-path parameterization, `python` probing) | `AGENTS.md`; `./build.sh regress` (with the `REGRESS|` summary); unified `python` probing; data-path parameterization (`KDB_DATA`, defaulting to `build/data`) | `./build.sh regress --quick` green with a parseable last line; a copy in a directory other than `D:\kynovo` also runs (proving there is no absolute-path dependency) | 1 day |
+| **P2 GitHub + CI** (`ci.yml`/`nightly.yml`/PR template ✅ ready; pending remote and authentication) | private repo; `ci.yml` (build/unit/smoke/fuzz-fast); PR template; nightly workflow | a PR triggers an all-green CI; deliberately introduce one warning ⇒ CI red (proving the assertion works) | 1 day |
+| **P3 Automation closed loop** | the three skills (§3.3); cron nightly gates + report-only-on-failure; kanban/Issues aligned with the backlog | 3 consecutive nightly tasks report only on failure as expected; one backlog card goes the whole way through "dispatch → change → regress → PR" | 1 day |
+| **P4 Steady-state maintenance** | backlog-driven: each task = branch → change → `regress` → PR → report (with evidence) | weekly review: the green/red trend of the gates, whether `doc/measurements/` was updated, whether the skills need revision | ongoing |
 
-**风险与缓解**
-- 引入 CI 后本地与 CI 的 gcc 版本差异 ⇒ CI 记录实际版本；本地保持钉版，差异导致的失败先按"工具链差异"排查。
-- 自动 agent 改动持久化/并发代码有回归风险 ⇒ P4 起强制"分支 + PR + 两处证据 + 夜间门"。
-- 数据路径参数化会触及 28 个脚本 ⇒ 一次性完成并逐个 `bash -n` + 至少各跑一次（scripts 已能裸跑）。
+**Risks and mitigations**
+- Once CI is introduced, the local and CI gcc versions differ ⇒ CI records the actual version; locally the pin stays, and failures caused by the difference are investigated as a "toolchain difference" first.
+- Automated agents changing persistence/concurrency code carries regression risk ⇒ from P4 on, enforce "branch + PR + two pieces of evidence + nightly gate".
+- Parameterizing data paths touches 28 scripts ⇒ do it in one pass and give each one `bash -n` + at least one run (the scripts can already be run bare).
 
 ---
 
-## 5. 与现有文档的关系（避免重复）
-- `doc/testing.md`：门禁与方法（**唯一权威**）——`regress` 的实现必须与它一致；
-- `doc/gaps-audit.md`：backlog 与证据（每项修复在此更新状态与撤回记录）；
-- `doc/investigations.md` + `doc/measurements/`：历史与原始数据（不重测就有据可查）；
-- `doc/code-review-2026-09.md`：结构与卫生审查（本规划的上游）；
-- `AGENTS.md`：**给 agent 的约束与纪律**（最短、最硬、可移植）。
+## 5. Relationship to the existing documents (avoiding duplication)
+- `doc/testing.md`: gates and method (**single authority**)——the `regress` implementation must match it;
+- `doc/gaps-audit.md`: backlog and evidence (every fix updates its status and retraction record here);
+- `doc/investigations.md` + `doc/measurements/`: history and raw data (verifiable without re-measuring);
+- `doc/code-review-2026-09.md`: structure and hygiene review (upstream of this plan);
+- `AGENTS.md`: **constraints and discipline for agents** (shortest, hardest, portable).
 
-## 6. 决策点（需拍板后执行）
-| # | 决策 | 选项与影响 |
+## 6. Decision points (to be executed once decided)
+| # | Decision | Options and impact |
 |---|---|---|
-| D1 | 仓库可见性 | **公开**（已定）⇒ `doc/dissertation.md` 保持原地并 `.gitignore`（引用不失效、永不提交） |
-| D2 | CI 范围 | **完整 + nightly**（已定） |
-| D3 | backlog 载体 | **双写**（已定）：GitHub Issues 面向人 + Hermes kanban 面向 agent |
-| D4 | agent 权限 | **允许直推 `main`**（已定）⇒ 补偿措施：每次推送前本地跑 `./build.sh regress quick`；nightly 是安全网（已写入 `AGENTS.md`） |
-| D5 | 许可证 | **Apache-2.0**（已落 `LICENSE`，官方全文逐字取自 apache.org）：与 MIT 同为宽松许可，额外**显式授予专利许可**并含专利报复条款；要求保留版权/声明并标注修改 |
+| D1 | Repo visibility | **Public** (settled) ⇒ `doc/dissertation.md` stays in place and is `.gitignore`d (references stay valid, it is never committed) |
+| D2 | CI scope | **Full + nightly** (settled) |
+| D3 | Backlog carrier | **Double-write** (settled): GitHub Issues for humans + Hermes kanban for agents |
+| D4 | Agent permissions | **Direct pushes to `main` allowed** (settled) ⇒ compensating measures: run `./build.sh regress quick` locally before every push; nightly is the safety net (written into `AGENTS.md`) |
+| D5 | License | **Apache-2.0** (`LICENSE` already in place, official full text taken verbatim from apache.org): permissive like MIT, plus an **explicit patent grant** and a patent-retaliation clause; requires retaining copyright/notices and marking modifications |
 
 ---
 
-## 7. 环境约束：开发机不常开机（本方案据此调整）
+## 7. Environment constraint: the dev machine is often off (this plan is adjusted accordingly)
 
-**约束（维护者说明）**：这台 Windows 机器不是长期在线——上班期间不在此处，通常不开机。
-这否定了本方案早期的一个隐含前提：**凡是依赖本机常驻的东西都不能进关键路径**。
+**Constraint (stated by the maintainer)**: this Windows machine is not online long-term——it is not here during working hours and is usually not switched on.
+This invalidates an implicit premise of this plan's earlier version: **anything that depends on this machine being resident cannot go on the critical path**.
 
-### 7.1 不能作为基础设施的东西（本机侧）
-| 组件 | 为什么不成立 |
+### 7.1 Things that cannot serve as infrastructure (local side)
+| Component | Why it does not hold up |
 |---|---|
-| Hermes **cron** 定时任务 | 调度器由 gateway 托管，gateway 只在本机登录后运行；机器关机时到点的任务**直接错过**（不会补跑） |
-| Hermes **kanban 派发器** | 同样由 gateway 每分钟 tick；没有 gateway，卡片**永远停在 `ready`** |
-| 本机 **`regress full`** 长门（20 分钟） | 需要人真的开着机器；适合"在场时跑"，不适合当每夜的门 |
-| 本机 **钉版工具链的 0 告警断言** | 只有本机能跑（CI 是外来编译器，见 §G2）——这是**只能在本机做的**检查，因此保留为"在场时"的门 |
+| Hermes **cron** scheduled tasks | the scheduler is hosted by the gateway, and the gateway only runs after login on this machine; tasks coming due while the machine is off are **missed outright** (there is no catch-up run) |
+| Hermes **kanban dispatcher** | likewise ticked by the gateway once a minute; without the gateway, cards **sit in `ready` forever** |
+| local **`regress full`** long gate (20 minutes) | requires someone to actually keep the machine on; fine as a "run while present" gate, not as a nightly gate |
+| local **0-warning assertion on the pinned toolchain** | only the local machine can run it (CI is a foreign compiler, see §G2)——this is a check that **can only be done locally**, so it is kept as a "while present" gate |
 
-### 7.2 方案：**把周期性/验证性工作搬到云端，本机只做交互式开发**
+### 7.2 Plan: **move the periodic/verification work to the cloud, leaving the local machine for interactive development only**
 
-| 工作 | 归属 | 触发方式 | 机器关机时 |
+| Work | Owner | Trigger | While the machine is off |
 |---|---|---|---|
-| 每夜全量门（20k fuzz / 2000 cluster / 24 轮 soak / coverage / UBSan） | **GitHub Actions** | cron `17 18 * * *`（02:17 CST） | **照常运行** ✓ |
-| 每次 push/PR 的快门（build+unit+smoke+fast fuzz） | **GitHub Actions** | `push` / `pull_request` | 照常运行 ✓ |
-| 需要时立刻在云端跑全量门 | **GitHub Actions** | **推一个 tag（`v*`）**——走 SSH，**不需要任何 token** | 照常运行 ✓ |
-| 失败证据 | **GitHub 分支** | 失败时推 `ci-logs` / `ci-logs-nightly`（公开可 `git fetch`） | 照常可得 ✓ |
-| 失败→**待办条目** | **GitHub Issues** | 失败的工作流用自带的 `GITHUB_TOKEN` 自动开/更 issue（无需个人 token） | 照常可得 ✓ |
-| 交互式开发、定性的调查、需要钉版工具链的严格门 | **本机** | 人在场时由 Hermes 驱动 | 不运行（**不在关键路径**） |
+| nightly full gates (20k fuzz / 2000 cluster / 24-round soak / coverage / UBSan) | **GitHub Actions** | cron `17 18 * * *` (02:17 CST) | **runs as usual** ✓ |
+| per-push/PR fast gates (build+unit+smoke+fast fuzz) | **GitHub Actions** | `push` / `pull_request` | runs as usual ✓ |
+| run the full gates in the cloud on demand | **GitHub Actions** | **push a tag (`v*`)**——over SSH, **needs no token at all** | runs as usual ✓ |
+| failure evidence | **GitHub branches** | on failure, push `ci-logs` / `ci-logs-nightly` (publicly `git fetch`-able) | available as usual ✓ |
+| failure → **todo item** | **GitHub Issues** | the failing workflow uses its built-in `GITHUB_TOKEN` to open/update an issue automatically (no personal token needed) | available as usual ✓ |
+| interactive development, qualitative investigations, strict gates that need the pinned toolchain | **local machine** | driven by Hermes while someone is present | does not run (**not on the critical path**) |
 
-这样"机器不常开"只影响**开发速度**，不影响**验证与记录**：云端每天照跑，红灯自动变成 issue，证据自动落在公开分支。
+This way "the machine is often off" affects only **development speed**, not **verification and record-keeping**: the cloud runs every day, a red light automatically becomes an issue, and the evidence lands automatically on a public branch.
 
-### 7.3 本机侧的降级设置
-- 本机的每日门禁值守任务（cron）保留，但**降级为 best-effort**：改为 `monitor` 变更检测（只在云端运行状态**真的变化**时才唤起 agent，平时不消耗），并把频率提到每 2 小时——开机后不久就会自查一次，关机期间也只是错过，不积压。
-- **不要**把 gateway 当作关键路径：装了它（登录自启）能让"在场时"的自动化更顺，但所有关键结论都已经有云端来源。
+### 7.3 Degraded settings on the local side
+- The local daily gate watch task (cron) is kept, but **downgraded to best-effort**: switched to `monitor` change detection (the agent is woken only when the cloud run state **actually changes**, with no cost otherwise), and the frequency raised to every 2 hours——it self-checks shortly after boot, and while the machine is off it merely misses runs without piling up.
+- **Do not** treat the gateway as part of the critical path: installing it (autostart on login) makes "while present" automation smoother, but every key conclusion already has a cloud source.
 
-### 7.4 已知的云端限制（诚实记录）
-- **公开仓库的定时工作流在 60 天无仓库活动后会被自动停用**；任何 push 会重置该计时，也可在 Actions 页面手动重新启用。
-- 云端用的是外来工具链（当前 gcc 16.2.0）⇒ **0 告警契约只在钉版工具链上强制**（见 `doc/gaps-audit.md` G2）；云端用**外来工具链的新发现**（如 G1）作为信号，不作为判决。
-- Actions 日志与制品**匿名不可读**（403）⇒ 失败证据一律走公开分支 + issue 正文，这也是上面两条设计的原因。
+### 7.4 Known cloud limitations (recorded honestly)
+- **Scheduled workflows in a public repo are automatically disabled after 60 days of repo inactivity**; any push resets that timer, and they can also be re-enabled by hand on the Actions page.
+- The cloud uses a foreign toolchain (currently gcc 16.2.0) ⇒ **the 0-warning contract is enforced on the pinned toolchain only** (see `doc/gaps-audit.md` G2); new findings from the **foreign toolchain** in the cloud (such as G1) are signals, not verdicts.
+- Actions logs and artifacts are **not readable anonymously** (403) ⇒ failure evidence always goes through public branches + the issue body, which is also the reason for the two design choices above.
