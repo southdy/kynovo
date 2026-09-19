@@ -1,4 +1,4 @@
-# Obsolete issues: each reported a failure that is now fixed and verified in CI.
-# Blank lines and #-comments are ignored by the script.
+# Issues to close: one "number  reason" per line.  Blank lines and #-comments are ignored by
+# tools/ops/close-obsolete-issues.sh (tag ops/close-obsolete-issues).
 2  Obsolete: the principles check crashed on a bare "git" spawn; fixed in 2a1f513 (CI run#10 green).
 3  Obsolete: same cause as #2; fixed in 2a1f513.

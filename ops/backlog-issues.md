@@ -1,71 +1,108 @@
 # Backlog, posted as GitHub issues
 
-Posted by `tools/ops/post-backlog-as-issues.py` (tag `ops/post-backlog-as-issues`).  Titles are the
-dedupe key: re-posting skips issues that already exist, so this file can be edited and re-tagged.
-The card ids in each footer point back at the Hermes kanban board `kynovo`.
+This file is the single source of truth for the issue backlog on GitHub; the issues currently posted
+carry exactly these titles and bodies.  `tools/ops/post-backlog-as-issues.py` creates one issue per
+`## title` block and skips titles that already exist, so the file can be edited and re-posted safely
+(tag `ops/post-backlog-as-issues`).  The card ids in each footer point at the Hermes kanban board
+`kynovo`, where the same items are tracked for agent work - the board itself is internal and stays in
+Chinese; everything that appears on GitHub is English.
 
-## G1 定性：CI gcc 16.2 对 tests/raft_test.c 报 17 处 ready.* may be used uninitialized
+## Pin down G1: gcc 16.2 reports 17 `ready.*` may-be-uninitialized sites that 15.2.0 does not
 
-证据：ci-logs 分支的 build.log（gcc 16.2.0 报，钉版 15.2.0 一处不报）。两种可能：(a) -O2 优化器误报；(b) raft_advance(...,&out) 未写满 ready 所有字段——按 ready 必须完整上报的既定契约则属 raft.h 缺口。验收：同一处在 -O0/-O2 × 15.2.0/16.2.0 四组合下编译对比，给出结论并写进 doc/gaps-audit.md G1；若是 (b) 则修 raft.h。
+**Evidence**: the `ci-logs` branch, `ci-logs/build.log` - CI's gcc 16.2.0 reports 17 `'ready.*' may be used uninitialized` sites in `tests/raft_test.c`; the pinned 15.2.0 reports none.
 
-<sub>backlog card `t_18a8c63b` (Hermes kanban)</sub>
+Two very different causes, neither established yet:
 
-## C4 启动失败原因不可见
+* (a) an `-O2` optimizer false positive (the tests `memset` the struct before passing the pointer);
+* (b) `raft_advance(..., &out)` does not write every field of the ready bundle - which, under this project's "ready must be complete" contract, would be a real `raft.h` gap (any state the application needs must arrive through `raft_ready`, never through `raft_inspect`).
 
-kserver.h:4594-4600,4602,4642,4682 与 kdbsvr.c:300：cfg/WAL meta/分配/线程失败都只输出 failed to start server N。用户明确要求 fatal 必须打印原因。验收：每条失败路径打印具体原因，并写一个能失败的用例证明（例如故意占用端口或损坏 meta）。
+**Acceptance**: compile the same site under all four combinations (`-O0`/`-O2` x gcc 15.2.0/16.2.0), record the verdict in `doc/gaps-audit.md` (entry G1), and if it is (b), fix `raft.h` rather than the test.
 
-<sub>backlog card `t_469a3143` (Hermes kanban)</sub>
+<sub>labels: `backlog`, `raft`, `ci` &middot; backlog card `t_18a8c63b` (Hermes kanban)</sub>
 
-## C7 INFO/STATS 无界 sprintf 写 char text[2048]
+## C4: a startup failure never says why
 
-kserver.h:3254,3258,3260,3262：新增字段即越界。验收：改为有界写入（记录剩余空间或截断），并证明新增字段不会越界。
+**Evidence**: `code/kserver.h:4594-4600,4602,4642,4682` and the `kdbsvr` exit path print only `failed to start server N`; `code/kdbsvr.c:279` prints usage without a reason. Config parse, WAL metadata, allocation, thread creation and store open all collapse into the same sentence.
 
-<sub>backlog card `t_315a3c62` (Hermes kanban)</sub>
+**Why this is not theoretical**: on the first nightly run the server refused to start and that one line was the only evidence available; the actual cause (a harness with a hard-coded store path, invalid on CI) had to be reconstructed from elsewhere.
 
-## C11 cemon_ingress_close 无界自旋；cemon_destroy 排空 2000ms 上限后可能泄漏 socket
+**Acceptance**: every startup failure path prints its specific cause, and a minimal failing case demonstrates it.
 
-code/cemon.h:1047-1066, 2900-2910。验收：自旋有界（有退出条件与可见告警），destroy 后不遗留 hold 的 socket；用可复现的慢对端场景证明。
+<sub>labels: `backlog`, `observability`, `ci` &middot; backlog card `t_469a3143` (Hermes kanban)</sub>
 
-<sub>backlog card `t_f9bf6d96` (Hermes kanban)</sub>
+## C7: unbounded `sprintf` into `char text[2048]` (INFO/STATS)
 
-## C12 UDP 软错误静默吞掉；UDP 兜底分支用错缓冲
+**Evidence**: `code/kserver.h:3254,3258,3260,3262` build the INFO/STATS text with unbounded `sprintf` into a fixed `char text[2048]`; adding one more field overflows it.
 
-code/cemon.h:2189-2194, 2207-2213（应读 udp_recv->buf 而非 recv->buf）。验收：软错误有计数或日志，缓冲取对；给出可触发的证据，或明确该分支未被使用并记录理由。
+**Acceptance**: bounded writes (track the remaining space, or truncate explicitly), plus a demonstration that adding a field cannot overflow.
 
-<sub>backlog card `t_ed19113c` (Hermes kanban)</sub>
+<sub>labels: `backlog`, `observability` &middot; backlog card `t_315a3c62` (Hermes kanban)</sub>
 
-## C13 循环级致命错误只有 -1，无取回错误原因的接口
+## C11: `cemon_ingress_close` spins without a bound; `cemon_destroy` may leak a held socket
 
-code/cemon.h:3170, 3269-3275。验收：提供取回最后错误（含 Winsock 码或 errno）的接口并在 fatal 路径打印；与 C4 的 fatal 必须可见一致。
+**Evidence**: `code/cemon.h:1047-1066` (`cemon_ingress_close` spins with no exit condition); `code/cemon.h:2900-2910` (`cemon_destroy` caps its drain at 2000 ms and can leave a socket it still holds).
 
-<sub>backlog card `t_933e252c` (Hermes kanban)</sub>
+**Acceptance**: the spin has an exit condition and a visible warning; destroy leaves no held socket; both demonstrated with a reproducible slow-peer scenario.
 
-## 非 Windows 分支从未编译（含 C9/C10 的 Unix 语义）
+<sub>labels: `backlog`, `transport` &middot; backlog card `t_f9bf6d96` (Hermes kanban)</sub>
 
-C9: code/cemon.h:2452-2461,3432-3435（一次武装可投递多次 CEMON_DATA；callback_depth==0 同步重入）；C10: 2455,2395,2342（Unix recv/accept/flush 不消耗派发预算）。这些分支在本机从未被编译过。验收：先用最小桩让 Unix 分支能被编译（或明确记录无法验证的理由），再逐条处理 C9/C10；不得在没有编译证据时说已修。
+## C12: UDP soft errors are swallowed silently; the UDP fallback reads the wrong buffer
 
-<sub>backlog card `t_082e24b2` (Hermes kanban)</sub>
+**Evidence**: `code/cemon.h:2189-2194` discards UDP soft errors without any counter; `code/cemon.h:2207-2213` reads `recv->buf` where `udp_recv->buf` is meant.
 
-## R8 被拒绝的 AE 携带尚未持久化的新任期对外传播
+**Acceptance**: soft errors are counted or logged, the correct buffer is used, and the fix comes with triggerable evidence - or the branch is documented as unused, with the reason, instead of being left ambiguous.
 
-code/raft.h:1277-1278 → 3660-3671：投票/AE 成功路径都有落盘闸门，此处没有。验收：先对齐 doc/dissertation.md 的对应段落并说明依据，再决定改法；给出两处独立证据（单元 + 集群 fuzz）。
+<sub>labels: `backlog`, `transport` &middot; backlog card `t_ed19113c` (Hermes kanban)</sub>
 
-<sub>backlog card `t_07585855` (Hermes kanban)</sub>
+## C13: loop-level fatal errors report only -1; the cause cannot be retrieved
 
-## C6 层边界：应用层直接读 raft->config_new/config_joint/config_learners 做策略判定
+**Evidence**: `code/cemon.h:3170,3269-3275` - the loop returns `-1` on fatal errors and offers no way to learn what happened.
 
-code/kserver.h:4411-4413。属机制层/策略层边界问题（边界在哪层责任就在哪层）。验收：改成由 raft.h 上报所需信息（ready 或查询接口），应用层不再直接读内部字段。
+**Acceptance**: an accessor for the last error (Winsock code or errno) exists and the fatal paths print it, consistent with C4's rule that a fatal must name its cause.
 
-<sub>backlog card `t_972b67e8` (Hermes kanban)</sub>
+<sub>labels: `backlog`, `transport`, `observability` &middot; backlog card `t_933e252c` (Hermes kanban)</sub>
 
-## C3 WAL 段首记录的 generation 连续性不检查
+## The non-Windows branches have never been compiled (including the Unix semantics behind C9/C10)
 
-code/kserver.h:1465 vs 1478（prev_gen=0 每段重置）。验收：定义并检查跨段 generation 连续性（或在文档里论证为何不需要），给出损坏段的取证方式。
+**Evidence**: the Unix `#else` branches in `code/cemon.h` have never been compiled in this project. Two known problems live there:
 
-<sub>backlog card `t_39285829` (Hermes kanban)</sub>
+* **C9** - `code/cemon.h:2452-2461,3432-3435`: one arm can deliver `CEMON_DATA` more than once, contrary to the contract in the header; with `callback_depth==0` the callback is re-entered synchronously.
+* **C10** - `code/cemon.h:2455,2395,2342`: the Unix recv/accept/flush loop does not consume a dispatch budget, so a single busy peer can monopolize the owner thread.
 
-## lincheck 未进入任何构建目标
+**Acceptance**: first make the Unix branch compilable (a minimal harness, or a documented reason why it cannot be verified in this environment), then address C9/C10. No "fixed" claim without compile evidence.
 
-tests/lincheck.py 与 tests/lincheck.h 存在但 build.sh 无目标，线性一致性检查实际上从未在回归中运行。验收：加构建或运行目标并纳入合适的门（或明确记录为何不纳入），跑出一次真实判定行。
+<sub>labels: `backlog`, `platform` &middot; backlog card `t_082e24b2` (Hermes kanban)</sub>
 
-<sub>backlog card `t_9f03e69c` (Hermes kanban)</sub>
+## R8: a rejected AppendEntries can propagate a not-yet-persisted term
+
+**Evidence**: `code/raft.h:1277-1278` -> `code/raft.h:3660-3671`. Rejecting an AppendEntries can expose a new term before it is durable; the vote path and the successful-AE path both have a durable gate, this one does not.
+
+**Acceptance**: align the change with the corresponding paragraph of the semantic baseline (Ongaro's dissertation, referenced as `doc/dissertation.md`) and say which paragraph it follows; then produce two independent lines of evidence (unit suite + cluster fuzz).
+
+<sub>labels: `backlog`, `raft` &middot; backlog card `t_07585855` (Hermes kanban)</sub>
+
+## C6: layering - the application layer reads raft internals for policy decisions
+
+**Evidence**: `code/kserver.h:4546-4548` reads `raft->config_joint`, `raft->config_new.ids` and `raft->config_learners.ids` to decide policy.
+
+**Rule**: mechanism versus policy - the boundary decides who owns the responsibility (`treap.h` established this for the store; `raft.h` owns the same distinction for consensus).
+
+**Acceptance**: `raft.h` reports what the application needs (through the ready bundle or a query interface) and the application stops reading internal fields. `tools/check-principles.py` budgets this at 3 sites; the budget must come down, never up.
+
+<sub>labels: `backlog`, `raft` &middot; backlog card `t_972b67e8` (Hermes kanban)</sub>
+
+## C3: WAL segment-first-record generation continuity is unchecked
+
+**Evidence**: `code/kserver.h:1465` vs `1478` - `prev_gen=0` is reset for every segment, so continuity of the generation across segments is never verified and a mismatched segment is not detected.
+
+**Acceptance**: define and enforce cross-segment generation continuity (or argue in the documentation why it is unnecessary), and state how a corrupt segment is detected and reported.
+
+<sub>labels: `backlog`, `storage` &middot; backlog card `t_39285829` (Hermes kanban)</sub>
+
+## `lincheck` is in no build target (the linearizability check never runs)
+
+**Evidence**: `tests/lincheck.py` and `tests/lincheck.h` exist, but no `build.sh` target references them, so the linearizability check has never run as part of a regression.
+
+**Acceptance**: add a build/run target and wire it into the appropriate gate in `doc/testing.md` (or record why it is deliberately excluded), and produce one real verdict line from it.
+
+<sub>labels: `backlog`, `tests` &middot; backlog card `t_9f03e69c` (Hermes kanban)</sub>
