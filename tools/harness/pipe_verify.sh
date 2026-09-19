@@ -22,7 +22,7 @@ K=${1:-128}
 ./build/kdbctl.exe 127.0.0.1:$PORT PIPE $K $N SET pipeval_ payload 2>&1 | grep -E "^pipe|^error|^warning"
 ./build/kdbctl.exe 127.0.0.1:$PORT PIPE $K $N GET pipeval_ 2>&1 | grep -E "^pipe|^error|^warning"
 ./build/kdbctl.exe 127.0.0.1:$PORT PIPE $K 8 GET zzz_never_ 2>&1 | grep -E "^pipe|^error|^warning"
-echo "=== 吞吐/延时前沿（真实客户端）==="
+echo "=== throughput/latency frontier through the real client ==="
 for k in 32 64 128 512; do
   ./build/kdbctl.exe 127.0.0.1:$PORT PIPE $k $N SET sweep${k}_ payload 2>&1 | grep -E "^pipe mode" | sed "s/^/  /"
 done
