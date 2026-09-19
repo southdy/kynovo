@@ -28,7 +28,7 @@ pipe mode=SET k=1   n=4000 wall_us=60003845 ops_per_s=58     ok=3509 not_found=0
 pipe mode=SET k=32  n=4000 wall_us=1225997  ops_per_s=3263   ok=4000 not_found=0 other=0
 pipe mode=SET k=64  n=4000 wall_us=392042   ops_per_s=10205  ok=4000 not_found=0 other=0
 pipe mode=SET k=128 n=4000 wall_us=146266   ops_per_s=27354  ok=4000 not_found=0 other=0
-pipe mode=SET k=256 n=4000 wall_per_s=103054 ops_per_s=38824 ok=4000 not_found=0 other=0
+pipe mode=SET k=256 n=4000 wall_us=103054 ops_per_s=38824 ok=4000 not_found=0 other=0
 pipe mode=SET k=512 n=4000 wall_us=76299    ops_per_s=52438  ok=4000 not_found=0 other=0
 pipe mode=GET k=128 n=4000 wall_us=43661    ops_per_s=91637  ok=4000 not_found=0 other=0
 pipe mode=GET k=128 n=8    wall_us=291      ops_per_s=30927  ok=0    not_found=8 other=0   <- control key
