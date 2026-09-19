@@ -25,7 +25,9 @@
 #include <winsock2.h>
 #endif
 #include <pthread.h>
+#if defined(_WIN32)
 #include <windows.h>
+#endif
 #include "test.h"
 
 /* ---- page-poisoning allocator (must be defined before cemon.h) ---- */

@@ -53,7 +53,9 @@ typedef unsigned long long k_u64;
 #include <stdlib.h>
 #include <string.h>
 #ifdef _WIN32
+#if defined(_WIN32)
 #include <windows.h>
+#endif
 #endif
 #define K_DBG_QUARANTINE 8192
 /* THE REGISTRIES BELOW ARE PROCESS-WIDE AND THE PROGRAM UNDER TEST IS MULTI-THREADED.  Without a

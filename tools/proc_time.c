@@ -5,7 +5,9 @@
      gcc -std=c89 -O2 -Wall -o build/proc_time.exe tools/proc_time.c
 */
 #define _WIN32_WINNT 0x0501
+#if defined(_WIN32)
 #include <windows.h>
+#endif
 #include <stdio.h>
 #include <stdlib.h>
 
