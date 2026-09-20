@@ -3097,13 +3097,16 @@ static int k_server_build_addr_command(k_buf *cmd,const k_server *server,const i
   }
   return cmd->err?-1:0;
 }
+/* Cookie for the internal ADDR submit below.  At file scope so the result handler can recognise it by
+   identity: it has no k_request, and without this the handler logged an "unknown request cookie" warning
+   for every membership change - noise that also hid whether the update was actually applied. */
+static int addr_cookie_stub;
 /* Append a replicated ADDR entry to the leader's log.  It carries a full
    member-address map, needs no client reply, so a fixed non-NULL cookie is
    used and the COMMITTED result is dropped by the result handler.  It bypasses
    the FCALL gate on purpose: it mutates the address book (routing state), not
    the treap, so it never conflicts with a swap-root write-set. */
 static int k_server_submit_addr(k_server *server,const int *ids,int id_count){
-  static int addr_cookie_stub;
   raft_client_message message;
   raft_command command;
   k_buf cmd;
@@ -3725,6 +3728,14 @@ static int k_server_handle_client_result(k_server *server,const raft_client_resu
   unsigned int key_len,value_len;
   char text[64];
   int rc,len;
+  if(result->cookie==(const void *)&addr_cookie_stub){
+    /* The internal address-book submit has no k_request, so it is not a stray cookie - but its result WAS
+       being dropped with an "unknown cookie" warning, successful or not, which made a refused update
+       indistinguishable from an applied one.  Report the refusal only; a commit stays quiet. */
+    if(result->status!=RAFT_CLIENT_COMMITTED)
+      printf("warning: address-book update was not applied (status=%d)\n",(int)result->status);
+    return 0;
+  }
   request=k_request_find(server,result->cookie);
   if(!request){
     printf("warning: result (status=%d) for an unknown request cookie %p dropped\n",(int)result->status,result->cookie);
@@ -4934,7 +4945,13 @@ static int k_server_open(k_server *server){
   server->flush_window_max_ms=server->cfg.flush_timeout_ms;
   server->wal_inflight_max=(k_u32)K_WAL_INFLIGHT_MAX;   /* the cap; the driver narrows it with a budget */
   restore_rc=k_state_load(server->base,&restore,&server->wal_meta,&wal_exists);
-  if(restore_rc<0){ k_open_fail("state restore","unreadable store or corrupt state",server->base); return -1; }
+  if(restore_rc<0){
+    /* The load can fail halfway with entries/blocks already built; the successful paths free it, so the
+       failure path must too (a supervisor retrying a corrupt store would leak the whole rebuilt log). */
+    k_restore_free(&restore);
+    k_open_fail("state restore","unreadable store or corrupt state",server->base);
+    return -1;
+  }
   if(!wal_exists){
     if(k_wal_meta_init(server->base)!=0||k_wal_meta_load(server->base,&server->wal_meta)!=1){
       k_open_fail("WAL metadata","cannot initialise or reload the WAL metadata",server->base);

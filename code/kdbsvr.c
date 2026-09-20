@@ -277,7 +277,10 @@ static int k_server_run(k_server *server){
        batch already looks older than flush_timeout_ms and is flushed at once
        (one write per batch).  Advance the Raft clock first (it really did pass
        in wall time), then start the batch's own age. */
-    k_server_flush_if_ready(server,server->writes_arrived>arrived_before);
+    /* The window path prints a reason and marks the server fatal; this path used to discard the result,
+       so "why did this batch not commit" was unanswerable from the log and from STATS. */
+    if(k_server_flush_if_ready(server,server->writes_arrived>arrived_before)!=0)
+      fprintf(stderr,"warning: flush failed on the drain path (the tick path prints the cause)\n");
     /* Wake handoff: the worker stamped wal_post_us when it posted a finished bundle; the round that
        just ended is the round that could have consumed it, so the gap is how long the loop took to be
        told.  Real clock on purpose - this is a diagnostic in the driver, not a core time input. */
@@ -377,7 +380,12 @@ static int k_run_server_args(int argc,char **argv){
     return -1;
   }
   node_index=k_cluster_index(&cluster,id);
-  if(node_index<0||cluster.nodes[node_index].client_port!=(unsigned short)client_port||cluster.nodes[node_index].peer_port!=(unsigned short)peer_port) return -1;
+  if(node_index<0||cluster.nodes[node_index].client_port!=(unsigned short)client_port||cluster.nodes[node_index].peer_port!=(unsigned short)peer_port){
+    /* It used to return silently and the caller said "see the fatal line above" - with no line above. */
+    printf("kdbsvr: fatal: node %d in cluster spec '%s' does not match the argv ports (%u/%u given)\n",
+           id,argv[6],(unsigned)client_port,(unsigned)peer_port);
+    return -1;
+  }
   k_server_init(&server,id,(unsigned short)client_port,(unsigned short)peer_port,argv[5],&cluster);
   /* --latency-budget-ms <N>: opt-in cap on how long a request may queue behind durable work. */
   { int ai; int budget=0;
@@ -394,7 +402,10 @@ static int k_run_server_args(int argc,char **argv){
   }
   /* optional --auto-replace <id@host:client_port:peer_port> [--auto-replace-threshold <N>] */
   if(argc>=9&&strcmp(argv[7],"--auto-replace")==0){
-    if(k_cluster_parse(&replacement,argv[8])!=0||replacement.count!=1) return -1;
+    if(k_cluster_parse(&replacement,argv[8])!=0||replacement.count!=1){
+      printf("kdbsvr: fatal: --auto-replace needs exactly one id@host:client-port:peer-port\n");
+      return -1;
+    }
     server.auto_replace=1;
     server.auto_replace_new_id=replacement.nodes[0].id;
     strcpy(server.auto_replace_new_host,replacement.nodes[0].host);
@@ -443,7 +454,11 @@ static int k_run_init_args(int argc,char **argv){
   k_cfg cfg;
   int value;   /* k_parse_uint writes an int; using unsigned int here tripped -Wpointer-sign */
   int i;
-  if(argc<3||k_cfg_reset(argv[2])!=0||k_wal_meta_init(argv[2])!=0) return -1;
+  if(argc<3||k_cfg_reset(argv[2])!=0||k_wal_meta_init(argv[2])!=0){
+    printf("kdbsvr: fatal: cannot create/initialise the store at '%s'%s\n",argc>2?argv[2]:"(no base uri given)",
+           argc<3?" (usage: kdbsvr init <base-uri> [options])":"");
+    return -1;
+  }
   if(argc==3){
     printf("initialized configuration for %s\n",argv[2]);
     return 0;
@@ -452,7 +467,10 @@ static int k_run_init_args(int argc,char **argv){
      latency, so they are settable where the store is created instead of only being compile-time
      defaults.  The server prints them back at startup ([cfg] ...), which is the read-back that proves
      what was actually stored.  Unknown options fail loudly rather than being ignored. */
-  if(k_cfg_load(argv[2],&cfg)!=0) return -1;
+  if(k_cfg_load(argv[2],&cfg)!=0){
+    printf("kdbsvr: fatal: cannot load the configuration at '%s' (is the store initialised?)\n",argv[2]);
+    return -1;
+  }
   for(i=3;i<argc;i++){
     if(i+1>=argc){
       printf("kdbsvr: fatal: option '%s' needs a value\n",argv[i]);

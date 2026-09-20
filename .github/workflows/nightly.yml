@@ -68,7 +68,9 @@ jobs:
             echo "runner gcc: $(gcc --version 2>/dev/null | head -1)"
             echo
             echo "--- gate verdict lines ---"
-            grep -h 'GATE\|' nightly-logs/*.log 2>/dev/null | tail -40 || true
+            # 'GATE\|' is an alternation with an EMPTY branch: it matched every line, so the summary was
+            # the whole log.  Anchor it.
+            grep -h '^GATE|' nightly-logs/*.log 2>/dev/null | tail -40 || true
           } > nightly-logs/SUMMARY.txt
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -92,7 +94,18 @@ jobs:
             printf 'Gate verdict lines:\n\n```\n'
             grep -h '^GATE|' regress-full.log 2>/dev/null | tail -30 || true
             grep -h '^REGRESS|' regress-full.log 2>/dev/null | tail -1 || true
-            printf '```\n\nDiagnostics branch: `ci-logs-nightly`.\n'
+            printf '```\n'
+            # The gate is not the only step: a red coverage or sanitize step used to produce an issue body
+            # whose every line was green, which is exactly what made #19 expensive to diagnose.
+            for f in sanitize.log coverage.log; do
+              if [ -f "$f" ]; then
+                printf '\nLast lines of `%s`:\n\n```\n' "$f"
+                grep -aE 'FAIL|fatal|error|SIGILL|done:|consistent|linearizability|runtime error' "$f" | tail -20 || true
+                tail -5 "$f" || true
+                printf '```\n'
+              fi
+            done
+            printf '\nDiagnostics branch: `ci-logs-nightly` (all step logs, not just the gate).\n'
           } > issue-body.md
           existing="$(gh issue list --state open --search "$title in:title" --json number --jq '.[0].number' 2>/dev/null || true)"
           if [ -n "$existing" ]; then gh issue comment "$existing" --body-file issue-body.md; else gh issue create --title "$title" --body-file issue-body.md; fi

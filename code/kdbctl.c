@@ -489,13 +489,13 @@ static int k_cli_pipeline_run(k_client_app *app,cemon *loop,const char *line){
       if(k_client_inflight_count(app)<=before) break;   /* refused (not connected / busy): retry next round */
       queued++;
     }
-    if(cemon_poll(loop,10)!=0) break;
-    if(k_monotonic_us(&app->now_us)!=0) break;
+    if(cemon_poll(loop,10)!=0){ g_pipe_end="interrupted (event loop failed)"; break; }
+    if(k_monotonic_us(&app->now_us)!=0){ g_pipe_end="interrupted (clock failed)"; break; }
     k_client_poll(app);
-    if(k_monotonic_us(&now)!=0) break;
+    if(k_monotonic_us(&now)!=0){ g_pipe_end="interrupted (clock failed)"; break; }
     if(t0&&now-t0>60000000u){ printf("error: PIPE exceeded 60s\n"); g_pipe_end="cap60s"; break; }
     if(queued>=count&&k_client_inflight_count(app)==0) break;
-    if(app->stopping) break;
+    if(app->stopping){ g_pipe_end="interrupted (server stopping)"; break; }
     /* Stall detector: if neither the queued count nor the completion count moved for 5s, the run
        is wedged (connection closed under us, no leader, ...).  Report it instead of waiting out
        the cap, so a sweep of depths cannot silently eat its whole time budget. */
@@ -730,6 +730,14 @@ int main(int argc,char **argv){
     memcpy(cmdline+used,argv[i],n);
     used+=n;
     cmdline[used]='\0';
+  }
+  if(i<argc){
+    /* Refuse rather than execute a SHORTER command: dropping trailing arguments can turn
+       `CAS key new old` into SETNX, or an `RGET ... desc` into an ascending scan - a different command
+       that still exits 0.  The output side of this program already refuses to truncate silently. */
+    printf("kdbctl: error: command line too long (%d arguments; limit %u bytes) - nothing was sent\n",
+           argc-2,(unsigned)sizeof(cmdline));
+    return EXIT_FAILURE;
   }
   rc=k_client_run(argv[1],argc>2?cmdline:0);
   return rc==0?EXIT_SUCCESS:EXIT_FAILURE;
