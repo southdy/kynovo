@@ -721,7 +721,7 @@ static int k_selftest_bootstrap_low(void){
   k_server servers[3];
   runtime_ctx *runtime;
   k_response_data response;
-  unsigned short base_port=(unsigned short)(15000u+(k_process_id()%5000u));
+  unsigned short base_port=(unsigned short)(10000u+(k_process_id()%2000u));
   int leader_index,rc=-1;
   k_embedded_cluster(&cluster,base_port,3);   /* ids {3,4,5} */
   k_embedded_bases(servers,&cluster,"selftest-low",3);
@@ -756,7 +756,7 @@ static int k_selftest_member_failover(void){
   runtime_ctx *runtime;
   runtime_ctx *rt4;
   k_response_data response;
-  unsigned short base_port=(unsigned short)(21000u+(k_process_id()%4000u));
+  unsigned short base_port=(unsigned short)(13000u+(k_process_id()%2000u));
   int leader_index,rc=-1;
   k_u64 deadline;
   int ids4[1];
@@ -841,6 +841,10 @@ static int k_selftest_topology_has_voter(const void *body,k_u32 size,int id){
    liveness (missed_rounds) and replaces it add-before-remove with a bootstrap
    node 4.  Verifies the replacement joins the voter set (serves the durable key)
    AND that the failed voter is removed (the REMOVE half of add-before-remove). */
+/* Ports stay BELOW 32768 on purpose: that is where Linux starts its ephemeral range, so a scenario
+   whose base+offset reaches into it can lose a bind to an outgoing connection - intermittently, and
+   only on Linux (Windows starts its dynamic range at 49152).  The windows below are disjoint and all
+   end well under 32768. */
 static int k_selftest_auto_replace(void){
   k_cluster cluster;
   k_cluster cluster4;
@@ -849,7 +853,7 @@ static int k_selftest_auto_replace(void){
   runtime_ctx *runtime;
   runtime_ctx *rt4;
   k_response_data response;
-  unsigned short base_port=(unsigned short)(26000u+(k_process_id()%3000u));
+  unsigned short base_port=(unsigned short)(16000u+(k_process_id()%2000u));
   int leader_index,victim,rc=-1,i,got=0,removed=0;
   k_u64 deadline;
   char base4[K_URI_MAX];
@@ -934,7 +938,7 @@ static int k_selftest_remove_readd(void){
   runtime_ctx *runtime;
   runtime_ctx *rt4;
   k_response_data response;
-  unsigned short base_port=(unsigned short)(30000u+(k_process_id()%3000u));
+  unsigned short base_port=(unsigned short)(19000u+(k_process_id()%2000u));
   int leader_index,victim,rc=-1,j,dialing,ok;
   k_conn *pc;
   k_u64 deadline;
@@ -1045,7 +1049,7 @@ static int k_selftest_remove_leader_readd(void){
   runtime_ctx *runtime;
   runtime_ctx *rt4;
   k_response_data response;
-  unsigned short base_port=(unsigned short)(32000u+(k_process_id()%3000u));
+  unsigned short base_port=(unsigned short)(22000u+(k_process_id()%2000u));
   int leader_index,new_leader,rc=-1;
   k_u64 deadline;
   int ids1[1],ids4[1];
@@ -1217,7 +1221,7 @@ static int k_run_selftest(void){
   k_buf args;
   const char *marker;
   k_i64 snapshot_index;
-  unsigned short base_port=(unsigned short)(35000u+(k_process_id()%10000u));
+  unsigned short base_port=(unsigned short)(25000u+(k_process_id()%2000u));
   int leader_index,i,snapshot_seen,rc=-1;
   k_u64 deadline;
   k_u8 *scan_cursor;

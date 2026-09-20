@@ -1015,7 +1015,9 @@ Still open, with the evidence:
   different moduli), so a scenario-to-scenario port collision was checked and REFUTED.  What fits the
   evidence now: the two highest bases can reach 34999 and 44999, i.e. past 32768 where Linux starts its
   ephemeral range, so a bind can lose to an outgoing connection - intermittently, and not on Windows
-  (dynamic range starts at 49152).  All scenario bases have been moved into disjoint windows below 32768;
-  this fix is NOT yet verified, because it can only be observed on Linux - the next run of that job is the
-  test.  The auto-replace lines this session added are what made the failure visible at all: they show the
+  (dynamic range starts at 49152).  All scenario bases now live in disjoint windows below 32768 (the move
+  landed in a second commit: the first attempt's helper script died on a bad regex callback BEFORE writing
+  the file while the commit still went through, so for one commit this paragraph claimed a change that was
+  not there - recorded rather than quietly rewritten).  The fix is NOT yet verified: it can only be
+  observed on Linux, and the next run of that job is the test.  The auto-replace lines this session added are what made the failure visible at all: they show the
   whole add -> remove -> done sequence immediately before it.
