@@ -723,10 +723,29 @@ static int run_one_cluster(k_u64 seed){
       if(snap_ok&&all_hash_same()) break;
     }
     if(!snap_ok){
+      int a,b;
+      /* Peer-link map: whether each ordered pair still has a live link.  A restarted node whose peers
+         dropped their side without re-dialling starves exactly like this, and that is a harness question;
+         links present and the node still at commit 2 would be a product one. */
+      for(a=0;a<nnode;a++){
+        for(b=0;b<nnode;b++){
+          int vi;
+          if(a==b) continue;
+          vi=k_cluster_index(&nodes[a].cluster,nodes[b].id);
+          fprintf(stderr,"  link %d->%d %s\n",nodes[a].id,nodes[b].id,
+            (vi>=0&&nodes[a].peer_conns[vi])?"up":"DOWN");
+        }
+      }
       fprintf(stderr,"FAIL snapshot never fired (seed %" K_U64_FMT " ent=%u)\n",
         (k_u64)seed,(unsigned)nodes[leader].cfg.snapshot_entries);
-      for(i=0;i<nnode;i++) fprintf(stderr,"  n%d snap_idx%" K_I64_FMT " la%" K_I64_FMT "\n",
-        nodes[i].id,(k_i64)nodes[i].snapshot.index,(k_i64)nodes[i].last_applied);
+      /* Print the same fields as the no-leader dump above, plus leader/fatal/stopped: without them a
+         restarting node that never catches up is indistinguishable from one that died again, and that
+         distinction decides whether this is a harness/ injector matter or a product finding. */
+      for(i=0;i<nnode;i++) fprintf(stderr,"  n%d leader=%d fatal=%d stopped=%d snap_idx%" K_I64_FMT " la%" K_I64_FMT " raft{state=%d commit=%" K_I64_FMT "}\n",
+        nodes[i].id,nodes[i].is_leader,nodes[i].fatal,nodes[i].stopped,
+        (k_i64)nodes[i].snapshot.index,(k_i64)nodes[i].last_applied,
+        nodes[i].raft?nodes[i].raft->state:-1,
+        (k_i64)(nodes[i].raft?nodes[i].raft->commit_index:-1));
       release_cluster(); return 0;
     }
     if(!all_hash_same()){
