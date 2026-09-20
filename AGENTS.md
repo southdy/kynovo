@@ -25,6 +25,12 @@ Read this first. It is deliberately short; the details live in `doc/`.
 ## Discipline (each rule here cost real time to learn)
 - **Confirm the build succeeded before interpreting any run** - three separate wrong conclusions came
   from reading results of a stale binary after a failed compile.
+- **A build that fails with `Permission denied` on a build output is a lingering process, not a code
+  error** - kill it (`pkill -x kdbsvr.exe`) and `rm -f build/kdbsvr.exe` first.  Twice now the gate line
+  read `GATE|build|FAIL|... errors=1` for that reason alone.
+- **Never commit or push on a red gate line**, whatever the apparent cause: a locked output means the
+  compiler never re-ran, so "it is only the environment" is a claim that still has to be proven by a green
+  rerun before the push, not after.
 - **Same-build A/B.** Never compare across builds: moved prints read as different paths.
 - **Low-probability defects**: a single clean run is not evidence. Use tens of samples or a long gate,
   and after a fix re-run the exact gate that used to reproduce.
