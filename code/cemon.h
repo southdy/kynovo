@@ -323,12 +323,6 @@ CEMON_DEF int cemon_inspect(cemon *loop,cemon_socket *sock,cemon_stats *out);
 #include <windows.h>
 #include <ws2tcpip.h>
 #include <mswsock.h>
-#if defined(_MSC_VER)&&_MSC_VER<=1200
-/* The Windows XP-era Platform SDK does not put SwitchToThread in scope here, so VC98 assumed an
-   int-returning cdecl extern at the call site below and the linker asked for _SwitchToThread while
-   kernel32's import library only exports the WINAPI form _SwitchToThread@0.  Declare it exactly. */
-WINBASEAPI BOOL WINAPI SwitchToThread(VOID);
-#endif
 #else
 #ifndef _GNU_SOURCE
 #define _GNU_SOURCE
