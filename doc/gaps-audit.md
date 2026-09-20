@@ -990,3 +990,32 @@ through kclient helpers).  Those four entries carry the reason inline.
 Proved able to fail both ways, with byte-exact restores and an empty `git diff` for the injected files
 afterwards: adding `#define K_REQ_ZZTEST 22u` to kproto.h gives `PRINCIPLES|FAIL|rules=18 fail=1`, and
 listing `K_REQ_SET` as expected in `kclient.h` does the same.
+
+### (4b) What the first honest Linux runs actually found
+
+The Linux job was added to catch "a branch nobody compiles", and it did - but every finding so far has been
+in the GATE, not in the engine.  All nine test layers pass on Linux (raft 221/221, kserver 33/33, kclient
+16/16, cemon 5/5, vfs fault 4/4, selftest, cli_smoke, principles rules=18).
+
+Found and fixed:
+- `GATE|build|FAIL ... errors=19` with `rc=0`.  The 19 are real: `tools/proc_time.c` drives the Win32
+  process API and has no POSIX branch, so Linux reported 19 errors for it - and `build_tools` returned the
+  status of its LAST compile, so the failure never reached rc.  The tool is now built only on Windows (it
+  is a measurement tool, not something to port) and every line of `build_tools` propagates its own status.
+- The `errs` counter used to match the WORD "error:" anywhere, which is what made a green Linux build look
+  red.  (My first theory was SIGPIPE noise from `grep: write error: Broken pipe`; reading the artifact
+  refuted it - the errors were real compiler errors.  Retracted.)
+- Both CI gate steps read `./build.sh regress <mode> 2>&1 | tee regress.log`, so the step's status was
+  tee's: a RED gate reported a GREEN step and no failure log was published.  Both now set -o pipefail.
+
+Still open, with the evidence:
+- The Linux `selftest` fails intermittently at `selftest: remove-leader node start failed` (`server4->
+  started != 1` after the store files were already created), and then the cleanup layer correctly reports
+  2 leftover files.  The scenario bases are all distinct (15000/21000/26000/30000/32000/35000 with
+  different moduli), so a scenario-to-scenario port collision was checked and REFUTED.  What fits the
+  evidence now: the two highest bases can reach 34999 and 44999, i.e. past 32768 where Linux starts its
+  ephemeral range, so a bind can lose to an outgoing connection - intermittently, and not on Windows
+  (dynamic range starts at 49152).  All scenario bases have been moved into disjoint windows below 32768;
+  this fix is NOT yet verified, because it can only be observed on Linux - the next run of that job is the
+  test.  The auto-replace lines this session added are what made the failure visible at all: they show the
+  whole add -> remove -> done sequence immediately before it.

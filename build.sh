@@ -168,10 +168,18 @@ build_cemon_stress() {
 # in NO aggregation target, so they could rot silently - exactly the failure the benchmark comment above
 # says was fixed for benchmarks.  They are cheap to build and now live inside the same warning gate.
 build_tools() {
-    $CC -std=c89 -O2 -Wall -Wextra -Wdeclaration-after-statement -Wno-unused-function tools/proc_time.c -o "$BUILD_DIR/proc_time.exe" $LIB_WS
-    $CC -std=c89 -O2 -Wall -Wextra -Wdeclaration-after-statement -Wno-unused-function tools/treap_stress.c -o "$BUILD_DIR/treap_stress.exe"
-    $CC -std=c89 -O2 -Wall -Wextra -Wdeclaration-after-statement -Wno-unused-function tools/cemon_tcp_probe.c -o "$BUILD_DIR/cemon_tcp_probe.exe" $LIB_WS
-    $CC -std=c89 -O2 -Wall -Wextra -Wdeclaration-after-statement -Wno-unused-function tools/harness/wake_probe.c -o "$BUILD_DIR/wake_probe.exe" $LIB_WS
+    # Every line propagates its own status: without `|| return 1` the function returned the status of its
+    # LAST compile, so on Linux a failure in an earlier line showed 19 compiler errors in the log and
+    # still let the build layer pass with rc=0 (found by reading the first Linux verdict line).
+    if [ "$PLATFORM" = windows ]; then
+        # proc_time.c drives the Win32 process API directly and has no POSIX branch: on Linux the compiler
+        # reports 19 errors for it.  That is not a missing port in a measurement tool, so it is simply not
+        # built where the API does not exist.
+        $CC -std=c89 -O2 -Wall -Wextra -Wdeclaration-after-statement -Wno-unused-function tools/proc_time.c -o "$BUILD_DIR/proc_time.exe" $LIB_WS || return 1
+    fi
+    $CC -std=c89 -O2 -Wall -Wextra -Wdeclaration-after-statement -Wno-unused-function tools/treap_stress.c -o "$BUILD_DIR/treap_stress.exe" || return 1
+    $CC -std=c89 -O2 -Wall -Wextra -Wdeclaration-after-statement -Wno-unused-function tools/cemon_tcp_probe.c -o "$BUILD_DIR/cemon_tcp_probe.exe" $LIB_WS || return 1
+    $CC -std=c89 -O2 -Wall -Wextra -Wdeclaration-after-statement -Wno-unused-function tools/harness/wake_probe.c -o "$BUILD_DIR/wake_probe.exe" $LIB_WS || return 1
 }
 build_test() {
     $CC -std=c89 -pthread -O2 -Wall -Wextra -Wdeclaration-after-statement -Wno-unused-function tests/raft_test.c -o "$BUILD_DIR/raft_test.exe"
