@@ -1186,20 +1186,26 @@ the `//`-comment rule blinded by apostrophes in comments).
 不读代码的情况下核对，且会随文件增删腐烂"；同时确认 `doc/testing.md` 里那条被门废除的 L0 规则描述已在更早的
 提交里改对（现在描述的是 build 层的真实判据与日志路径 `build/regress/build.log`，与 `build.sh` 一致，已核对）。
 
-## R. mem 后端与工作线程（第三轮审视 4.2）—— 已修（以拒绝代替假装）
+## R. mem 后端与工作线程（第三轮审视 4.2）—— 拒绝保留，但**理由两次被推翻后重写**
 
-`vfs.h` 的 mem 后端把 inode 放在**进程级全局表**里且不加锁，而 WAL worker 与快照 worker 是**真线程**，会通过
-`vfs_open/vfs_read/vfs_write` 走同一张表。此前这个组合被静默接受——这是 `mem://` 库唯一可能"无任何报错地损坏"的
-路径。现在服务器核心在打开时拒绝：`mem://` + 非 sync 的运行时后端 ⇒
+**撤回（本轮用户追问后逐条核实）：**
+1. ✗ **"WAL 与快照线程会互相破坏写入"** —— 不成立。写者是唯一的：段与元数据只由 WAL worker 写
+   （`k_wal_seg_file`/`k_wal_meta_file`），快照文件只由快照 worker 写；主线程发送的是**当前**快照而 worker 正在
+   保存的是**新**索引，入站安装的索引高于本地上次保存的索引 ⇒ **同一 mem 文件不存在并发写，也不存在并发读-写**。
+2. ✗ **"同一 inode 的 close/unlink 生命周期竞争"** —— 也不可达。清理只删 `0 .. keep_segment-1`，而
+   `keep_segment = snapshot_prev_wal_segment`（`kserver.h:4677`，即**上一个**基点所在段）；写入方缓存的句柄始终在
+   **当前**基点所在段或更高（它持有最新那条记录所在的段，而记录是追加的、基点记录必然更早）⇒ 两条路径永不指向
+   同一个 inode。
 
-```
-fatal: cannot start server: runtime backend failed (a mem:// store cannot run with worker threads: the
-in-memory backend keeps a process-global, unlocked inode table that the WAL and snapshot threads would
-corrupt; use disk:// or the sync runtime) at mem://...
-```
+**核实后成立的（这条才是现在写进代码与拒绝信息里的理由）：**
+`vfs_mem_open` 的插入（`vfs.h:308`）与 `vfs_mem_unlink` 的摘链（`:324`）都是对**共享桶头**的读-改-写；
+`n->refcount`（`:310` / `:326`）同理。两个线程**同时**进入 `vfs_open`/`vfs_unlink`、且两个路径**撞进同一个桶**时
+（`vfs_hash` 是 FNV-1a + 混洗的强哈希，`VFS_MEM_HASH_BUCKETS=1024` ⇒ 约 1/1024）会丢一次更新 ⇒ 某个文件"凭空
+不在"。它需要 1/1024 **并且**微秒级同时，而 `mem://`+线程不是产品配置（手工压力工具已改走 `disk://`）⇒ 量级约
+1e-9/次快照。**本机无 TSan/ASan**（MinGW 无运行时库），所以这条无法在此自动抓取——属"低概率缺陷"，按纪律不被
+"单次干净样本"否定，也同样不被"一次推理"确认。
 
-- 选择"拒绝"而不是"给 mem 加锁"：mem 是内存/测试后端，产品路径是 `disk://`；把锁加进机制层会让每个后端都背上
-  一条与它无关的约束，而拒绝是响亮的、可运维的（supervisor 日志里有原因）。
-- 手工压力工具的线程模式因此改走 `disk://`（同时更贴近真实路径），并在结束时清理自己写的磁盘库。
-- 确定性用例 `server: mem:// with the real runtime backend is refused at open`：同一 base 用 `sync` 必须能起、
-  用 `thread` 必须起不来。把拒绝临时禁用即红。
+**当前处置**：保留"`mem://` 不得配线程运行时"的拒绝，**但理由已改成上面这条**（真机原文见提交）；手写压力工具的
+线程模式继续走 `disk://`（更贴近真实路径，且它自己清理写出的库）。**仍未做、待定**：给 mem 后端加锁（约 15 行
+自旋锁，Win32 `InterlockedExchange` / POSIX `__sync_lock_test_and_set`），那样就能删掉这个拒绝、让 mem 与 disk
+行为一致——等维护者拍板。
