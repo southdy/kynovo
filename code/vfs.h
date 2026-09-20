@@ -15,6 +15,30 @@ typedef unsigned __int64 vfs_u64;
 #else
 typedef unsigned long long vfs_u64;
 #endif
+/* Threading contract (checked against this file, not assumed).
+
+   A vfs_file handle is used by ONE thread at a time, always - read/write/sync/close touch per-inode state
+   (blocks, logical_size, refcount) with no lock of their own.  The application honours this by construction:
+   the WAL worker owns the WAL segments and the metadata, the snapshot worker owns the snapshot files (save
+   and cleanup run on the same worker thread), and the event loop opens a snapshot only to send or to install
+   one, at a different index.
+
+   Beyond that the two backends differ, and the difference is where their state lives:
+
+   - DISK keeps nothing in the process: every call is a syscall (CreateFileA/ReadFile/WriteFile/CloseHandle/
+     DeleteFileA, or their POSIX equivalents), so the operating system serialises it and any number of threads
+     may use the disk backend at once, each with its own handle.
+
+   - MEM is ONE process-global instance (vfs_mem below, vfs_mem_ctx.buckets), and vfs_mem_open / vfs_mem_unlink
+     update that bucket head and the per-inode reference count with no lock (vfs_mem_open's insert and
+     refcount++ versus vfs_mem_unlink's unlink, refcount test and free).  Two threads inside those two calls at
+     the same moment can lose one of those updates when their two paths hash to the same bucket (~1 in
+     VFS_MEM_HASH_BUCKETS).  The mem backend must therefore be used from one thread at a time; the application
+     enforces it - a mem:// store is refused at open when the worker threads are active (see k_server_open).
+
+   The exposure is narrow and has never been observed here (no TSan/ASan on the pinned Windows toolchain, and
+   the window is microseconds), which is exactly why it is written down instead of being argued from
+   probabilities. */
 typedef struct vfs_file vfs_file;
 VFS_DEF vfs_file *vfs_open(const char *uri);
 VFS_DEF int vfs_unlink(const char *uri);
@@ -411,6 +435,7 @@ static void vfs_mem_close(vfs_file *file){
   }
   VFS_FREE(f);
 }
+/* The one process-global, unlocked piece of state in this layer: see the threading contract at the top. */
 static vfs_mem_ctx vfs_mem={{
   "mem",
   vfs_mem_open,
