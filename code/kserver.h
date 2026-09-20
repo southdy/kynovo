@@ -3236,17 +3236,30 @@ static void k_server_auto_replace(k_server *server,const raft_ready *ready){
     }
   }
   if(failed_id>0){
+    /* Loud, once per change of target: replacing a voter is a membership change and used to leave no
+       trace at all, which made an automatic failover indistinguishable from nothing happening. */
+    if(server->auto_replace_failed_id!=failed_id)
+      printf("auto-replace: voter %d missed %u rounds; replacing it with node %d (add first, then remove)\n",
+             failed_id,server->auto_replace_threshold,server->auto_replace_new_id);
     server->auto_replace_failed_id=failed_id;
     if(k_membership_has(server->voters,server->voter_count,server->auto_replace_new_id)){
       /* replacement already a voter (a prior REMOVE failed): retry the REMOVE */
       failed_ids[0]=failed_id;
       server->auto_replace_phase=2;
-      if(k_server_submit_member(server,0,0,K_MEMBER_REMOVE,failed_ids,1)!=0) server->auto_replace_phase=0;
+      if(k_server_submit_member(server,0,0,K_MEMBER_REMOVE,failed_ids,1)!=0){
+        server->auto_replace_phase=0;
+        printf("auto-replace: cannot submit the REMOVE of %d (node %d is already a voter); will retry\n",
+               failed_id,server->auto_replace_new_id);
+      }
     }else{
       k_server_add_address(server,server->auto_replace_new_id,server->auto_replace_new_host,(k_u32)strlen(server->auto_replace_new_host),server->auto_replace_new_client_port,server->auto_replace_new_peer_port);
       new_ids[0]=server->auto_replace_new_id;
       server->auto_replace_phase=1;
-      if(k_server_submit_member(server,0,0,K_MEMBER_ADD,new_ids,1)!=0) server->auto_replace_phase=0;
+      if(k_server_submit_member(server,0,0,K_MEMBER_ADD,new_ids,1)!=0){
+        server->auto_replace_phase=0;
+        printf("auto-replace: cannot submit the ADD of node %d; no membership change was made, will retry\n",
+               server->auto_replace_new_id);
+      }
     }
   }
 }
@@ -3256,9 +3269,16 @@ static void k_server_auto_replace_committed(k_server *server){
   if(server->auto_replace_phase==1){
     failed_ids[0]=server->auto_replace_failed_id;
     server->auto_replace_phase=2;
-    if(k_server_submit_member(server,0,0,K_MEMBER_REMOVE,failed_ids,1)!=0) server->auto_replace_phase=0;
+    printf("auto-replace: node %d is committed as a voter; now removing the failed node %d\n",
+           server->auto_replace_new_id,failed_ids[0]);
+    if(k_server_submit_member(server,0,0,K_MEMBER_REMOVE,failed_ids,1)!=0){
+      server->auto_replace_phase=0;
+      printf("auto-replace: cannot submit the REMOVE of %d; will retry\n",failed_ids[0]);
+    }
   }else if(server->auto_replace_phase==2){
     server->auto_replace_phase=0;
+    printf("auto-replace: node %d has replaced node %d; done\n",
+           server->auto_replace_new_id,server->auto_replace_failed_id);
   }
 }
 static int k_server_submit_rget(k_server *server,k_conn *conn,k_u32 request_id,k_u8 *command,k_u32 command_size){
@@ -4199,10 +4219,17 @@ static void k_snapshot_worker_save(k_snapshot_task *task){
   k_u8 trailer[4],check[4],probe;
   k_u32 i,crc;
   int ok=1;
+  const char *why=0;             /* named cause of the failure, printed below */
   task->ok=0;
-  if(k_path_snapshot(path,task->server->base,task->index)!=0) return;
+  if(k_path_snapshot(path,task->server->base,task->index)!=0){
+    printf("snapshot: cannot build the path for index %" K_I64_FMT ": save failed\n",(k_i64)task->index);
+    return;
+  }
   file=vfs_open(path);
-  if(!file) return;
+  if(!file){
+    printf("snapshot: cannot open %s for writing (permissions? disk full?): save failed\n",path);
+    return;
+  }
   /* Header first: magic + the captured address book, then the treap bytes streamed by
      treap_save through the sink. */
   memset(&hdr,0,sizeof(hdr));
@@ -4220,29 +4247,33 @@ static void k_snapshot_worker_save(k_snapshot_task *task){
   memset(&sink,0,sizeof(sink));
   sink.file=file;
   k_crc32_init(&sink.crc);
-  if(hdr.err||k_snapshot_sink_write(&sink,hdr.data,hdr.len)!=0) ok=0;
+  if(hdr.err||k_snapshot_sink_write(&sink,hdr.data,hdr.len)!=0){ ok=0; why="header write failed"; }
   k_buf_free(&hdr);
-  if(ok&&treap_save(task->server->tree,k_snapshot_sink_write_cb,&sink)!=0) ok=0;
+  if(ok&&treap_save(task->server->tree,k_snapshot_sink_write_cb,&sink)!=0){ ok=0; why="streaming the treap failed"; }
   if(ok){
     /* CRC32 trailer over everything before it (same layout the loader expects). */
     k_crc32_final(&sink.crc,&crc);
     k_write_u32(trailer,crc);
-    if(vfs_write(file,sink.off,trailer,4)!=0) ok=0;
+    if(vfs_write(file,sink.off,trailer,4)!=0){ ok=0; why="trailer write failed"; }
     else sink.off+=4u;
   }
-  if(ok&&vfs_sync(file)!=0) ok=0;
+  if(ok&&vfs_sync(file)!=0){ ok=0; why="fsync failed"; }
   if(ok){
     /* The file is complete only if it ENDS exactly at the trailer: read the trailer
        back and probe for bytes past the end.  A short/torn write, or bytes left over
        from a previous longer incarnation, fail the check - and a save that does not
        pass it is never reported as ready nor used to unlink anything. */
-    if(vfs_read(file,sink.off-4u,check,4u)!=0||memcmp(check,trailer,4)!=0) ok=0;
-    else if(vfs_read(file,sink.off,&probe,1u)==0) ok=0;
+    if(vfs_read(file,sink.off-4u,check,4u)!=0||memcmp(check,trailer,4)!=0){ ok=0; why="read-back of the CRC trailer failed"; }
+    else if(vfs_read(file,sink.off,&probe,1u)==0){ ok=0; why="bytes found past the trailer (stale longer incarnation)"; }
   }
   vfs_close(file);
   task->size=sink.off;
   task->serialized=1;            /* the captured view has been consumed */
   task->ok=ok?1:0;
+  /* Loud: this used to fail without a word, so a store that could not write snapshots looked like a
+     healthy node until the WAL filled the disk. */
+  if(!task->ok) printf("snapshot: save of index %" K_I64_FMT " failed (%s)\n",
+                       (k_i64)task->index,why?why:"unknown cause");
 }
 static void k_snapshot_worker_cleanup(k_snapshot_task *task){
   char path[K_URI_MAX];
@@ -4339,6 +4370,11 @@ static int k_server_poll_snapshot(k_server *server){
           server->snapshot_inflight=0;
           k_server_set_snapshot_failed_baseline(server);
           server->snapshot_retry=0;
+          /* The retry is BY DESIGN (the baseline above makes the policy fire again against the CURRENT
+             state), but it must not be silent: this is the only signal that WAL segments are not being
+             released and that the disk is filling up.  STATS carries snapshot_failed too. */
+          printf("snapshot: index %" K_I64_FMT " did not persist (the line above names the cause);"
+                 " will retry when the state advances\n",(k_i64)task->index);
           k_snapshot_task_free(task);
         }
       }else k_snapshot_task_free(task);

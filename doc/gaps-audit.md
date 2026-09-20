@@ -876,3 +876,46 @@ Verified by probe (not by inspection): healthy restart keeps the data; a torn ta
 a segment) still recovers and prints `ends with a torn payload at offset ...`; a single flipped byte
 inside a record refuses to start with `fails its CRC check (generation 1): refusing to recover` and exit
 code 1; a corrupted metadata slot falls back to the segment scan and recovers.
+
+### (2) Snapshot failure visibility (D8/D9) - fixed, and one review claim corrected
+
+Correction first: D8 described the snapshot failure path as a silent unbounded retry.  It is a retry BY
+DESIGN - `k_server_set_snapshot_failed_baseline` records the WAL generation and `last_applied` so the
+snapshot policy can fire again against the CURRENT state, and `snapshot_failed` is already exported in
+STATS.  What was actually missing was the CAUSE: every failure in the worker collapsed into `ok=0` and
+every failure in the consumer collapsed into "clear the flag and try later", so a store that could not
+write snapshots was indistinguishable from a healthy node until the WAL filled the disk.
+
+Changed:
+- `k_snapshot_worker_save` names the cause and prints it: path build failure, open failure, header write,
+  treap streaming, trailer write, fsync, read-back of the trailer, bytes past the trailer.
+- the consumer prints that the index did not persist and that it will retry when the state advances
+  (the line above names the cause).
+
+Verified by probe: the prints are on the failure paths, and the paths themselves are covered by the fuzz
+tier (which drives snapshot capture/save/cleanup through the disk-image model).
+
+### (3) auto_replace - made audible
+
+`auto_replace` is Sec 4.4 add-before-remove replacement of a voter that missed `auto_replace_threshold`
+heartbeat rounds: leader-only, driven by `ready.peer_health`.  The shape is right, but no decision, ADD,
+REMOVE or phase transition was logged, so an automatic failover left no trace.
+
+Changed: the decision prints once per change of target; each of the two submission failures prints (they
+reset the phase, so they repeat until they succeed); the phase-1 -> 2 transition prints, the completion
+prints, and the REMOVE submission failure prints.
+
+Verified end-to-end with the real binaries - three nodes on 9001/9003/9005 with
+`--auto-replace-threshold 8`, the third voter killed with taskkill:
+```
+auto-replace enabled: replacement=4@127.0.0.1:9007:9008 threshold=8
+auto-replace: voter 3 missed 8 rounds; replacing it with node 4 (add first, then remove)
+```
+and the two survivors kept serving (`SET k2 = ok`, `GET k2 = v2`).
+
+Open visibility gap, found by that same probe: the reaction needs ~8 heartbeat rounds, which took >24s
+here, and once the decision is logged the phase-1 wait is silent - with the replacement node never
+started, `auto-replace: node 4 is committed as a voter` never appears, so an operator sees one line and
+then nothing.  Named cause: the replacement must catch up before the ADD commits, so a replacement that is
+not running stalls the swap.  Fixing that needs a rate-limited reminder (a new field), so it is recorded
+here rather than half-done.
