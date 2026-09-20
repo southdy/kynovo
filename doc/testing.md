@@ -5,7 +5,9 @@ commands, the verdict lines, the durations, the architectural seams used for fau
 facilities, and the **regression discipline** and known pitfalls this project has accumulated over many
 rounds of investigation. Wherever an older script comment disagrees with this document, this document wins.
 
-- Scope: `code/` (6 headers + 2 applications), `tests/` (15 files), `build/*.sh` (28 scripts), `tools/` (11 tools).
+- Scope: `code/` (10 headers + 2 applications), `tests/` (15 files), `tools/harness/` (15 scripts +
+  `wake_probe.c`), `tools/archive/` (16 one-off investigation scripts), `tools/` top level (benchmarks,
+  probes, `check-principles.py`, `cov_report.py`), `build.sh`.  Nothing hand-written lives in `build/`.
 - Target platform: **Windows XP and later** (`_WIN32_WINNT=0x0501`), **MSVC 6.0 compatible C89**, single-header library.
 - All commands run from the repository root under git-bash; build artifacts land only in `build/` (never in
   `%TEMP%`; reason in the `build.sh` header comment: unsigned MinGW binaries in a temporary directory are
@@ -51,15 +53,18 @@ and their `run-*` versions, `selftest`, `kdbsvr`, `kdbctl`, `bench*`, `cemon-ben
 | L2 | CLI semantics smoke (real process + real socket) | `bash tests/cli_smoke.sh` | `cli_smoke: PASS` | ~10s |
 | L3a | single-node randomised fuzzing (API/OOM rollback) | `./build/raft_fuzz.exe <seed> <n>` | `done: <n> iterations` / `FAIL: …` | n=2000 ~10s |
 | L3b | **multi-node cluster fuzzing** (real pull-mode wire messages: drop/reorder/duplicate/partition/crash-restart/membership change/OOM injection) | `./build/raft_cluster_fuzz.exe <seed> <n> [persist_delay]` | `done: <n> iterations` / `FAIL: …` | n=2000 ~30s |
+| L3c | server cluster fuzzing (with the in-harness linearizability checker `tests/lincheck.h`) | `./build/kserver_cluster_fuzz.exe <seed> <n>` | `done: 1/1 clusters consistent` **and** `linearizability: <N> histories / <M> ops decided by the checker` with N>0 | ~10s |
+| L4 | network soak (release binaries, 24 rounds, in-round PIPE load + liveness check) | `RUNS=24 bash tools/harness/soak_release.sh` | `SOAK\|PASS\|rounds_run=24 fails=0 liveness=1` - one line encoding all three criteria (the gate greps this, so a 1-round run or a dead server cannot pass) | ~3min |
+| L5 | performance/latency | `tools/harness/perf_matrix.sh`, `burst.sh`, `pipe_frontier.sh`, `pipe_verify.sh`, `watch_counters.sh` | each prints its own ops/s, p50/p99, counters | minutes |
+| L6 | instrumentation | `./build.sh coverage`, `./build.sh run-sanitize`, `K_ALLOC_DEBUG` build + appverif/gdb (see §3) | coverage table / no SIGILL / zero reports | minutes |
+
 Crash contract (what survives a crash on each platform, and the audited platform differences):
 `doc/crash-contract.md`.
 
-| L3c | server cluster fuzzing (with the in-harness linearizability checker `tests/lincheck.h`) | `./build/kserver_cluster_fuzz.exe <seed> <n>` | `done: 1/1 clusters consistent` **and** `linearizability: <N> histories / <M> ops decided by the checker` with N>0 | ~10s |
-| L4 | network soak (release binaries, 24 rounds, in-round PIPE load + liveness check) | `RUNS=24 bash tools/harness/soak_release.sh` | `rounds_without_full_success=0` and `final liveness: 1` | ~3min |
-| L5 | performance/latency | `tools/harness/perf_matrix.sh`, `burst.sh`, `pipe_frontier.sh`, `pipe_verify.sh`, `watch_counters.sh` | each prints its own ops/s, p50/p99, counters | minutes |
-| L6 | instrumentation | `./build.sh coverage`, `./build.sh run-sanitize`, `K_ALLOC_DEBUG` build + appverif/gdb (see §3) | coverage table / no SIGILL / zero reports | minutes |
-| `tools/harness/git-cn-setup.sh` | GitHub reachability from a China-based machine: ssh keepalives + a 443 alias, read-only fallback remotes (`github-https` direct, `cn-mirror` domestic), and an opt-in repo-local proxy that refuses to write unless its port is listening. `--status` reports, `--proxy off` reverts. |
-| L5 | performance/latency | `tools/harness/perf_matrix.sh`, `burst.sh`, `pipe_frontier.sh`, `pipe_verify.sh`, `watch_counters.sh` | each prints its own ops/s, p50/p99, counters | minutes |
+Not a layer, and therefore outside the table above: `tools/harness/git-cn-setup.sh` - GitHub reachability
+from a China-based machine: ssh keepalives + a 443 alias, read-only fallback remotes (`github-https`
+direct, `cn-mirror` domestic), and an opt-in repo-local proxy that refuses to write unless its port is
+listening (`--status` reports, `--proxy off` reverts).
 
 **How to read the verdict line (mandatory)**: always use a verdict grep; **`tail -1` is forbidden**. In a
 suite with progress output, `tail -1` shows an unrelated line and makes a failure read as a pass; a missing
@@ -212,7 +217,8 @@ command lists):
 - **`build/` is a pure output directory and should start empty**: everything `./build.sh` generates lives
   here, and `./build.sh clean` **deletes the whole directory** (equivalent to a fresh checkout). **Do not put
   any hand-written file into `build/`** — scripts and data have their own homes (see below).
-- Tool scripts live in two places: `tools/harness/` (12 reusable harnesses, see the table below) and
+- Tool scripts live in two places: `tools/harness/` (15 reusable harnesses plus `wake_probe.c`, see the table
+  below) and
   `tools/archive/` (16 early one-off investigation scripts, whose conclusions are summarised in
   `doc/investigations.md`).
 - Measurement and investigation records are archived in `doc/measurements/` (`*.txt` = the raw
@@ -240,6 +246,9 @@ invoked from anywhere; under `set -u` they all carry sensible defaults and can b
 | `crash_hunt.sh` | repeat deep pipelining under gdb until it crashes, leaving a backtrace | `bash tools/harness/crash_hunt.sh` | gdb stack frames | gdb required |
 | `pageheap_hunt.sh` | appverif Heaps + repeated deep pipelining (locates the write itself) | `RUNS=60 bash tools/harness/pageheap_hunt.sh` | no `Free Heap block …` / alive | `appverif` required (must be disabled afterwards) |
 | `diag_deep.sh` | whether the server closes the connection at deep K | `bash tools/harness/diag_deep.sh` | server log and client report | ports free |
+| `regress_selftest.sh` | self-test of the GATE's own failure path (silent-but-zero-exit / verdict line present / crash) | `bash tools/harness/regress_selftest.sh` | `pass=1 fail=2` | none |
+| `rate_profile.sh` | per-round timing profile of the server's own counters | `bash tools/harness/rate_profile.sh` | its own `PHASE`/`STATS` lines | ports free |
+| `wake_probe.c` | C helper used by the wake-latency investigations (`wake_us_*` in STATS) | build it by hand (`gcc … tools/harness/wake_probe.c`) | its own report | toolchain on PATH |
 
 **Delivery criteria**: L0 0 error/0 warning; L1 all green; L2 PASS; L3 `done`; L4
 `rounds_without_full_success=0` and `final liveness: 1`; no leftovers in the working directory (e.g.
@@ -286,10 +295,9 @@ against the repository before transfer:
 - unit suites: `cemon_test 5/5`, `kclient_test 16/16`, `raft_test 221/221`, `kserver_test 33/33`,
   identical to the local gate.
 
-Measured on the guest, all fourteen compile/link/run exit codes zero and every verdict matching the
-host baseline:
+The fuzz drivers were added to that evidence afterwards; all fourteen compile/link/run exit codes are
+zero there too:
 
-- unit suites: `cemon_test 5/5`, `kclient_test 16/16`, `raft_test 221/221`, `kserver_test 33/33`;
 - fuzz drivers: `raft_fuzz 0 200` -> `done: 200 iterations`, `raft_cluster_fuzz 1 2` -> `done: 2
   iterations`, and `kserver_cluster_fuzz 1 1` -> `done: 1/1 clusters consistent` with
   `linearizability: 4 histories / 253 ops decided by the checker, 0 inconclusive` (non-zero, so the

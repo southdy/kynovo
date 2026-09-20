@@ -1,5 +1,12 @@
 # kynovo full engineering review (2026-09)
 
+> **Superseded (2026-09-20) by [`doc/code-review-2026-09b.md`](code-review-2026-09b.md).**  Read that one
+> for the current state: several items below are already fixed (version control, `regress`, README, the
+> `build/` cleanup), and the **body** of this document still lists them as open while its own appendix
+> marks them fixed - that contradiction is itself recorded as finding F7 in the new review.  This file
+> stays as the record of that round; its inventory numbers are from then (e.g. `kserver.h` was 4,850
+> lines, it is 5,018 now).
+
 **Scope**: `code/`, `tests/`, `build/*.sh`, `tools/`, `doc/`, `build.sh`, and workspace hygiene.
 **Method**: inventory (size/reference relationships) + item-by-item reading of the critical paths + verification with **runtime evidence** in this session (the L0–L4 ladder all green, see `doc/testing.md`).
 **Summary of conclusions**: engineering quality is high (clean layering, explicit constraints, complete test tiering); the main risks cluster around **size**, **classification and discoverability of scripts/docs**,

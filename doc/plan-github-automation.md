@@ -35,7 +35,7 @@ project context files and background systems. **Precondition for execution**: th
 ## 2. GitHub onboarding preparation
 
 ### 2.1 Repository shape
-- Private repo preferred (because of B1, a public repo needs copyright handling first); `main` is the only long-lived branch, all changes go through short-lived feature branches + PRs.
+- **Public** (settled - see D1 below); `main` is the only long-lived branch.  Direct pushes to `main` are allowed, so the discipline is `./build.sh regress quick` immediately before every push (see AGENTS.md); the nightly job is the safety net, not the first line.
 - Commit messages: first line ≤72 characters, imperative; the body states **why** and **how it was verified** (which gates, verdict-line results). Keep the debugging process out of history.
 - Tagging policy: `v0.x.y` (no production use yet, so 0.x for now).
 

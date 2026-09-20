@@ -18,7 +18,8 @@ Read this first. It is deliberately short; the details live in `doc/`.
 2. Make the change; keep it in one logical unit.
 3. Run `./build.sh regress quick` while iterating and `./build.sh regress fuzz` before merging (that is
    what CI runs); read the last line, which is machine-readable:
-   `REGRESS|fuzz|pass=10 fail=0 duration=301s`.  `regress full` is the nightly/release gate.
+   `REGRESS|fuzz|pass=12 fail=0 duration=161s` (`quick` is 9 layers, `full` 13).  `regress full` is the
+   nightly/release gate.
 4. Report with **evidence**: the verdict lines, the log path, the exit code. No "should be fine".
 5. Update `doc/gaps-audit.md` for any gap you fixed, opened, or refuted.
 
@@ -50,7 +51,8 @@ Read this first. It is deliberately short; the details live in `doc/`.
 ## Accepted automation decisions (agreed with the maintainer)
 - Repository: **public**. `doc/dissertation.md` is ignored (third-party copyright) and stays local.
 - CI: full - build (0-warning assertion) + unit + CLI smoke + fast fuzz on every push/PR, plus a nightly
-  job (20k-seed cluster fuzz, 24-round release soak, coverage, UBSan trap build).
+  job (20,000-iteration single-node fuzz + 2,000-cluster fuzz + 10-cluster linearizability run, a 24-round
+  release soak, coverage and a UBSan trap build).
 - Backlog: **dual** - GitHub Issues for humans, Hermes kanban for agent workers.
 - **Direct pushes to `main` are allowed**, so the gate is discipline: run `./build.sh regress --quick`
   immediately before every push; the nightly job is the safety net, not the first line.

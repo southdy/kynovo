@@ -222,6 +222,14 @@ The checked and **gap-free** parts and the **settled trade-offs** are at the end
 
 ### Safety/durability related (priority)
 
+> **Status (2026-09-20, from the 2026-09b review).**  Three rows below are still listed as unhandled but
+> are fixed in the tree, so they must not be scheduled again: **C11** (bounded ingress close with a
+> printed reason - `cemon.h:1112-1137`, described in this file's own O2 section), **C12** (`udp_recv->buf`
+> - `cemon.h:2269/2291`, issue #10) and **C13** (`cemon_last_error`/`cemon_fatal_note` -
+> `cemon.h:602/794/823`, issue #11).  The rows stay as the record of that round.  Every other line
+> reference in this file is a snapshot from the day it was written and has drifted since (finding F10 of
+> the review): open the file, do not trust the number.
+
 | Item | Symptom and evidence | Impact | Why not fixed | Fix outline |
 |---|---|---|---|---|
 | **C18** | `vfs_read` returns -1 for both EOF and a real I/O error (`vfs.h:137/140`); the recovery scan therefore takes a "read failure" for a **normal end of segment** (`kserver.h:1466-1472`) | A media error ⇒ the WAL is treated as ending early ⇒ **a truncated state is silently recovered** (the item most worth fixing) | Needs a vfs API extension (`vfs_size`/`eof` out-params) | Add `vfs_size(file,&size)`; in the scan `off<size` ⇒ print the reason + fail-stop; cost ~20 lines |
