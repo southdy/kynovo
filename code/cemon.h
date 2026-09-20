@@ -2568,7 +2568,7 @@ static void cemon_unix_recv(cemon_socket *sock){
 static void cemon_unix_recvfrom(cemon_socket *sock){
   cemon_addr addr;
   cemon_socklen len;
-  int rc,err;
+  int rc,err,emit_rc;
   if(!cemon_recv_active(sock)) return;
   if(sock->udp_recv_buf==0){
     cemon_socket_die(sock,CEMON_ERR_NOBUFS,1);
@@ -2591,7 +2591,6 @@ static void cemon_unix_recvfrom(cemon_socket *sock){
     cemon_socket_die(sock,err,1);
     return;
   }
-  int emit_rc;
 }
 static void cemon_unix_ready(cemon_socket *sock,int rd,int wr,int er){
   if(cemon_socket_is_dead(sock)) return;
