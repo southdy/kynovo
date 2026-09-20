@@ -1521,11 +1521,19 @@ static int apply_stress(test_u64 ops,test_u64 keyspace,int threaded,int nosnap){
   k_u32 total,id;
   test_u64 i;
   if(!keyspace) keyspace=TEST_U64_C(4096);
-  sprintf(base,"mem://kstest-applystress-%u",(unsigned)(ops&0xffffu));
-  setup(&s,1,base);
   /* threaded=1 uses the REAL runtime backend (worker threads), which is the only configuration in
-     which the WAL worker and the event loop touch a request's live payload concurrently. */
-  if(threaded) s.runtime_backend=0;
+     which the WAL worker and the event loop touch a request's live payload concurrently.  Worker threads
+     require a store whose backend is thread-safe, and mem:// is not (process-global, unlocked inode table),
+     so the threaded run is disk-backed and the store is cleaned up on the way out. */
+  if(threaded){
+    sprintf(base,"disk://kstest-applystress-%u",(unsigned)(ops&0xffffu));
+    disk_cleanup(base);
+    setup(&s,1,base);
+    s.runtime_backend=0;
+  }else{
+    sprintf(base,"mem://kstest-applystress-%u",(unsigned)(ops&0xffffu));
+    setup(&s,1,base);
+  }
   if(k_server_open(&s)!=0){ printf("apply-stress: open failed\n"); return 1; }
   if(elect(&s)!=0){ printf("apply-stress: no leader\n"); k_server_release(&s); return 1; }
   k_server_client_accepted(&s,(void*)(size_t)1);
@@ -1549,6 +1557,7 @@ static int apply_stress(test_u64 ops,test_u64 keyspace,int threaded,int nosnap){
   }
   printf("apply-stress: done %" TEST_U64_FMT " ops\n",ops);
   k_server_release(&s);
+  if(threaded) disk_cleanup(base);              /* the threaded run is disk-backed: take its store with us */
   return 0;
 }
 
@@ -1557,6 +1566,24 @@ static int apply_stress(test_u64 ops,test_u64 keyspace,int threaded,int nosnap){
    wait needs a cluster to stage, so the state is injected exactly as the ADDR apply would leave it and the
    deterministic clock is driven: the age must accumulate, the reminder must not flood, and both must reset
    when the CONFIG apply drains the wait. */
+/* The in-memory backend's inode table is process-global and unlocked, and the WAL/snapshot workers are real
+   threads: the combination used to be accepted silently, which is the one way a mem:// store could be
+   corrupted without a single error being reported anywhere.  It is now refused at open, with a reason a
+   supervisor log will carry (review 4.2). */
+static void test_mem_store_rejects_worker_threads(void){
+  k_server s;
+  TEST_BEGIN("server: mem:// with the real runtime backend is refused at open");
+  setup(&s,1,"mem://kstest-memthread-1");
+  s.runtime_backend="thread";                 /* the default, spelled out: NOT the deterministic runtime */
+  TEST_ASSERT(k_server_open(&s)!=0,"a mem:// store must not start with worker threads");
+  k_server_release(&s);
+  setup(&s,1,"mem://kstest-memthread-2");
+  s.runtime_backend="sync";
+  TEST_ASSERT(k_server_open(&s)==0,"the same store starts fine with the sync runtime");
+  k_server_release(&s);
+  TEST_END();
+}
+
 static void test_membership_wait_reporting(void){
   k_server s;
   int i;
@@ -1597,7 +1624,7 @@ static void test_membership_wait_reporting(void){
 
 int main(int argc,char **argv){
   if(argc>=3&&strcmp(argv[1],"--apply-stress")==0) return apply_stress(test_strtoull(argv[2]),argc>=4?test_strtoull(argv[3]):TEST_U64_C(4096),argc>=5&&strcmp(argv[4],"thread")==0,argc>=6&&strcmp(argv[5],"nosnap")==0);
-  TEST_PLAN(36);
+  TEST_PLAN(37);
   g_run_tag=0;
   if(k_monotonic_us(&g_run_tag)!=0) g_run_tag=(k_u64)time(0);
   test_fcall_gate_reopens_when_its_request_dies();
@@ -1636,6 +1663,7 @@ int main(int argc,char **argv){
   test_snapshot_wal_byte_accounting();
   test_rx_buffer_admission_accounting();
   test_membership_wait_reporting();
+  test_mem_store_rejects_worker_threads();
   TEST_SUMMARY();
   return TEST_EXIT_CODE();
 }

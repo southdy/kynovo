@@ -5334,6 +5334,19 @@ static int k_server_open(k_server *server){
   local_index=k_cluster_index(&server->cluster,server->id);
   if(local_index<0){ k_open_fail("cluster lookup","this node id is not in the configured cluster",0); return -1; }
   if(k_cfg_open(server->base,&server->cfg)!=0){ k_open_fail("config open","unreadable or invalid config",server->base); return -1; }
+  /* The in-memory backend keeps its inodes in a PROCESS-GLOBAL table with no locking (vfs.h), while the WAL
+     and snapshot workers are real threads that reach that same table through vfs_open/vfs_read/vfs_write.
+     Rather than pretend that combination is safe, a store in memory may only run with the synchronous
+     runtime; disk:// is the backend for real threads.  Review 4.2. */
+  {
+    const char *be=server->runtime_backend?server->runtime_backend:"thread";
+    if(strncmp(server->base,"mem://",6)==0&&strcmp(be,"sync")!=0){
+      k_open_fail("runtime backend","a mem:// store cannot run with worker threads: the in-memory backend "
+                  "keeps a process-global, unlocked inode table that the WAL and snapshot threads would "
+                  "corrupt; use disk:// or the sync runtime",server->base);
+      return -1;
+    }
+  }
   /* The adaptive flush window (kdbsvr's serve loop) may shrink cfg.flush_timeout_ms
      toward the measured sync cost; remember the configured ceiling so it can never
      grow past what the operator asked for. */

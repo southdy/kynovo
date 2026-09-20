@@ -1185,3 +1185,21 @@ the `//`-comment rule blinded by apostrophes in comments).
 **顺带把这类缺陷按"类"处理**：引用一律改成 **`函数名` + `code/<file>:<line>`**，并在文档里写明"裸行号无法在
 不读代码的情况下核对，且会随文件增删腐烂"；同时确认 `doc/testing.md` 里那条被门废除的 L0 规则描述已在更早的
 提交里改对（现在描述的是 build 层的真实判据与日志路径 `build/regress/build.log`，与 `build.sh` 一致，已核对）。
+
+## R. mem 后端与工作线程（第三轮审视 4.2）—— 已修（以拒绝代替假装）
+
+`vfs.h` 的 mem 后端把 inode 放在**进程级全局表**里且不加锁，而 WAL worker 与快照 worker 是**真线程**，会通过
+`vfs_open/vfs_read/vfs_write` 走同一张表。此前这个组合被静默接受——这是 `mem://` 库唯一可能"无任何报错地损坏"的
+路径。现在服务器核心在打开时拒绝：`mem://` + 非 sync 的运行时后端 ⇒
+
+```
+fatal: cannot start server: runtime backend failed (a mem:// store cannot run with worker threads: the
+in-memory backend keeps a process-global, unlocked inode table that the WAL and snapshot threads would
+corrupt; use disk:// or the sync runtime) at mem://...
+```
+
+- 选择"拒绝"而不是"给 mem 加锁"：mem 是内存/测试后端，产品路径是 `disk://`；把锁加进机制层会让每个后端都背上
+  一条与它无关的约束，而拒绝是响亮的、可运维的（supervisor 日志里有原因）。
+- 手工压力工具的线程模式因此改走 `disk://`（同时更贴近真实路径），并在结束时清理自己写的磁盘库。
+- 确定性用例 `server: mem:// with the real runtime backend is refused at open`：同一 base 用 `sync` 必须能起、
+  用 `thread` 必须起不来。把拒绝临时禁用即红。
