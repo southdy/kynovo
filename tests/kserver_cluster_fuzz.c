@@ -662,7 +662,11 @@ static int run_one_cluster(k_u64 seed){
        OOM counterpart of crash/restart. */
     int vi,restarted=0;
     for(vi=0;vi<nnode;vi++){
-      if(!nodes[vi].stopped&&!nodes[vi].fatal) continue;
+      /* raft_stopped counts: a transient allocation failure stops raft through the drain path and the
+         application records that in its own flag (kserver.h:4440).  A heal loop that only looks at
+         stopped/fatal cannot see such a node, leaves it dead at its old commit index for the rest of the
+         run, and then fails the snapshot check - which is exactly what seed 99 did. */
+      if(!nodes[vi].stopped&&!nodes[vi].fatal&&!nodes[vi].raft_stopped) continue;
       if(crash_restart_node(vi)!=0){
         fprintf(stderr,"FAIL restart stopped node %d (seed %" K_U64_FMT ")\n",vi+1,(k_u64)seed);
         release_cluster(); return 0;
@@ -732,8 +736,12 @@ static int run_one_cluster(k_u64 seed){
           int vi;
           if(a==b) continue;
           vi=k_cluster_index(&nodes[a].cluster,nodes[b].id);
-          fprintf(stderr,"  link %d->%d %s\n",nodes[a].id,nodes[b].id,
-            (vi>=0&&nodes[a].peer_conns[vi])?"up":"DOWN");
+          /* conn=link object exists, sock=HELLO handshake completed.  The application re-dials a
+             peer_conns-only (half-open) link, so the two must be printed apart. */
+          fprintf(stderr,"  link %d->%d vi=%d conn=%d sock=%d mem=%d\n",nodes[a].id,nodes[b].id,vi,
+            (vi>=0&&nodes[a].peer_conns[vi])?1:0,
+            (vi>=0&&nodes[a].peer_socks[vi])?1:0,
+            k_membership_contains(&nodes[a],nodes[b].id)?1:0);
         }
       }
       fprintf(stderr,"FAIL snapshot never fired (seed %" K_U64_FMT " ent=%u)\n",
@@ -741,8 +749,8 @@ static int run_one_cluster(k_u64 seed){
       /* Print the same fields as the no-leader dump above, plus leader/fatal/stopped: without them a
          restarting node that never catches up is indistinguishable from one that died again, and that
          distinction decides whether this is a harness/ injector matter or a product finding. */
-      for(i=0;i<nnode;i++) fprintf(stderr,"  n%d leader=%d fatal=%d stopped=%d snap_idx%" K_I64_FMT " la%" K_I64_FMT " raft{state=%d commit=%" K_I64_FMT "}\n",
-        nodes[i].id,nodes[i].is_leader,nodes[i].fatal,nodes[i].stopped,
+      for(i=0;i<nnode;i++) fprintf(stderr,"  n%d leader=%d fatal=%d stopped=%d raft_stopped=%d snap_idx%" K_I64_FMT " la%" K_I64_FMT " raft{state=%d commit=%" K_I64_FMT "}\n",
+        nodes[i].id,nodes[i].is_leader,nodes[i].fatal,nodes[i].stopped,nodes[i].raft_stopped,
         (k_i64)nodes[i].snapshot.index,(k_i64)nodes[i].last_applied,
         nodes[i].raft?nodes[i].raft->state:-1,
         (k_i64)(nodes[i].raft?nodes[i].raft->commit_index:-1));
