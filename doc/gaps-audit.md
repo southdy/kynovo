@@ -1021,3 +1021,28 @@ Still open, with the evidence:
   not there - recorded rather than quietly rewritten).  The fix is NOT yet verified: it can only be
   observed on Linux, and the next run of that job is the test.  The auto-replace lines this session added are what made the failure visible at all: they show the
   whole add -> remove -> done sequence immediately before it.
+
+### (3b) auto_replace reaction time - my own earlier measurement retracted, and what the real gap is
+
+Measured with the real binaries (3 nodes, `--auto-replace-threshold 8`, the third voter killed):
+
+```
+t0+1s: node 4 已是 pending（决策已发生、ADD 已提交）      <- polled every second via TOPOLOGY
+[before kill] au1.log = 121 bytes      <- only the two startup lines
+[after 1s]    au1.log = 211 bytes, auto-replace lines = 1  <- the decision line is there while the
+                                                             process is still RUNNING
+```
+
+Retracted: the reaction time I reported earlier ("8 rounds took >24s", "~3s per round", "silent for 24-60s").
+Those were artifacts of my own probe (polling/grep timing), not product latency.  The decision fires at
+about `threshold x K_HEARTBEAT_MS` (50ms), i.e. about 1s at threshold 8, and the ADD is submitted in the
+same step.  Retracted too: the idea that stdout buffering hides the lines - the log grew while the server
+was alive, with the line present.
+
+What the real gap is, stated precisely: `TOPOLOGY` already exposes every pending catch-up target
+(`<id>@host:port role=pending`), so an operator CAN see that a replacement is stuck.  What is missing is
+the story around it - no line when the wait STARTS (`pending` was already true at t0+1s, so the reason is
+that node 4 does not exist yet), no line while it lasts, no reason/age/progress, and no counter anywhere
+that says "a voter has been unreachable for X while a replacement is pending".  The wait is unbounded on
+purpose (a config change that is not committed must not simply be abandoned - Ongaro Sec 4.1), so the fix
+is observability, not a give-up timer.
