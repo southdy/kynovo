@@ -42,17 +42,11 @@ jobs:
           gcc --version | head -1
           python --version
 
-      # Hard project constraint: LF everywhere.  A CRLF file breaks the shell harnesses and shows up
-      # as a mysterious syntax error much later, so it is checked directly.
-      - name: Assert LF line endings in every tracked file
-        run: |
-          bad="$(git ls-files --eol | grep -Ei '(i|w)/crlf' || true)"
-          if [ -n "$bad" ]; then
-            echo "::error::CRLF in tracked files - this project requires LF everywhere"
-            echo "$bad"
-            exit 1
-          fi
-          echo "LF ok ($(git ls-files --eol | wc -l) tracked files checked)"
+      # No LF step here: the rule belongs to `tools/check-principles.py`, which implements it WITH the
+      # project's documented exemption (`doc/measurements/*` is captured console output marked `-text` and is
+      # deliberately never converted).  Measured on a fresh clone, the naive form this step used to carry
+      # flags 138 tracked files, every one of them exempt, and on the MSYS2 runner it checks nothing at all
+      # because there is no `git` on PATH.  The gate's principles layer runs it correctly a few steps down.
 
       - name: Regression gate
         run: |

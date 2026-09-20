@@ -2581,7 +2581,7 @@ static void cemon_unix_recvfrom(cemon_socket *sock){
     if(rc>=0){
       sock->recv_armed=0;
       addr.len=(int)len;
-      int emit_rc=cemon_emit_blockable(sock,CEMON_DATA,0,sock->udp_recv_buf,rc,&addr);
+      emit_rc=cemon_emit_blockable(sock,CEMON_DATA,0,sock->udp_recv_buf,rc,&addr);
       if(emit_rc==CEMON_EMIT_SKIP||emit_rc!=CEMON_EMIT_CONTINUE) return;
       continue;
     }
@@ -2591,6 +2591,7 @@ static void cemon_unix_recvfrom(cemon_socket *sock){
     cemon_socket_die(sock,err,1);
     return;
   }
+  int emit_rc;
 }
 static void cemon_unix_ready(cemon_socket *sock,int rd,int wr,int er){
   if(cemon_socket_is_dead(sock)) return;
