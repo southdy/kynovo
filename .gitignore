@@ -8,6 +8,12 @@ build/
 *.gcda
 *.gcno
 
+# Store files the tests create in the working directory: the disk:// tests use a relative base, so a run
+# leaves <base>.cfg / <base>.wal.meta / <base>.wal.<segment> in the repo root.  They belong to no commit -
+# and nine of them reached one before this rule existed (found by `git show --stat` on the review commit).
+kstest-*
+kdb-selftest-*
+
 # Third-party document kept LOCALLY ONLY (copyright).  Ongaro's PhD dissertation is the semantic
 # baseline this code is reviewed against, but it must not be redistributed in a public repository.
 # The code and docs reference doc/dissertation.md by path, so the file stays in place and is ignored.

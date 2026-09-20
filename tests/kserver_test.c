@@ -993,10 +993,17 @@ static unsigned int g_disk_seq;
 static k_u64 g_run_tag;
 static void disk_cleanup(const char *base){
   char path[K_URI_MAX];
-  /* a single SET + crash creates exactly: cfg, wal.meta, WAL segment 0 */
+  k_u64 seg;
   if(k_path_suffix(path,base,".cfg")==0) vfs_unlink(path);
   if(k_path_suffix(path,base,".wal.meta")==0) vfs_unlink(path);
-  if(k_path_wal_segment(path,base,0u)==0) vfs_unlink(path);
+  /* EVERY segment, not just segment 0: a store that rotated (small wal_seg_size, or many
+     records) leaves 1, 2, ... behind, and those used to survive the test - nine of them were
+     committed by `git add -A` for exactly this reason.  The bound is the same ceiling recovery
+     uses for a released prefix, which is far above anything a test writes. */
+  for(seg=0;seg<K_WAL_SCAN_EMPTY_PREFIX_MAX;seg++){
+    if(k_path_wal_segment(path,base,seg)!=0) break;
+    vfs_unlink(path);
+  }
 }
 
 static void test_single_node_get_missing(void){
