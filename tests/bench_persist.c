@@ -154,20 +154,20 @@ int main(int argc,char **argv){
       p1=bnow();
       k_monotonic_us(&app.now_us);
       k_client_poll(&app);
-      if(ok<4) fprintf(stderr,"  [op %d] poll#%d rc=%d took=%llu us\n",ok+1,spins,rc,(unsigned long long)(p1-p0));
+      if(ok<4) fprintf(stderr,"  [op %d] poll#%d rc=%d took=%" K_U64_FMT " us\n",ok+1,spins,rc,(k_u64)(p1-p0));
       spins++;
     }
     t1=bnow();
     if(app.pending) break;
     s[ok++]=t1-t0;
-    if(ok==1||ok==2||ok==3||ok==50||ok==200) fprintf(stderr,"[op %d] spins=%d dt=%llu us\n",ok,spins,(unsigned long long)(t1-t0));
+    if(ok==1||ok==2||ok==3||ok==50||ok==200) fprintf(stderr,"[op %d] spins=%d dt=%" K_U64_FMT " us\n",ok,spins,(k_u64)(t1-t0));
   }
   if(ok>0){
     qsort(s,(size_t)ok,sizeof(s[0]),cmpu64);
-    printf("persistent SET: n=%d median=%llu us  p99=%llu  min=%llu  max=%llu\n",
-           ok,(unsigned long long)s[ok/2],
-           (unsigned long long)s[(int)(((k_u64)ok*99u)/100u)],
-           (unsigned long long)s[0],(unsigned long long)s[ok-1]);
+    printf("persistent SET: n=%d median=%" K_U64_FMT " us  p99=%" K_U64_FMT "  min=%" K_U64_FMT "  max=%" K_U64_FMT "\n",
+           ok,(k_u64)s[ok/2],
+           (k_u64)s[(int)(((k_u64)ok*99u)/100u)],
+           (k_u64)s[0],(k_u64)s[ok-1]);
   }else printf("persistent SET: all failed\n");
   free(s);
   app.stopping=1;
