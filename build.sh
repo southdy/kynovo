@@ -191,6 +191,9 @@ build_kserver() {
 build_cemon_test() {
     $CC -std=c89 -O2 -Wall -Wextra -Wdeclaration-after-statement -Wno-unused-function -pthread tests/cemon_test.c -o "$BUILD_DIR/cemon_test.exe" $LIB_WS
 }
+build_vfs_fault_test() {
+    $CC -std=c89 -O2 -Wall -Wextra -Wdeclaration-after-statement -Wno-unused-function -pthread tests/vfs_fault_test.c -o "$BUILD_DIR/vfs_fault_test.exe"
+}
 build_kclusterfuzz() {
     $CC -std=c89 -pthread -O2 -Wall -Wextra -Wdeclaration-after-statement -Wno-unused-function tests/kserver_cluster_fuzz.c -o "$BUILD_DIR/kserver_cluster_fuzz.exe"
 }
@@ -288,6 +291,7 @@ build_all() {
     build_kserver   || RC=1
     build_kclusterfuzz || RC=1
     build_cemon_test || RC=1
+    build_vfs_fault_test || RC=1
     # Benchmarks are compiled here too (not just via their own targets): they must
     # be inside the -Wall -Wextra -Wdeclaration-after-statement gate, otherwise
     # they rot silently (they were in NO aggregation target before).
@@ -386,6 +390,8 @@ do_regress(){
     reg_gate kserver_test   'SUMMARY: [1-9][0-9]*/[0-9]+ passed' "$BUILD_DIR/kserver_test.exe"
     reg_gate kclient_test   'SUMMARY: [1-9][0-9]*/[0-9]+ passed' "$BUILD_DIR/kclient_test.exe"
     reg_gate cemon_test 'SUMMARY: [1-9][0-9]*/[0-9]+ passed' "$BUILD_DIR/cemon_test.exe"
+    # The fourth injection seam (storage), exercised rather than assumed: a fault-injecting vfs backend.
+    reg_gate vfs_fault_test 'SUMMARY: [1-9][0-9]*/[0-9]+ passed' "$BUILD_DIR/vfs_fault_test.exe"
     reg_gate selftest       'selftest: PASS'                "$BUILD_DIR/selftest.exe"
     # Leftover guard: the selftest writes its store into the working directory (the repo root), so a
     # failure path that returns early leaves kdb-selftest-* artifacts behind - two of them sat in the
@@ -434,6 +440,8 @@ case "${1:-all}" in
     kclusterfuzz) build_kclusterfuzz || RC=1 ;;
     cemon-test)   build_cemon_test || RC=1 ;;
     run-cemon-test) build_cemon_test && "$BUILD_DIR/cemon_test.exe" || RC=1 ;;
+    vfs-fault-test) build_vfs_fault_test || RC=1 ;;
+    run-vfs-fault-test) build_vfs_fault_test && "$BUILD_DIR/vfs_fault_test.exe" || RC=1 ;;
     run-test)     build_test  && "$BUILD_DIR/raft_test.exe" || RC=1 ;;
     run-fuzz)     build_fuzz  && "$BUILD_DIR/raft_fuzz.exe" "${2:-1}" "${3:-2000}" || RC=1 ;;
     run-cfuzz)    build_cfuzz && "$BUILD_DIR/raft_cluster_fuzz.exe" "${2:-1}" "${3:-1000}" || RC=1 ;;

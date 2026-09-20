@@ -935,3 +935,38 @@ coverage: the kqueue path in `cemon.h` has never been compiled anywhere, and fro
 iterate on a macOS-only failure.  Adding it would either put a permanently red check on main or a job
 wrapped in `continue-on-error` - a check that never ran pretending to be a pass.  Open item: add a
 macOS compile job that is allowed to fail once someone can iterate on it.
+
+### (5) The storage injection seam (A7) - used for real
+
+The project declares four seams for fault injection (transport / elapsed_ms / runtime backend / vfs
+backend).  Three were used by tests; the vfs one had no user at all, so "the seam exists" was an
+assumption - every storage failure path was reasoned about rather than exercised.
+
+`tests/vfs_fault_test.c` installs a wrapper backend under the same scheme name as the stock mem backend
+(disk routing stays reachable), delegates every operation to mem, and re-points each file it opens at
+itself, so every later vfs_write/vfs_sync on that file comes back through the wrapper and can be made to
+fail on demand.  No new API was needed: the backend list and the router are file-local statics of the
+single header, so a test in its own translation unit can substitute one.
+
+Four cases, all asserted on content rather than chatter:
+- no fault: the wrapper is really in the path (opens/writes/syncs all non-zero - a 0-sample would prove
+  nothing) and nothing fail-stops;
+- every fsync fails from now on: the WAL flush must fail-stop (observed: `writes=7 syncs=5 injected=1
+  fatal=1`, plus the server's own `fatal: WAL write failed`);
+- every write fails from now on: same class, same verdict;
+- a fault during open: `k_server_open` reports the failure (`open_rc=-1`) instead of starting anyway.
+  No fatal flag is asserted there on purpose - a failed OPEN is reported to its caller, which is the
+  loud signal at that stage; asserting a flag the product does not set would be testing the test.
+
+Wired as gate layer L1g (`reg_gate vfs_fault_test`), so `quick` is 10 layers and `full` 14; docs updated.
+The new test has NOT been run on the XP guest yet - the guest list in doc/testing.md section 7 was left
+alone rather than quietly extended with a claim that would be false.
+
+### Linux gate (4) - first real run found a rule that was wrong, not a port
+
+The first Linux run failed, and not on the code: the LF step added to `ci.yml` reported 400+ violations,
+every one of them `doc/measurements/*` with `attr/-text` - the project's documented exemption, where the
+bytes ARE the observation and are deliberately never converted.  That step was a second copy of a rule
+`tools/check-principles.py` already implements WITH the exemption (and which runs inside `regress quick`
+on both jobs).  The duplicate was removed: a copy of a rule without its exemption is not a stricter
+check, it is a wrong one.  The Windows gate passed on the same commit, so the code itself is fine.

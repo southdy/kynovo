@@ -18,7 +18,7 @@ Read this first. It is deliberately short; the details live in `doc/`.
 2. Make the change; keep it in one logical unit.
 3. Run `./build.sh regress quick` while iterating and `./build.sh regress fuzz` before merging (that is
    what CI runs); read the last line, which is machine-readable:
-   `REGRESS|fuzz|pass=12 fail=0 duration=161s` (`quick` is 9 layers, `full` 13).  `regress full` is the
+   `REGRESS|fuzz|pass=12 fail=0 duration=161s` (`quick` is 10 layers, `full` 14).  `regress full` is the
    nightly/release gate.
 4. Report with **evidence**: the verdict lines, the log path, the exit code. No "should be fine".
 5. Update `doc/gaps-audit.md` for any gap you fixed, opened, or refuted.

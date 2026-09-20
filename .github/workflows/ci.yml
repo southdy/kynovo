@@ -158,15 +158,11 @@ jobs:
           gcc --version | head -1
           python3 --version
 
-      - name: Assert LF line endings in every tracked file
-        run: |
-          bad="$(git ls-files --eol | grep -Ei '(i|w)/crlf' || true)"
-          if [ -n "$bad" ]; then
-            echo "::error::CRLF in tracked files - this project requires LF everywhere"
-            echo "$bad"
-            exit 1
-          fi
-          echo "LF ok ($(git ls-files --eol | wc -l) tracked files checked)"
+      # No LF check here: the rule belongs to `tools/check-principles.py` (a layer of the gate below),
+      # which implements it WITH the project's documented exemption - `doc/measurements/*` is captured
+      # console output marked `-text` on purpose and its bytes are the observation.  A copy of the rule
+      # without the exemption is not a stricter check, it is a wrong one: it reported 400+ captured
+      # records as violations on the first Linux run.
 
       # A checkout made on Windows does not carry the executable bit, and the harness scripts are run
       # by build.sh.
