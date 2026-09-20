@@ -96,16 +96,17 @@ static void *fuzz_realloc(void *p,size_t n){
 #define RAFT_REALLOC fuzz_realloc
 #define RAFT_IMPLEMENTATION
 #include "../code/raft.h"
+#include "t64.h"   /* 64-bit types/format macros that MSVC 6 can compile */
 
 /* ---- deterministic PRNG: splitmix64 (self-contained, no stdint.h) ---- */
-static unsigned long long fuzz_state;
+static test_u64 fuzz_state;
 
-static unsigned long long fuzz_next_u64(void){
-  unsigned long long z;
-  fuzz_state += 0x9E3779B97F4A7C15ULL;
+static test_u64 fuzz_next_u64(void){
+  test_u64 z;
+  fuzz_state += TEST_U64_C(0x9E3779B97F4A7C15);
   z = fuzz_state;
-  z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ULL;
-  z = (z ^ (z >> 27)) * 0x94D049BB133111EBULL;
+  z = (z ^ (z >> 30)) * TEST_U64_C(0xBF58476D1CE4E5B9);
+  z = (z ^ (z >> 27)) * TEST_U64_C(0x94D049BB133111EB);
   z = z ^ (z >> 31);
   return z;
 }
@@ -130,8 +131,8 @@ static raft_i64 g_last_commit = RAFT_I64_C(-1);
 static raft_i64 g_last_apply  = RAFT_I64_C(-1);
 
 static void invariant_fail(const char *what,raft_i64 got,raft_i64 bound){
-  fprintf(stderr,"\nINVARIANT VIOLATION: %s (got %lld, bound %lld)\n",
-          what,(long long)got,(long long)bound);
+  fprintf(stderr,"\nINVARIANT VIOLATION: %s (got %" TEST_I64_FMT ", bound %" TEST_I64_FMT ")\n",
+          what,(test_i64)got,(test_i64)bound);
   act_dump();
   fflush(stderr);
   exit(1);
@@ -394,7 +395,7 @@ static void fuzz_one_node(unsigned long seed){
   raft_persist_entry rpe[4];
   int i,n_actions,with_restore;
 
-  fuzz_state = (unsigned long long)seed;
+  fuzz_state = (test_u64)seed;
   fuzz_oom_at = 0;
   fuzz_alloc_calls = 0;
   act_count = 0;

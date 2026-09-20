@@ -287,7 +287,9 @@ against the repository before transfer:
   identical to the local gate.
 
 Scope at the time of writing: the fuzz / linearizability tier does not build with MSVC 6 yet (raw
-`long long` and `LL`/`ULL` literals across those files); see P2 for the list and the follow-up.
+`long long` and `LL`/`ULL` literals across those files, 157 sites by the gate's own count); see P2 for
+the per-file breakdown.  Gate rule 9 ratchets that count down - new spellings fail the principles layer,
+which is what stops the class from returning while the conversion proceeds.
 
 ### Harness rule learned here: the SDK include path AND the target version
 

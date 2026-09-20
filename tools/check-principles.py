@@ -166,6 +166,17 @@ report('raft_inspect only in the diagnostics path (budget 1)', sites[1:] or [])
 sites = scan(r'[^_a-zA-Z]sprintf\s*\(', LIB + ['code/kdbctl.c', 'code/kdbsvr.c'])
 report('no new bare sprintf in code/ (budget 13, use k_text_append/k_snprintf)', sites[13:] or [])
 
+# 9. C99 64-bit spellings in the test tree.  MSVC 6.0 - the declared toolchain - has no `long long`,
+# no LL/ULL literals, no %llu and neither strtoull nor _strtoui64; MinGW-w64 accepts all of them, which
+# is why this class reached a real compiler only when the XP guest was used.  Derived types must come
+# from tests/t64.h, the ONE file allowed to spell them (it holds the per-compiler mapping).  Budget is
+# the site count measured when the rule was added: it may shrink as files are converted, never grow.
+# 157 sites measured with THIS checker's own comment-stripping (a raw grep says 236 - it counts
+# comments, and a budget taken from that number would leave ~80 sites of slack for new violations).
+TESTS_C = (git_out('ls-files', 'tests/*.c', 'tests/*.h') or '').split()
+sites = scan(r'\blong long\b|(?:0[xX][0-9a-fA-F]+|[0-9]+)(?:ULL|ull|LL|ll)\b|%ll[du]', TESTS_C)
+report('no new C99 64-bit spellings in tests/ (budget 157, use tests/t64.h)', sites[157:] or [])
+
 # 8. contract files: changing them must be deliberate
 dirty = (git_out('status', '--porcelain', 'code/raft.h', 'code/treap.h') or '').strip()
 last = git_out('diff', '--name-only', 'HEAD~1', 'HEAD') or ''

@@ -697,10 +697,15 @@ winpthreads and a C99-complete compiler) and to Linux/gcc:
    `build_rc=0` while every compile had in fact failed.  That is the project's own rule about never
    interpreting a run before confirming the build, applied to the harness itself.
 
-**Known remaining debt.**  `tests/raft_fuzz.c`, `tests/raft_cluster_fuzz.c`,
-`tests/kserver_cluster_fuzz.c`, `tests/lincheck.h`, `tests/bench_persist.c` and `tests/cemon_stress.c`
-still use `long long` / `ULL` / `%llu` throughout, so the fuzz and linearizability tier cannot be
-built with MSVC 6 yet.  The XP run therefore covers the four unit suites only.  Related gate gap: the
-principles ratchet watches bare `%lld` but neither `long long` nor the `LL`/`ULL` suffixes, which is
-why this class reached a real compiler first.  A ratchet rule with the current count as its budget
-(the established pattern in this repository) is the follow-up.
+**Debt, and the rule that now holds it.**  The conversion is staged: `tests/t64.h` is the one place
+allowed to spell the C99 forms (it holds the per-compiler mapping), `tests/test.h` includes it, and
+`tests/raft_fuzz.c` is fully converted and green.  Still carrying the raw spellings, with the count
+measured by the new ratchet's own comment-stripping pass: `raft_cluster_fuzz.c` 64,
+`kserver_cluster_fuzz.c` 47, `lincheck.h` 35, `bench_persist.c` 6, `cemon_stress.c` 5 - 157 sites,
+so the fuzz and linearizability tier cannot be built with MSVC 6 yet and the XP run covers the four
+unit suites only.  The gate's rule 9 (`no new C99 64-bit spellings in tests/`) is a ratchet at that
+budget: it may shrink as files are converted, never grow.  It was self-certified in the repository's
+established way - inject a violation, watch `PRINCIPLES|FAIL|rules=17 fail=1`, revert exactly, watch
+it pass again.  Note a trap for whoever lowers the budget: a raw `grep` counts 236, because it also
+matches comments; the budget must come from the checker's own count (157), or it leaves ~80 sites of
+slack for new violations.
