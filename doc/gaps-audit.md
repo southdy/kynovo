@@ -1256,3 +1256,28 @@ the `//`-comment rule blinded by apostrophes in comments).
 **验证**：`tests/cli_smoke.sh` 从 12 项扩到 19 项，全部 PASS（新增：管道脚本 3 项、非法 limit 2 项含一条"必须不
 把本地拒绝归咎于网络"的反向断言、PIPE 的 ok/other 与 ops_timed 2 项）。这些断言的"能失败"证据就是修复前的同路径
 实测（rc=124 零执行 / rc=0 静默无界），已记在上面。
+
+## T. mem 后端锁的范围（维护者评估）与 5.1b（客户端层面被推翻）
+
+- **锁的范围收窄为"表 + 引用计数"，且必须包含 `close`**。维护者建议"只锁 open/unlink 即可"。核实后：
+  **open/unlink 不够，`close` 必须一起锁** —— `vfs_mem_close` 做 `--n->refcount` 并可能释放 inode，而
+  `vfs_mem_unlink` 做 `n->linked=0` 后判 `refcount==0` 释放：不锁 `close` 就存在"关句柄"与"摘链"之间的双重释放
+  /释放后使用。`read`/`write`/`sync` **不需要锁**（只碰本句柄自己的 inode 内容，由"一个句柄一个线程"的规则
+  保证）——已按此收窄，`vfs.h` 顶部契约同步改写。实测收益：并发用例 190 ms → **93 ms**（临界区少了一半）。
+- **不换成 `EnterCriticalSection`/`pthread_mutex_lock`**。理由（三条，均已核实）：(1) `CRITICAL_SECTION` 需要
+  `InitializeCriticalSection` 这样一次性的初始化，而这个后端的实例是静态对象、没有任何 init 钩子，懒初始化又
+  得回头用原子操作做守卫；(2) `pthread_mutex_t` 会把 pthread 链接依赖塞进这个**无依赖的单头文件**，凡是包含
+  `vfs.h` 的目标都被迫带 `-lpthread`；(3) 收窄后的临界区只有几个指针更新，用阻塞锁换不到任何东西——需要阻塞锁
+  的是"锁内做大拷贝"，而我们刚刚把大拷贝移出了锁。当前的 `InterlockedExchange`/`__sync_lock_test_and_set`
+  自旋锁同时满足 MSVC 6（Windows XP ✓）与 GCC，且零依赖。
+- **5.1b 在客户端层面被推翻**。上一轮我把它记为开放（"连接前入队的请求可能被丢"）——错。新增确定性用例
+  `client: a request queued before the connection is sent once it comes up`（连接前入队 ⇒ 断连时不发送 ⇒
+  `k_client_connect` + `k_client_on_connected` ⇒ 循环把请求发出去 ⇒ `sent==1`）。`kclient_test 18/18` ✓ ⇒
+  客户端在连接建立后会补发，`send_pending_now` 机制（"发送必须在循环里做，不能在完成回调里做"）工作正常。
+  修复前脚本首条命令超时的**真实原因**是 CLI 在连接可用之前就派发了该行；脚本模式的"等横幅"门已经把它挡住。
+- **顺带量了一条基线**：干净服务端上，**第一条**一次性请求约 **1.0 s**（其后约 0.68 s）⇒ 不是 5 s 超时；先前两次
+  探针里出现的首条超时在干净服务端上**不可复现**（那两次打的是被反复 kill/重启的服务端），记在此处以免被当成
+  缺陷复现步骤。
+- **XP 客人机验证**：暂存已刷新（23 个源文件、清单重建、脚本版本 `kynovo_step.bat` G→H、`xp_tests.bat` F→G，
+  线缆逐字节自证 23/23），**等待客人机执行**（XP 无 SSH，只能由客人机侧发起）。两个新测试是否能在 MSVC 6 下
+  编译运行，**在客人机跑完之前不作任何声明**。

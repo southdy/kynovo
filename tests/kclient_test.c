@@ -138,6 +138,29 @@ static void test_member_body_printed(void){
   TEST_END();
 }
 
+/* ---- a request queued BEFORE the connection exists ----
+   The CLI's first scripted command used to be dispatched before the connect completed and then timed out
+   ("no response from the server"), which is why script mode ended up waiting for the banner before it reads
+   its first line.  The client is supposed to cope: on_connected arms the flush and the LOOP performs it (a
+   send issued from inside the completion callback was never transmitted - that is what send_pending_now
+   exists for).  This pins the client half of that, so the CLI-side gate is not hiding a client defect. */
+static void test_queue_before_connect_is_sent_after(void){
+  k_client_app app;
+  TEST_BEGIN("client: a request queued before the connection is sent once it comes up");
+  setup(&app);
+  k_client_seed_parse(&app,"h1:7000");
+  TEST_ASSERT(k_client_queue(&app,K_REQ_SET,"k",1,"v",1)==0,"queue while disconnected");
+  TEST_ASSERT_I64_EQ(g.send_count,0,"nothing leaves while there is no connection");
+  TEST_ASSERT(k_client_connect(&app)==0,"connect (fake socket)");
+  TEST_ASSERT(k_client_on_connected(&app)==0,"the connection completes");
+  k_client_poll(&app);       /* the loop, never the completion callback, transmits */
+  TEST_ASSERT(g.send_count>0,"the queued request left the client");
+  TEST_ASSERT_I64_EQ(app.pending?(int)app.pending->sent:-1,1,"and it is marked sent");
+  TEST_ASSERT(app.pending&&app.pending->id!=0,"the pending request is the one that was queued");
+  k_pending_free(app.pending);
+  TEST_END();
+}
+
 static void test_seed_parse_basic(void){
   k_client_app app;
   TEST_BEGIN("client seed parse basic");
@@ -421,9 +444,10 @@ static void test_pipeline_keeps_k_in_flight(void){
 }
 
 int main(void){
-  TEST_PLAN(17);
+  TEST_PLAN(18);
   test_shutdown_body_printed();
   test_member_body_printed();
+  test_queue_before_connect_is_sent_after();
   test_seed_parse_basic();
   test_find_endpoint();
   test_apply_members_dedup();

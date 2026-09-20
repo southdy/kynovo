@@ -30,8 +30,12 @@ typedef unsigned long long vfs_u64;
      used to be unlocked read-modify-writes that could lose an update when two paths hashed to one bucket
      (~1 in VFS_MEM_HASH_BUCKETS).  Any number of threads may use the mem backend at once.
 
-   The lock covers the table and the refcount/linked flags, and the copy inside read/write is taken under it
-   too - deliberately, for a backend whose whole purpose is to be simple and to behave like disk. */
+   The lock covers the TABLE only - the bucket chain and each inode's refcount/linked flags, i.e. exactly the
+   state two threads share when they touch DIFFERENT files (vfs_mem_open / vfs_mem_unlink / vfs_mem_close).
+   read/write/sync are unlocked: they touch one inode's own blocks and size, which the per-handle rule above
+   already makes single-threaded, exactly as it does for disk.  It is a spinlock rather than a CRITICAL_SECTION
+   or a pthread mutex because those would add an OS/threading dependency and an init step to this header, and
+   because the critical sections here are a handful of pointer updates - nothing that justifies blocking. */
 typedef struct vfs_file vfs_file;
 VFS_DEF vfs_file *vfs_open(const char *uri);
 VFS_DEF int vfs_unlink(const char *uri);
@@ -391,15 +395,11 @@ static int vfs_mem_unlink(vfs_backend *be,const char *path){
   return -1;
 }
 static int vfs_mem_read(vfs_file *file,vfs_u64 offset,void *buf,unsigned int size){
-  vfs_spin_acquire(&((vfs_mem_ctx *)file->be)->lock);
   if(size){
     vfs_mem_file *f=(vfs_mem_file *)file;
     vfs_mem_inode *n=f->inode;
     unsigned char *dst=(unsigned char *)buf;
-    if(offset>n->logical_size||size>n->logical_size-offset){
-      vfs_spin_release(&((vfs_mem_ctx *)file->be)->lock);
-      return -1;
-    }
+    if(offset>n->logical_size||size>n->logical_size-offset) return -1;
     while(size){
       vfs_u64 blockid=offset>>VFS_MEM_BLOCK_SHIFT;
       unsigned int block_off=(unsigned int)(offset&VFS_MEM_BLOCK_MASK);
@@ -414,20 +414,15 @@ static int vfs_mem_read(vfs_file *file,vfs_u64 offset,void *buf,unsigned int siz
       offset+=(vfs_u64)chunk;
     }
   }
-  vfs_spin_release(&((vfs_mem_ctx *)file->be)->lock);
   return 0;
 }
 static int vfs_mem_write(vfs_file *file,vfs_u64 offset,const void *buf,unsigned int size){
-  vfs_spin_acquire(&((vfs_mem_ctx *)file->be)->lock);
   if(size){
     vfs_mem_file *f=(vfs_mem_file *)file;
     vfs_mem_inode *n=f->inode;
     vfs_u64 end=offset+(vfs_u64)size;
     const unsigned char *src=(const unsigned char *)buf;
-    if(end<offset){
-      vfs_spin_release(&((vfs_mem_ctx *)file->be)->lock);
-      return -1;
-    }
+    if(end<offset) return -1;
     while(size){
       vfs_u64 blockid=offset>>VFS_MEM_BLOCK_SHIFT;
       unsigned int block_off=(unsigned int)(offset&VFS_MEM_BLOCK_MASK);
@@ -435,10 +430,7 @@ static int vfs_mem_write(vfs_file *file,vfs_u64 offset,const void *buf,unsigned 
       vfs_mem_block *b;
       if(chunk>size) chunk=size;
       b=vfs_mem_get_block(n,blockid);
-      if(!b){
-        vfs_spin_release(&((vfs_mem_ctx *)file->be)->lock);
-        return -1;
-      }
+      if(!b) return -1;
       memcpy(b->data+block_off,src,chunk);
       src+=chunk;
       size-=chunk;
@@ -446,7 +438,6 @@ static int vfs_mem_write(vfs_file *file,vfs_u64 offset,const void *buf,unsigned 
     }
     if(end>n->logical_size) n->logical_size=end;
   }
-  vfs_spin_release(&((vfs_mem_ctx *)file->be)->lock);
   return 0;
 }
 static int vfs_mem_sync(vfs_file *file){
