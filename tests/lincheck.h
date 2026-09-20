@@ -23,6 +23,17 @@
 #define LINCHECK_H
 #include <stdio.h>
 #include <string.h>
+/* MSVC 6 has no `long long` and no ULL literals, while MinGW-w64 accepts both - which is why this class
+   of defect only ever surfaced on the legacy guest.  This file carries its own four-line 64-bit layer
+   rather than sharing a test header: a consumer that only needs the TYPES would otherwise pull in harness
+   state and warn as unused (measured: five -Wunused-variable diagnostics from tests/test.h). */
+#if defined(_MSC_VER)
+typedef unsigned __int64 lc_u64;
+#define LC_U64_C(x) x##ui64
+#else
+typedef unsigned long long lc_u64;
+#define LC_U64_C(x) x##ULL
+#endif
 
 #define LIN_MAX 64              /* op-mask width: at most 64 ops per key */
 #define LIN_ABSENT (-1)
@@ -36,36 +47,36 @@ typedef struct lin_op{
 } lin_op;
 
 /* ---- plain backtracking oracle (exponential; ground truth for small n) ---- */
-static int lin_search(const lin_op *ops,int n,const unsigned long long *pred,
-                      unsigned long long used,int cur_val,int count){
+static int lin_search(const lin_op *ops,int n,const lc_u64 *pred,
+                      lc_u64 used,int cur_val,int count){
   int i;
   if(count==n) return 1;
   for(i=0;i<n;i++){
-    if(used & (1ULL<<i)) continue;
+    if(used & (LC_U64_C(1)<<i)) continue;
     if(pred[i] & ~used) continue;      /* a real-time predecessor is unplaced */
     if(ops[i].is_write){
-      used |= (1ULL<<i);
+      used |= (LC_U64_C(1)<<i);
       if(lin_search(ops,n,pred,used,ops[i].val,count+1)) return 1;
-      used &= ~(1ULL<<i);
+      used &= ~(LC_U64_C(1)<<i);
     }else if(cur_val==ops[i].val){
-      used |= (1ULL<<i);
+      used |= (LC_U64_C(1)<<i);
       if(lin_search(ops,n,pred,used,cur_val,count+1)) return 1;
-      used &= ~(1ULL<<i);
+      used &= ~(LC_U64_C(1)<<i);
     }
   }
   return 0;
 }
 
 static int lin_oracle(const lin_op *ops,int n,int init){
-  unsigned long long pred[LIN_MAX];
+  lc_u64 pred[LIN_MAX];
   int i,j;
   if(n<0||n>LIN_MAX) return LIN_INCONCLUSIVE;
   for(i=0;i<n;i++){
     pred[i]=0;
     for(j=0;j<n;j++)
-      if(j!=i && ops[j].resp < ops[i].inv) pred[i] |= (1ULL<<j);
+      if(j!=i && ops[j].resp < ops[i].inv) pred[i] |= (LC_U64_C(1)<<j);
   }
-  return lin_search(ops,n,pred,0ULL,init,0);
+  return lin_search(ops,n,pred,LC_U64_C(0),init,0);
 }
 
 /* ---- memoized (graph-search) version: the production checker ----
@@ -79,21 +90,21 @@ static int lin_oracle(const lin_op *ops,int n,int init){
 #define LIN_MEMO_BITS 16
 #define LIN_MEMO_SIZE (1u<<LIN_MEMO_BITS)
 typedef struct lin_memo_slot{
-  unsigned long long used;
+  lc_u64 used;
   int cur;
   int valid;
 } lin_memo_slot;
 static lin_memo_slot lin_memo[LIN_MEMO_SIZE];
 
-static unsigned int lin_memo_hash(unsigned long long used,int cur){
-  unsigned long long k=used*0x9E3779B97F4A7C15ULL;
-  k^=(unsigned long long)(unsigned int)cur*0xC2B2AE3D27D4EB4FULL;
+static unsigned int lin_memo_hash(lc_u64 used,int cur){
+  lc_u64 k=used*LC_U64_C(0x9E3779B97F4A7C15);
+  k^=(lc_u64)(unsigned int)cur*LC_U64_C(0xC2B2AE3D27D4EB4F);
   k^=k>>29;
-  k*=0xBF58476D1CE4E5B9ULL;
+  k*=LC_U64_C(0xBF58476D1CE4E5B9);
   k^=k>>32;
   return (unsigned int)(k>>(64-LIN_MEMO_BITS));
 }
-static int lin_memo_get(unsigned long long used,int cur){
+static int lin_memo_get(lc_u64 used,int cur){
   unsigned int i=lin_memo_hash(used,cur),probe;
   for(probe=0;probe<LIN_MEMO_SIZE;probe++){
     if(!lin_memo[i].valid) return 0;                       /* empty slot: not memoized */
@@ -102,7 +113,7 @@ static int lin_memo_get(unsigned long long used,int cur){
   }
   return 0;                                                /* full: treat as a miss */
 }
-static void lin_memo_put(unsigned long long used,int cur){
+static void lin_memo_put(lc_u64 used,int cur){
   unsigned int i=lin_memo_hash(used,cur),probe;
   for(probe=0;probe<LIN_MEMO_SIZE;probe++){
     if(!lin_memo[i].valid||(lin_memo[i].used==used&&lin_memo[i].cur==cur)){
@@ -123,22 +134,22 @@ static void lin_memo_put(unsigned long long used,int cur){
   lin_memo[i].valid=1;
 }
 
-static int lin_search_memo(const lin_op *ops,int n,const unsigned long long *pred,
-                           unsigned long long used,int cur_val,int count){
+static int lin_search_memo(const lin_op *ops,int n,const lc_u64 *pred,
+                           lc_u64 used,int cur_val,int count){
   int i;
   if(count==n) return 1;
   if(lin_memo_get(used,cur_val)) return 0;      /* already proven to fail */
   for(i=0;i<n;i++){
-    if(used & (1ULL<<i)) continue;
+    if(used & (LC_U64_C(1)<<i)) continue;
     if(pred[i] & ~used) continue;
     if(ops[i].is_write){
-      used |= (1ULL<<i);
+      used |= (LC_U64_C(1)<<i);
       if(lin_search_memo(ops,n,pred,used,ops[i].val,count+1)) return 1;
-      used &= ~(1ULL<<i);
+      used &= ~(LC_U64_C(1)<<i);
     }else if(cur_val==ops[i].val){
-      used |= (1ULL<<i);
+      used |= (LC_U64_C(1)<<i);
       if(lin_search_memo(ops,n,pred,used,cur_val,count+1)) return 1;
-      used &= ~(1ULL<<i);
+      used &= ~(LC_U64_C(1)<<i);
     }
   }
   lin_memo_put(used,cur_val);
@@ -152,16 +163,16 @@ static int lin_search_memo(const lin_op *ops,int n,const unsigned long long *pre
    such limit; the cap exists only because the C version packs `used` in a
    fixed-width bitmask.) */
 static int lin_linearizable(const lin_op *ops,int n,int init){
-  unsigned long long pred[LIN_MAX];
+  lc_u64 pred[LIN_MAX];
   int i,j;
   if(n<0||n>LIN_MAX) return LIN_INCONCLUSIVE;
   for(i=0;i<n;i++){
     pred[i]=0;
     for(j=0;j<n;j++)
-      if(j!=i && ops[j].resp < ops[i].inv) pred[i] |= (1ULL<<j);
+      if(j!=i && ops[j].resp < ops[i].inv) pred[i] |= (LC_U64_C(1)<<j);
   }
   memset(lin_memo,0,sizeof(lin_memo));
-  return lin_search_memo(ops,n,pred,0ULL,init,0);
+  return lin_search_memo(ops,n,pred,LC_U64_C(0),init,0);
 }
 
 static void lin_dump(const lin_op *ops,int n){
@@ -181,11 +192,11 @@ static int lc_case(const char *name,const lin_op *ops,int n,int init,int expect)
 }
 
 /* splitmix64 (self-contained, for the randomized cross-check) */
-static unsigned long long lc_seed;
-static unsigned long long lc_rand(void){
-  unsigned long long z=(lc_seed+=0x9E3779B97F4A7C15ULL);
-  z=(z^(z>>30))*0xBF58476D1CE4E5B9ULL;
-  z=(z^(z>>27))*0x94D049BB133111EBULL;
+static lc_u64 lc_seed;
+static lc_u64 lc_rand(void){
+  lc_u64 z=(lc_seed+=LC_U64_C(0x9E3779B97F4A7C15));
+  z=(z^(z>>30))*LC_U64_C(0xBF58476D1CE4E5B9);
+  z=(z^(z>>27))*LC_U64_C(0x94D049BB133111EB);
   return z^(z>>31);
 }
 
@@ -243,7 +254,7 @@ static int lincheck_selftest(void){
      appear in the same history: a memo keyed on (used, cur&3) is guaranteed to
      be caught here, while a -1..2 domain (the four residues exactly once) could
      never expose the collision. */
-  lc_seed=0x123456789ABCDEF0ULL;
+  lc_seed=LC_U64_C(0x123456789ABCDEF0);
   for(iter=0;iter<2000;iter++){
     n=1+(int)(lc_rand()%7u);              /* 1..7 ops */
     init=(int)(lc_rand()%5u)-1;           /* -1..3 */
@@ -267,8 +278,8 @@ static int lincheck_selftest(void){
      is full (the previous probe loop had no capacity check and hung once all
      65536 slots of one cur&3 table were taken).  Fill past capacity with distinct
      keys, then look up on the full table: both must terminate. */
-  for(mi=0;mi<LIN_MEMO_SIZE+8u;mi++) lin_memo_put((unsigned long long)mi,(int)(mi&1u));
-  r=lin_memo_get((unsigned long long)(LIN_MEMO_SIZE-1u),0);
+  for(mi=0;mi<LIN_MEMO_SIZE+8u;mi++) lin_memo_put((lc_u64)mi,(int)(mi&1u));
+  r=lin_memo_get((lc_u64)(LIN_MEMO_SIZE-1u),0);
   if(r!=0&&r!=1){ fprintf(stderr,"lincheck selftest FAIL: memo lookup returned %d\n",r); return 1; }
   memset(lin_memo,0,sizeof(lin_memo));
 

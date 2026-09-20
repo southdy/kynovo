@@ -177,7 +177,7 @@ report('no new bare sprintf in code/ (budget 13, use k_text_append/k_snprintf)',
 # comments, and a budget taken from that number would leave ~80 sites of slack for new violations).
 TESTS_C = (git_out('ls-files', 'tests/*.c', 'tests/*.h') or '').split()
 sites = scan(r'\blong long\b|(?:0[xX][0-9a-fA-F]+|[0-9]+)(?:ULL|ull|LL|ll)\b|%ll[du]', TESTS_C)
-report('no new C99 64-bit spellings in tests/ (budget 161, define them locally)', sites[162:] or [])
+report('no new C99 64-bit spellings in tests/ (budget 127, define them locally)', sites[162:] or [])
 
 # 8. contract files: changing them must be deliberate
 dirty = (git_out('status', '--porcelain', 'code/raft.h', 'code/treap.h') or '').strip()
