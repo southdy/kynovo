@@ -970,3 +970,23 @@ bytes ARE the observation and are deliberately never converted.  That step was a
 `tools/check-principles.py` already implements WITH the exemption (and which runs inside `regress quick`
 on both jobs).  The duplicate was removed: a copy of a rule without its exemption is not a stricter
 check, it is a wrong one.  The Windows gate passed on the same commit, so the code itself is fine.
+
+### (6) "A new command type touches nine places" (E10) - now a mechanical rule
+
+Before: the knowledge lived in a maintainer note, and forgetting a place is silent - a response body
+that no client branch prints is swallowed and the client answers a bare "ok".
+
+Now `tools/check-principles.py` rule 9 keeps an explicit, frozen table of every `K_REQ_*` declared in
+`kproto.h` and the files that must mention it.  Two things make it more than a list:
+- a type declared in `kproto.h` that is NOT in the table fails the rule, so a new command cannot be
+  added without stating, on purpose, which places it needs;
+- every place the table names must really contain the type, so the table cannot rot.
+
+The table was written from the tree, not from memory: only `kproto.h` and `kserver.h` mention all 21
+types; `K_REQ_SET`/`K_REQ_DEL` are absent from `kclient.h` (their response body IS a bare status, so
+there is no print branch) and `K_REQ_RGET`/`K_REQ_MEMBER` are absent from `kdbctl.c` (both are reached
+through kclient helpers).  Those four entries carry the reason inline.
+
+Proved able to fail both ways, with byte-exact restores and an empty `git diff` for the injected files
+afterwards: adding `#define K_REQ_ZZTEST 22u` to kproto.h gives `PRINCIPLES|FAIL|rules=18 fail=1`, and
+listing `K_REQ_SET` as expected in `kclient.h` does the same.

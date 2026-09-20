@@ -239,5 +239,52 @@ if dirty or re.search(r'^code/(raft|treap)\.h$', last, re.M):
 else:
     report('raft.h/treap.h untouched in this change', [])
 
+# 9. every request type is accounted for in the places that must know it.
+# A new K_REQ_* is a multi-file change (declaration, server dispatch/classification, the client's
+# response handling, the CLI), and forgetting one file is SILENT: a response body that no branch prints
+# is swallowed and the client answers a bare "ok".  This rule cannot guess which places a new command
+# needs, so it forces the author to say so - a declared type that is not listed below is a failure, and
+# every place listed for a type must really contain it.
+REQ_FILES = {'kproto.h': 'code/kproto.h', 'kserver.h': 'code/kserver.h',
+             'kclient.h': 'code/kclient.h', 'kdbctl.c': 'code/kdbctl.c'}
+REQ_PLACES = {
+    # response bodies: every place that must mention the type, frozen from the tree
+    'K_REQ_GET':      ['kproto.h', 'kserver.h', 'kclient.h', 'kdbctl.c'],
+    'K_REQ_MGET':     ['kproto.h', 'kserver.h', 'kclient.h', 'kdbctl.c'],
+    'K_REQ_MSET':     ['kproto.h', 'kserver.h', 'kclient.h', 'kdbctl.c'],
+    'K_REQ_RSET':     ['kproto.h', 'kserver.h', 'kclient.h', 'kdbctl.c'],
+    'K_REQ_MDEL':     ['kproto.h', 'kserver.h', 'kclient.h', 'kdbctl.c'],
+    'K_REQ_RDEL':     ['kproto.h', 'kserver.h', 'kclient.h', 'kdbctl.c'],
+    'K_REQ_COUNT':    ['kproto.h', 'kserver.h', 'kclient.h', 'kdbctl.c'],
+    'K_REQ_MIN':      ['kproto.h', 'kserver.h', 'kclient.h', 'kdbctl.c'],
+    'K_REQ_MAX':      ['kproto.h', 'kserver.h', 'kclient.h', 'kdbctl.c'],
+    'K_REQ_CAS':      ['kproto.h', 'kserver.h', 'kclient.h', 'kdbctl.c'],
+    'K_REQ_FCALL':    ['kproto.h', 'kserver.h', 'kclient.h', 'kdbctl.c'],
+    'K_REQ_INFO':     ['kproto.h', 'kserver.h', 'kclient.h', 'kdbctl.c'],
+    'K_REQ_STATS':    ['kproto.h', 'kserver.h', 'kclient.h', 'kdbctl.c'],
+    'K_REQ_MEMBERS':  ['kproto.h', 'kserver.h', 'kclient.h', 'kdbctl.c'],
+    'K_REQ_HELP':     ['kproto.h', 'kserver.h', 'kclient.h', 'kdbctl.c'],
+    'K_REQ_SHUTDOWN': ['kproto.h', 'kserver.h', 'kclient.h', 'kdbctl.c'],
+    'K_REQ_TOPOLOGY': ['kproto.h', 'kserver.h', 'kclient.h', 'kdbctl.c'],
+    'K_REQ_RGET':     ['kproto.h', 'kserver.h', 'kclient.h'],   # reached through a kclient helper
+    'K_REQ_MEMBER':   ['kproto.h', 'kserver.h', 'kclient.h'],   # the discovery handshake, not the CLI
+    'K_REQ_SET':      ['kproto.h', 'kserver.h', 'kdbctl.c'],    # response body is a bare status: no print branch
+    'K_REQ_DEL':      ['kproto.h', 'kserver.h', 'kdbctl.c'],
+}
+def req_text(path):
+    with open(path, 'r') as fh:
+        return fh.read()
+req_declared = set(re.findall(r'#define\s+(K_REQ_[A-Z0-9_]+)\s+[0-9]+u', req_text(REQ_FILES['kproto.h'])))
+req_problems = ['declared in kproto.h but not accounted for here: %s (add it to REQ_PLACES and wire every'
+                ' place it needs)' % c for c in sorted(req_declared - set(REQ_PLACES))]
+req_problems += ['listed in REQ_PLACES but not declared in kproto.h: %s' % c
+                 for c in sorted(set(REQ_PLACES) - req_declared)]
+for cmd in sorted(REQ_PLACES):
+    for place in REQ_PLACES[cmd]:
+        if not re.search(r'\b' + cmd + r'\b', req_text(REQ_FILES[place])):
+            req_problems.append('%s is expected in %s but does not appear there' % (cmd, REQ_FILES[place]))
+report('every request type is accounted for in the files that must know it (%d types)' % len(REQ_PLACES),
+       req_problems)
+
 print('PRINCIPLES|%s|rules=%d fail=%d' % ('OK' if not fails else 'FAIL', rules, fails))
 sys.exit(1 if fails else 0)
