@@ -15,8 +15,10 @@
 # it is not itself recognized as a threat.
 #
 # Usage:
-#   ./build.sh                       # build all nine targets
-#   ./build.sh kdbsvr             # server application binary
+#   ./build.sh regress quick|fuzz|full   # THE GATE (one machine-readable verdict line; run before every push)
+#   ./build.sh                       # build every target: drivers, benchmarks and tools
+#   ./build.sh tools                 # the C tools in tools/ (inside the same zero-warning gate)
+#   ./build.sh kdbsvr                # server application binary
 #   ./build.sh kdbctl                # CLI application binary
 #   ./build.sh selftest              # single-process self-test binary
 #   ./build.sh bench                 # build + run the fsync microbenchmark
@@ -31,7 +33,7 @@
 #   ./build.sh kclient               # kclient_test driver only
 #   ./build.sh kserver               # kserver_test driver only
 #   ./build.sh kclusterfuzz          # kserver_cluster_fuzz driver only
-#   ./build.sh run-test              # build raft_test + run it (218 cases)
+#   ./build.sh run-test              # build raft_test + run it (221 cases)
 #   ./build.sh run-fuzz [seed [n]]   # build raft_fuzz + run n iterations from seed
 #   ./build.sh run-cfuzz [seed [n]]  # build raft_cluster_fuzz + run n iterations
 #   ./build.sh run-kclient           # build kclient_test + run it
@@ -162,6 +164,15 @@ build_bench_persist() {
 build_cemon_stress() {
     $CC -std=c89 -O2 -Wall -Wextra -Wdeclaration-after-statement -Wno-unused-function -pthread -DBENCH_CFLAGS="\"$BENCH_CFLAGS\"" tests/cemon_stress.c -o "$BUILD_DIR/cemon_stress.exe" $LIB_WS $LIB_PS
 }
+# The C tools that produce performance evidence (and the wake probe the latency investigations use) were
+# in NO aggregation target, so they could rot silently - exactly the failure the benchmark comment above
+# says was fixed for benchmarks.  They are cheap to build and now live inside the same warning gate.
+build_tools() {
+    $CC -std=c89 -O2 -Wall -Wextra -Wdeclaration-after-statement -Wno-unused-function tools/proc_time.c -o "$BUILD_DIR/proc_time.exe" $LIB_WS
+    $CC -std=c89 -O2 -Wall -Wextra -Wdeclaration-after-statement -Wno-unused-function tools/treap_stress.c -o "$BUILD_DIR/treap_stress.exe"
+    $CC -std=c89 -O2 -Wall -Wextra -Wdeclaration-after-statement -Wno-unused-function tools/cemon_tcp_probe.c -o "$BUILD_DIR/cemon_tcp_probe.exe" $LIB_WS
+    $CC -std=c89 -O2 -Wall -Wextra -Wdeclaration-after-statement -Wno-unused-function tools/harness/wake_probe.c -o "$BUILD_DIR/wake_probe.exe" $LIB_WS
+}
 build_test() {
     $CC -std=c89 -pthread -O2 -Wall -Wextra -Wdeclaration-after-statement -Wno-unused-function tests/raft_test.c -o "$BUILD_DIR/raft_test.exe"
 }
@@ -288,6 +299,7 @@ build_all() {
     build_bench_persist || RC=1
     build_cemon_bench || RC=1
     build_cemon_stress || RC=1
+    build_tools || RC=1
 }
 
 # build/ is a PURE OUTPUT directory: nothing hand-written may live there (harnesses and records
@@ -402,6 +414,7 @@ do_regress(){
 
 case "${1:-all}" in
     all)          build_all ;;
+    tools)        build_tools || RC=1 ;;
     kdbsvr)    build_kdbsvr || RC=1 ;;
     kdbctl)       build_kdbctl || RC=1 ;;
     selftest)     build_selftest || RC=1 ;;

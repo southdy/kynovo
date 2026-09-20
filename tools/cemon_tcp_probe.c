@@ -9,17 +9,15 @@
  * usage: cemon_tcp_probe server <port> <seconds>
  *        cemon_tcp_probe client <port> <milliseconds_before_send>
  *
- * Build (no build.sh change; throwaway diagnostic):
+ * Build: `./build.sh tools` (it is inside the same zero-warning gate as everything else now), or by hand:
  *   gcc -std=c89 -O1 -Wall -o build/cemon_tcp_probe.exe tools/cemon_tcp_probe.c -lws2_32
  */
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
-#if defined(_WIN32)
-#if defined(_WIN32)
-#include <windows.h>
-#endif
-#endif
+/* No <windows.h> here: cemon.h pulls in winsock2.h before windows.h in the order the SDK wants, and
+   including windows.h first is exactly what earns the "#warning Please include winsock2.h before
+   windows.h" diagnostic this tool used to carry (which kept it out of the zero-warning gate). */
 #include "../code/kbase.h"
 #include "../code/kproto.h"
 #define CEMON_IMPLEMENTATION
