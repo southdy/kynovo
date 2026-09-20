@@ -772,6 +772,49 @@ static unsigned int g_walceil_seq;
    machine - silently, with its metadata present, and again on every later restart.  The scan now jumps to the tail
    around the write position, and if that finds nothing it refuses loudly.  This case releases the prefix by hand
    (exactly what cleanup does) and insists the store does not come back empty. */
+/* ---- a cut in the MIDDLE of the WAL must be fail-stop, not a silent truncation (fourth-round review A2/A3)
+   The auditors argued that a missing segment with records after it slips past the acknowledged-record check,
+   because that check compares against a metadata slot that is only fsynced every K_WAL_META_FSYNC_EVERY records.
+   Tracing says otherwise, and this case pins it: the slot is ALSO synced on every segment change, so its record
+   always sits in the newest segment and any cut before that is caught.  Unlink one middle segment here (both sides
+   keep their records) and the store must refuse, naming both positions - a silent truncation would drop every
+   record after the cut.  The property, not a fix: this case is green before and after any change. */
+static void test_wal_recovery_refuses_a_middle_segment_cut(void){
+  k_server s;
+  char base[64],path[K_URI_MAX],key[16];
+  k_u8 frame[K_FRAME_HEADER+64];
+  k_u32 total;
+  raft_i64 bl;
+  k_u64 cut;
+  int i,rc;
+  TEST_BEGIN("server WAL recovery refuses a cut in the middle of the log (fail-stop)");
+  sprintf(base,"mem://kstest-midcut-%u",g_walceil_seq++);
+  setup(&s,1,base);
+  TEST_ASSERT(k_server_open(&s)==0,"open");
+  TEST_ASSERT(elect(&s)==0,"leader");
+  s.cfg.wal_seg_size=900u;                      /* rotate every few records */
+  for(i=0;i<60;i++){
+    sprintf(key,"k%d",i);
+    bl=s.last_applied;
+    k_server_client_accepted(&s,(void*)(size_t)1);
+    total=make_client_frame(frame,sizeof(frame),K_REQ_SET,1u,key,(k_u32)strlen(key),"v",1);
+    TEST_ASSERT(total>0,"SET frame");
+    k_server_client_received(s.connections,frame,total);
+    apply_until(&s,bl+1);
+    for(bl=0;bl<3;bl++) turn(&s,20u);
+  }
+  TEST_ASSERT(s.wal_meta.next.segment>3u,"several segments were written");
+  cut=s.wal_meta.next.segment/2u;              /* a middle one: records exist on both sides */
+  k_server_release(&s);
+  TEST_ASSERT(k_path_wal_segment(path,base,cut)==0,"cut path");
+  TEST_ASSERT(vfs_unlink(path)==0,"remove one middle segment");
+  setup(&s,1,base);
+  rc=k_server_open(&s);
+  if(rc==0) k_server_release(&s);
+  TEST_ASSERT(rc!=0,"a middle-segment cut must fail-stop instead of silently truncating the log");
+  TEST_END();
+}
+
 static void test_wal_recovery_refuses_a_prefix_past_the_scan_ceiling(void){
   k_server s;
   char base[64],path[K_URI_MAX],key[16];
@@ -1678,7 +1721,7 @@ static void test_membership_wait_reporting(void){
 
 int main(int argc,char **argv){
   if(argc>=3&&strcmp(argv[1],"--apply-stress")==0) return apply_stress(test_strtoull(argv[2]),argc>=4?test_strtoull(argv[3]):TEST_U64_C(4096),argc>=5&&strcmp(argv[4],"thread")==0,argc>=6&&strcmp(argv[5],"nosnap")==0);
-  TEST_PLAN(38);
+  TEST_PLAN(39);
   g_run_tag=0;
   if(k_monotonic_us(&g_run_tag)!=0) g_run_tag=(k_u64)time(0);
   test_fcall_gate_reopens_when_its_request_dies();
@@ -1696,6 +1739,7 @@ int main(int argc,char **argv){
   test_wal_recovery_rejects_missing_generation();
   test_wal_recovery_across_segment_rotation();
   test_wal_recovery_refuses_missing_newest_segment();
+  test_wal_recovery_refuses_a_middle_segment_cut();
   test_wal_recovery_refuses_a_prefix_past_the_scan_ceiling();
   test_wal_meta_slot_only_written_when_durable();
   test_wal_meta_both_slots_invalid_fail_stop();

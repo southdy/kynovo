@@ -1813,9 +1813,15 @@ static int k_wal_state_load(const char *base,k_restore *restore,k_wal_meta_state
   if(meta_absent)
     printf("wal: the WAL metadata is missing under '%s': rebuilt the index from %d record(s) in the segments\n",
            base,records);
-  /* The metadata stores record/record_size = the last ACKNOWLEDGED record, so recovery must have reached it.
-     If the log ends earlier, records that were acked are missing (a deleted segment, a hole) and continuing on
-     top of this store would overwrite - and silently outlive - whatever they held (review 2.2). */
+  /* The metadata's slot is a WATERMARK, not a per-record ledger: it is fsynced on every segment change and every
+     K_WAL_META_FSYNC_EVERY records, so record/record_size names an acknowledged record but lags the newest one by
+     up to that many records.  What the check below really catches is a cut EARLIER than the slot - and because the
+     slot is synced at every segment change, its record always sits in the newest segment, so a missing or empty
+     segment inside the retained range, with records after it, is caught here (the fourth round's A2/A3 claim that
+     it slips past was refuted by experiment; see test_wal_recovery_refuses_a_middle_segment_cut).  A hole among the
+     newest records WITHIN one segment is caught earlier and more finely by the generation-continuity and CRC checks
+     above.  Continuing on top of a log that ends before the slot would overwrite - and silently outlive - whatever
+     the missing records held (review 2.2). */
   if(!meta_absent&&meta->record_size>0u){
     k_u64 end_seg=n_seg,end_off=n_off+n_size;
     k_u64 ack_seg=meta->record.segment,ack_off=meta->record.offset+meta->record_size;

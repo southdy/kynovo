@@ -46,7 +46,7 @@ and their `run-*` versions, `selftest`, `kdbsvr`, `kdbctl`, `bench*`, `cemon-ben
 |---|---|---|---|---|
 | L0 | compile gate | `./build.sh` | rc=0 and 0 warnings in `build.log` | ~90s |
 | L1a | raft unit | `./build/raft_test.exe` | `SUMMARY: 221/221 passed` | ~1s |
-| L1b | server unit (with stress mode) | `./build/kserver_test.exe` | `SUMMARY: 38/38 passed` | ~30s |
+| L1b | server unit (with stress mode) | `./build/kserver_test.exe` | `SUMMARY: 39/39 passed` | ~30s |
 | L1c | client unit | `./build/kclient_test.exe` | `SUMMARY: 18/18 passed` | ~0.1s |
 | L1d | cemon event-loop unit | `./build/cemon_test.exe` | `SUMMARY: 5/5 passed` | ~2s (includes a 2s long wait) |
 | L1e | end-to-end self-test (single process, with membership change/bootstrap/election) | `./build/selftest.exe` | `selftest: PASS` | ~1–3s |
@@ -294,7 +294,7 @@ against the repository before transfer:
 - crash contract: after an abrupt `taskkill` and a restart on the same store, the key written before
   the kill reads back, and a key that was never written reads `(not found)` - the negative control
   that keeps the check from being unable to fail;
-- unit suites at that guest run: `cemon_test 5/5`, `kclient_test 18/18`, `raft_test 221/221`, `kserver_test 37/37` (the ceiling case landed afterwards: 38/38 in the tree),
+- unit suites at that guest run: `cemon_test 5/5`, `kclient_test 18/18`, `raft_test 221/221`, `kserver_test 37/37` (the ceiling and middle-cut cases landed afterwards: 39/39 in the tree),
   `vfs_fault_test 5/5` - identical to the local gate, including the storage injection seam, whose five
   cases (transparent wrapper / fsync failure / write failure / failure during open / two threads on two
   paths that share one mem hash bucket, which needs real worker threads and therefore real linking) build

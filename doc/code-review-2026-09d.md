@@ -62,18 +62,40 @@ walk rebuilding a store whose retained records still carry the state, i.e. one w
 is what the jump is for and is **not** covered by a test yet; it would need the test to drive a snapshot (this suite
 does not). The next store-level test that drives snapshots should cover it.
 
-### A2 `[me]` HIGH: "the metadata stores the last ACKNOWLEDGED record" is false - the slot lags by up to 63 records
+### A2 `[me]` **[REFUTED in its reachable form; the comment was the defect]** HIGH: "the metadata stores the last ACKNOWLEDGED record" is a misleading description - the slot is a watermark
 
 `code/kserver.h:1786` claims it, while the write path syncs the slot only on a segment change or every
 `K_WAL_META_FSYNC_EVERY` records: `:2082` `durable=(record.segment!=worker->meta_sync_segment)||(worker->meta_since_sync>=(int)K_WAL_META_FSYNC_EVERY);`
 A client is acked when its record write+fsync returns.  So the check catches a *deleted older segment* but not a
 hole among the newest ≤63 records: it silently truncates acked entries there and rewinds the append position.
 
-### A3 `[me]` HIGH: a hole or missing segment *after* records were read is a silent chain end, not fail-stop
+
+**Verdict.** The description is wrong and was corrected in place (the slot is fsynced on every segment change *and*
+every `K_WAL_META_FSYNC_EVERY` records, so it lags; the comment now says watermark and what the check really catches).
+The *consequence* the audit drew - "a hole among the newest records slips past, recovery silently truncates acked
+entries and rewinds the append position" - does not survive tracing or experiment: a hole *inside* a segment is
+caught by the CRC and generation-continuity checks, and a hole *between* segments is caught by this very check,
+because the segment-change sync keeps the slot's record in the newest segment.  The residual is a byte-level hole
+inside the newest segment *after* the slot's record that still passes CRC - that is storage corruption, not a log
+structure the code can be blamed for.  Guard added: `test_wal_recovery_refuses_a_middle_segment_cut` (see A3).
+
+### A3 `[me]` **[REFUTED - and now guarded]** HIGH: a hole or missing segment *after* records were read is a silent chain end, not fail-stop
 
 `code/kserver.h:1651-1652` `if(records) break;` (open failure) and `:1667` the same for an empty segment.
 `doc/crash-contract.md:54-55` claims a hole inside the retained range is fail-stop.  It is not; the only guard is
 A2's lagging check.
+
+
+**Verdict.** The code does break the chain silently at that point (`if(records) break;`), so the auditors read the
+code correctly - but the *outcome* is not silent: the acknowledged-record check above catches it.  Experiment (an
+one-off diagnostic case, since promoted): an 8-segment store, one MIDDLE segment unlinked (records intact on both
+sides) - the walk stops at segment 3 and the store refuses with `wal: the metadata says the record at segment 8
+offset 122 was acknowledged, but the log ends at segment 3 offset 854 (records are missing): refusing to recover`,
+`k_server_open` returning -1.  The reason is structural: the slot is synced at every segment change, so its record
+is always in the newest segment and any cut before it is detected.  `doc/crash-contract.md`'s claim that a hole in
+the retained range is fail-stop therefore holds for the reachable forms, and it is now pinned by
+`test_wal_recovery_refuses_a_middle_segment_cut` (39th case).  Deliberately labelled: that case is green before and
+after any fix - it is a regression guard for a property, not evidence for a change.
 
 ### A4 `[audit]` HIGH: after a torn tail, cross-segment generation continuity is not enforced, and term/vote can regress
 
@@ -337,7 +359,7 @@ instance, and a green local gate is not a green gate - read the pushed run and l
 1. **A1** - the ceiling must never return success while the metadata names an acknowledged record; continue the
    scan near `next.segment` before giving up, and give up loudly.  Evidence: a store with a released prefix beyond
    the ceiling must refuse to start, and the existing small-store tests must stay green.
-2. **A2/A3** - either holes become fail-stop, or the doc and the comment stop claiming they already are.
+2. **A2/A3** - **done**: refuted in the reachable forms by experiment, the misleading comment rewritten, the property pinned by `test_wal_recovery_refuses_a_middle_segment_cut`.
 3. **A5/A6** - base-0 acceptance and install-without-truncate: silent-corruption paths with cheap guards.
 4. **B1/B4** - the double close after a bounded wait, and the rx buffer freed under the reader: one line each, plus
    an invariant the code states rather than assumes.
