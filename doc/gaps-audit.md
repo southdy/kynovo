@@ -1066,3 +1066,36 @@ made for this run - a stale `xp_tests.bat` would have reported `ver=E` and no vf
 end-to-end run still reproduces the crash contract (`taskkill`, restart, `survive-me`) with its negative
 control reading `(not found)`.  `kserver_test` reports 34/34 rather than the previously recorded 33/33
 because the membership-visibility work added a deterministic case, and it passes here too.
+
+### §M Full-project review 2026-09c
+
+The review itself is `doc/code-review-2026-09c.md`: seven read-only module audits (raft / recovery+WAL+snapshot /
+request+protocol+membership+shutdown / client+CLI / platform layer / tests+gates / docs+hygiene) over the tree at
+`33b3eaa`, with every high-severity claim re-checked against the code by hand and each finding marked VERIFIED or
+REPORTED.  Baseline: `REGRESS|full|pass=14 fail=0 duration=330s` on this machine, all fourteen layers green.
+
+Status corrections this review forces (they were fixed, and the ledger still listed them as open):
+- **D13-D19, F2** - fixed in `152786a`; **A9/A10** - fixed in `1b3f813`; **C4** (a `k_server_open` failure
+  printing its cause) - fixed in `9962d09` (`k_open_fail`, `code/kserver.h:5163`).  `doc/principles.md:47` still
+  cited C4 as the open justification and has been corrected.
+- The stale counts the review found (fuzz `pass=12`, `quick pass=9`, 4 unit suites, `kserver_test 33/33`,
+  "22 sources") are corrected in the documents that state them.
+
+Two findings in this review are **defects in my own work from this same day**, recorded as such rather than as
+newly discovered pre-existing issues:
+- **2.1** - the D10 recovery fix (`09e6a3e`) only closes the case where segment 0 still exists: with an unusable
+  metadata slot and a snapshot-released prefix, recovery returns "never-written store" and starts empty.  It is
+  open, and fixing it needs a read-only existence primitive because "fresh store" and "damaged store with a
+  released prefix" are indistinguishable through the current vfs interface.
+- **3.1** - the membership note written for step 3 of the same day's work never reaches the operator: the client
+  print whitelist does not include `K_REQ_MEMBER`, so the CLI shows a bare `ok`.  Open; one line plus a
+  regression test.
+
+Also carried forward from this review as open, with the reasoning in the document: 1.1/1.2 (a failed send frees
+the `k_conn` while the frame reader still uses it, and `rx_buffer_bytes` double-subtracts into a wrap), 2.2/2.3
+(missing or unopenable segment, empty `.wal.meta`), 2.4 (snapshot cleanup can delete the rollback segment), 3.3/
+3.4/3.5 (phantom pending after a refused change; the synchronous rejection path bypasses the new backoff; the note
+and the source are server-global), 4.1 (a real C89 violation at `code/cemon.h:2584`, in a branch no gate can
+compile), 4.2 (the mem backend's inode table is an unlocked process-global), 6.1/6.2/6.3 (three gates that go
+green on nothing: `scan()` re-scoping to the whole library, the naive LF step still in the primary CI job, and
+the `//`-comment rule blinded by apostrophes in comments).

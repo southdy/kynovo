@@ -93,7 +93,7 @@ Suggested skeleton (written to file during execution):
 
 ### 3.2 One-shot gate: `./build.sh regress` (the stable entry point for automation and cron)
 - `./build.sh regress [--quick|--full|--fuzz N]`: executes in the order given in `doc/testing.md` §6;
-- **last line prints a machine-readable summary**: `REGRESS|quick|pass=7 fail=0 duration=142s` (the agent only needs to read this line);
+- **last line prints a machine-readable summary**: `REGRESS|quick|pass=10 fail=0 duration=142s` (the agent only needs to read this line);
 - stops on failure and prints the failing gate's **verdict line** and log path; `--full` appends L4/L6;
 - one-to-one with the table in `doc/testing.md`, avoiding drift between the two.
 

@@ -44,7 +44,7 @@ that is captured archival evidence, and reflowing it destroys it.
 | The free point must be the **contract endpoint**, not "the place where the data was copied" | once a request has been handed to raft it is still that request's cookie and payload | Discipline + regression (single free point, `k_request_free`) |
 | At every close site: **save first, clear second, close third** | once cemon has closed, the object is void; a leftover handle = a delayed UAF | Discipline + crash-class regressions |
 | **Lose no request**: any path that accepts a request must end in a reply or a visible log | silent drops once hung clients forever | Partly mechanical (`selftest`/`cli_smoke` regressions) |
-| **fatal must print the reason** | a silent exit was once taken for "it did not happen" | ⚠ Discipline (gap C4 is tracked on card `t_469a3143`) |
+| **fatal must print the reason** | a silent exit was once taken for "it did not happen" | ✓ enforced by `k_open_fail` (`code/kserver.h:5163`) |
 | Transaction replicas must not call `capture`/`save`/`load` | the copy semantics of the treap | Discipline (`treap.h` comment) |
 | Do not change the `raft.h`/`treap.h` contracts without first aligning with the paper's semantics | the semantic baseline is Ongaro's paper | **Advisory-mechanical**: the checker prints a NOTE when it detects that either of those two files changed (the message must name the paragraph it relies on) |
 

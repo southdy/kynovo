@@ -5,7 +5,7 @@ dissertation) or a gap in doc/gaps-audit.md, say which one. -->
 
 ## Gates run (paste the verdict lines, do not summarise them)
 
-- [ ] `./build.sh regress quick` -> `REGRESS|quick|pass=7 fail=0 duration=...s`
+- [ ] `./build.sh regress quick` -> `REGRESS|quick|pass=10 fail=0 duration=...s`
 - [ ] `./build.sh regress fuzz` (required when the change touches raft, the store, the transport or snapshots)
 - [ ] The specific gate that used to reproduce the bug (when fixing one)
 

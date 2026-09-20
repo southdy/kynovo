@@ -29,7 +29,8 @@ export MSYS2_ARG_CONV_EXCL='*'               # required: otherwise MSYS rewrites
   (plus `-Wno-unused-function`, because a single-header library exposes public APIs the driver never
   calls). Principle: **tests must not be looser than production**.
 - `-Wdeclaration-after-statement` specifically catches the "declaration after statement" MSVC 6.0 rejects.
-- **L0 verdict**: `./build.sh` rc=0 and `grep -cE ' error|warning'` over `build/build.log` is **0**.
+- **L0 verdict**: `./build.sh` rc=0 and `build.sh regress`'s build layer reports ok - it counts real compiler diagnostics
+  (`^[^ :]+\.(c|h):[0-9]+:[0-9]+: (warning|error):`) in `build/regress/build.log`, on the pinned toolchain only.
   > Discipline: **confirm the build succeeded before interpreting any run result**. This project has three
   > times believed a fix was ineffective when it was in fact running the stale binary a failed compile left behind.
 
@@ -45,7 +46,7 @@ and their `run-*` versions, `selftest`, `kdbsvr`, `kdbctl`, `bench*`, `cemon-ben
 |---|---|---|---|---|
 | L0 | compile gate | `./build.sh` | rc=0 and 0 warnings in `build.log` | ~90s |
 | L1a | raft unit | `./build/raft_test.exe` | `SUMMARY: 221/221 passed` | ~1s |
-| L1b | server unit (with stress mode) | `./build/kserver_test.exe` | `SUMMARY: 33/33 passed` | ~30s |
+| L1b | server unit (with stress mode) | `./build/kserver_test.exe` | `SUMMARY: 34/34 passed` | ~30s |
 | L1c | client unit | `./build/kclient_test.exe` | `SUMMARY: 16/16 passed` | ~0.1s |
 | L1d | cemon event-loop unit | `./build/cemon_test.exe` | `SUMMARY: 5/5 passed` | ~2s (includes a 2s long wait) |
 | L1e | end-to-end self-test (single process, with membership change/bootstrap/election) | `./build/selftest.exe` | `selftest: PASS` | ~1–3s |
@@ -192,7 +193,7 @@ The **single stable entry point** for automation (agents, cron and CI all use it
 command lists):
 
 ```bash
-./build.sh regress quick     # default: principles + build (0-warning assertion) + 4 unit suites + selftest + cleanliness + CLI smoke   ~2.5 min
+./build.sh regress quick     # default: principles + build (0-warning assertion) + 5 unit suites + selftest + cleanliness + CLI smoke   ~2.5 min
 ./build.sh regress fuzz      # adds raft_fuzz 2000 / raft_cluster_fuzz 200 / kserver_cluster_fuzz 1                       ~5 min (**this is what CI runs on every push/PR**)
 ./build.sh regress full      # fuzz with release-sized parameters (20k/2000/10) plus a 24-round release soak              ~20 min (nightly)
 ```
@@ -200,7 +201,7 @@ command lists):
 - Every layer prints one line `GATE|<layer>|pass|FAIL|<verdict line>|<seconds>`; **the verdict line must
   appear** — a silent run (exit 0 but no verdict line) is judged **FAIL**; this is where "0 failures does
   not mean 0 data" is made concrete;
-- **the last line is machine-readable**: `REGRESS|quick|pass=9 fail=0 duration=144s` (the `principles` layer
+- **the last line is machine-readable**: `REGRESS|quick|pass=10 fail=0 duration=166s` (the `principles` layer
   added: `python tools/check-principles.py`) (an agent can decide by reading this line alone);
 - on failure it prints that layer's log path and the last 12 lines; logs live in `build/regress/<layer>.log`;
 - the gate's own failure path is self-tested: `bash tools/harness/regress_selftest.sh` (expects `pass=1 fail=2`).
@@ -262,7 +263,7 @@ C++ 6.0 (cl 12.00.8804) and the Windows Platform SDK, not by inspection.
 
 How it is driven (no sshd on XP; the host's SMB1 client is removed, so SMB is not an option):
 
-- the host serves the 22 sources plus the build/run scripts over TFTP from a read-only root, and
+- the host serves the 23 sources plus the build/run scripts over TFTP from a read-only root, and
   accepts uploads into an inbox directory;
 - `go.bat` is a stable bootstrap that never changes (XP's `tftp.exe` refuses to overwrite an existing
   file, and a running batch is locked), so all mutable logic lives in `kynovo_step.bat`, which the

@@ -328,7 +328,7 @@ do_clean() {
 # it usable by agents and CI:
 #   * every layer must produce a VERDICT LINE; a gate that produces no verdict is
 #     a FAILURE, not a pass ("0 failures" must never mean "0 data"),
-#   * the last line is machine-readable:  REGRESS|quick|pass=7 fail=0 duration=142s
+#   * the last line is machine-readable:  REGRESS|quick|pass=10 fail=0 duration=166s
 # Modes: quick (default, ~3 min: build + unit + selftest + CLI smoke),
 # fuzz (quick + the fast fuzzers - this is what CI runs on every pull request)
 # and full (fuzz with release-sized parameters + the 24-round soak; used by the

@@ -45,13 +45,13 @@ RUNS=24 bash tools/harness/soak_release.sh   # release soak with per-round liven
 ## Gate (the single entry point - CI, cron and agents all use it)
 
 ```bash
-./build.sh regress quick   # principles + build (0-warning assertion) + 4 unit suites + selftest + cleanliness + CLI smoke
+./build.sh regress quick   # principles + build (0-warning assertion) + 5 unit suites + selftest + cleanliness + CLI smoke
 ./build.sh regress fuzz    # adds raft_fuzz 2000 / raft_cluster_fuzz 200 / kserver_cluster_fuzz 1  (what CI runs)
 ./build.sh regress full    # release-sized fuzz (20k / 2k / 10 clusters) + a 24-round release soak  (the nightly)
 ```
 
 Every layer prints a `GATE|<layer>|...` line and the run ends with one machine-readable verdict
-(`REGRESS|quick|pass=9 fail=0 duration=150s`).  A layer that exits 0 **without** its verdict line counts as
+(`REGRESS|quick|pass=10 fail=0 duration=150s`).  A layer that exits 0 **without** its verdict line counts as
 a failure, so an empty run can never read as a pass.
 
 The full method (layers, exact commands, verdict lines, time budgets, the regression discipline and the
