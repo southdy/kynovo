@@ -21,17 +21,6 @@
 #include <stdio.h>
 #include <signal.h>
 
-/* Seed of the cluster currently running: printed BEFORE each run (below), and
-   repeated by the crash handler, so a segfault or a hang is reproducible from
-   the last line of output instead of being unattributable. */
-static unsigned long long g_current_seed;
-static void kscf_crash_dump(int sig){
-  fprintf(stderr,"\n=== CRASH signal %d during seed %llu ===\n",sig,g_current_seed);
-  fflush(stderr);
-  signal(sig,SIG_DFL);
-  raise(sig);
-}
-
 /* ---- OOM fault injection: a single transient allocation fails every
    g_oom_interval allocations while g_oom_interval>0 (chaos only), so most
    allocations succeed and the system must retry past the occasional failure --
@@ -77,15 +66,29 @@ static void *km_realloc(void *p,size_t n){ return km_oom_hit()?0:realloc(p,n); }
 #include "../code/kserver.h"
 #include "lincheck.h"
 
+/* This block needs code/kbase.h, which the include block above has now brought in.  It used to sit
+   before the includes and spell C99 types directly; the allocator macros below it must stay above
+   the project headers, so the block moved down instead of the include moving up. */
+/* Seed of the cluster currently running: printed BEFORE each run (below), and
+   repeated by the crash handler, so a segfault or a hang is reproducible from
+   the last line of output instead of being unattributable. */
+static k_u64 g_current_seed;
+static void kscf_crash_dump(int sig){
+  fprintf(stderr,"\n=== CRASH signal %d during seed %" K_U64_FMT " ===\n",sig,g_current_seed);
+  fflush(stderr);
+  signal(sig,SIG_DFL);
+  raise(sig);
+}
+
 #define NNODE 3
 #define MAXSTEP 4000
 
 /* ---- deterministic PRNG (splitmix64) ---- */
-static unsigned long long rng_state;
-static unsigned long long rng_u64(void){
-  unsigned long long z = (rng_state += 0x9E3779B97F4A7C15ULL);
-  z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ULL;
-  z = (z ^ (z >> 27)) * 0x94D049BB133111EBULL;
+static k_u64 rng_state;
+static k_u64 rng_u64(void){
+  k_u64 z = (rng_state += K_U64_C(0x9E3779B97F4A7C15));
+  z = (z ^ (z >> 30)) * K_U64_C(0xBF58476D1CE4E5B9);
+  z = (z ^ (z >> 27)) * K_U64_C(0x94D049BB133111EB);
   return z ^ (z >> 31);
 }
 
@@ -101,19 +104,19 @@ static int g_oom_clusters;      /* runs where >=1 node OOM-stopped (proves injec
 #define HEAL_STEP  1500
 
 /* ---- content-level oracle: hash the whole state machine (ordered) ---- */
-typedef struct{ unsigned long long h; } hashctx;
+typedef struct{ k_u64 h; } hashctx;
 static int hash_visit(const unsigned char *key,unsigned int key_len,
                       const unsigned char *value,unsigned int value_len,void *ud){
   hashctx *c=(hashctx *)ud;
   unsigned int i;
-  for(i=0;i<key_len;i++){ c->h ^= (unsigned long long)key[i]; c->h *= 1099511628211ULL; }
-  c->h ^= 0xFFFFFFFF00000000ULL ^ (unsigned long long)key_len;  /* key length boundary */
-  for(i=0;i<value_len;i++){ c->h ^= (unsigned long long)value[i]; c->h *= 1099511628211ULL; }
-  c->h ^= 0x00000000FFFFFFFFULL ^ (unsigned long long)value_len;
+  for(i=0;i<key_len;i++){ c->h ^= (k_u64)key[i]; c->h *= K_U64_C(1099511628211); }
+  c->h ^= K_U64_C(0xFFFFFFFF00000000) ^ (k_u64)key_len;  /* key length boundary */
+  for(i=0;i<value_len;i++){ c->h ^= (k_u64)value[i]; c->h *= K_U64_C(1099511628211); }
+  c->h ^= K_U64_C(0x00000000FFFFFFFF) ^ (k_u64)value_len;
   return 0;
 }
-static unsigned long long state_hash(const treap *t){
-  hashctx c; c.h = 1469598103934665603ULL;
+static k_u64 state_hash(const treap *t){
+  hashctx c; c.h = K_U64_C(1469598103934665603);
   if(t) treap_scan(t,0,0,0,0,TREAP_ASC,hash_visit,&c);
   return c.h;
 }
@@ -237,7 +240,7 @@ static void deliver_peer_frame(int to,int from,k_u32 magic,k_u8 type,const k_u8 
   free(frame);
 }
 static int all_hash_same(void){
-  unsigned long long h0=state_hash(nodes[0].tree);
+  k_u64 h0=state_hash(nodes[0].tree);
   int i;
   for(i=1;i<nnode;i++) if(state_hash(nodes[i].tree)!=h0) return 0;
   return 1;
@@ -508,7 +511,7 @@ static int lincheck_phase(void){
         continue;
       }
       if((int)(rng_u64()%100u)>=60) continue;   /* ~60% fire rate */
-      cl[c].key=(int)(rng_u64()%(unsigned long long)NCKEYS);
+      cl[c].key=(int)(rng_u64()%(k_u64)NCKEYS);
       if(fcount[cl[c].key]>=LIN_MAX) continue;  /* key full: pick another next tick */
       cl[c].is_read=((int)(rng_u64()%3u)==0);   /* 1/3 reads */
       kbuf[0]='x'; kbuf[1]=(char)('0'+cl[c].key); kbuf[2]=0;
@@ -605,7 +608,7 @@ static int lincheck_phase(void){
   return 0;
 }
 
-static int run_one_cluster(unsigned long long seed){
+static int run_one_cluster(k_u64 seed){
   k_u8 frame[K_FRAME_HEADER+256];
   k_u32 total;
   int leader,steps,i,leaders;
@@ -622,7 +625,7 @@ static int run_one_cluster(unsigned long long seed){
 
   /* --- fault-free baseline: elect, submit k, converge --- */
   leader=elect_any();
-  if(leader<0){ fprintf(stderr,"FAIL no leader (seed %llu)\n",(unsigned long long)seed); release_cluster(); return 0; }
+  if(leader<0){ fprintf(stderr,"FAIL no leader (seed %" K_U64_FMT ")\n",(k_u64)seed); release_cluster(); return 0; }
   {
     k_server *L=&nodes[leader];
     k_server_client_accepted(L,(void*)(size_t)9000);
@@ -632,7 +635,7 @@ static int run_one_cluster(unsigned long long seed){
   }
   for(steps=0;steps<MAXSTEP;steps++){ step(50u); if(all_read_same("k","v42")) break; }
   if(!all_read_same("k","v42")){
-    fprintf(stderr,"FAIL baseline no agreement (seed %llu)\n",(unsigned long long)seed);
+    fprintf(stderr,"FAIL baseline no agreement (seed %" K_U64_FMT ")\n",(k_u64)seed);
     release_cluster(); return 0;
   }
 
@@ -661,7 +664,7 @@ static int run_one_cluster(unsigned long long seed){
     for(vi=0;vi<nnode;vi++){
       if(!nodes[vi].stopped&&!nodes[vi].fatal) continue;
       if(crash_restart_node(vi)!=0){
-        fprintf(stderr,"FAIL restart stopped node %d (seed %llu)\n",vi+1,(unsigned long long)seed);
+        fprintf(stderr,"FAIL restart stopped node %d (seed %" K_U64_FMT ")\n",vi+1,(k_u64)seed);
         release_cluster(); return 0;
       }
       restarted=1;
@@ -671,7 +674,7 @@ static int run_one_cluster(unsigned long long seed){
       for(vi=0;vi<nnode;vi++) if(!nodes[vi].is_leader){ victim=vi; f=1; break; }
       if(!f) victim=0;
       if(crash_restart_node(victim)!=0){
-        fprintf(stderr,"FAIL restart node %d (seed %llu)\n",victim+1,(unsigned long long)seed);
+        fprintf(stderr,"FAIL restart node %d (seed %" K_U64_FMT ")\n",victim+1,(k_u64)seed);
         release_cluster(); return 0;
       }
     }else{
@@ -681,10 +684,10 @@ static int run_one_cluster(unsigned long long seed){
   }
   leader=elect_any();
   if(leader<0){
-    fprintf(stderr,"FAIL no leader after heal (seed %llu)\n",(unsigned long long)seed);
-    for(i=0;i<nnode;i++) fprintf(stderr,"  n%d leader=%d fatal=%d stopped=%d la=%lld snap=%lld\n",
+    fprintf(stderr,"FAIL no leader after heal (seed %" K_U64_FMT ")\n",(k_u64)seed);
+    for(i=0;i<nnode;i++) fprintf(stderr,"  n%d leader=%d fatal=%d stopped=%d la=%" K_I64_FMT " snap=%" K_I64_FMT "\n",
       nodes[i].id,nodes[i].is_leader,nodes[i].fatal,nodes[i].stopped,
-      (long long)nodes[i].last_applied,(long long)nodes[i].snapshot.index);
+      (k_i64)nodes[i].last_applied,(k_i64)nodes[i].snapshot.index);
     release_cluster(); return 0;
   }
   {
@@ -720,18 +723,18 @@ static int run_one_cluster(unsigned long long seed){
       if(snap_ok&&all_hash_same()) break;
     }
     if(!snap_ok){
-      fprintf(stderr,"FAIL snapshot never fired (seed %llu ent=%u)\n",
-        (unsigned long long)seed,(unsigned)nodes[leader].cfg.snapshot_entries);
-      for(i=0;i<nnode;i++) fprintf(stderr,"  n%d snap_idx%lld la%lld\n",
-        nodes[i].id,(long long)nodes[i].snapshot.index,(long long)nodes[i].last_applied);
+      fprintf(stderr,"FAIL snapshot never fired (seed %" K_U64_FMT " ent=%u)\n",
+        (k_u64)seed,(unsigned)nodes[leader].cfg.snapshot_entries);
+      for(i=0;i<nnode;i++) fprintf(stderr,"  n%d snap_idx%" K_I64_FMT " la%" K_I64_FMT "\n",
+        nodes[i].id,(k_i64)nodes[i].snapshot.index,(k_i64)nodes[i].last_applied);
       release_cluster(); return 0;
     }
     if(!all_hash_same()){
-      fprintf(stderr,"FAIL snapshot divergence (seed %llu)\n",(unsigned long long)seed);
+      fprintf(stderr,"FAIL snapshot divergence (seed %" K_U64_FMT ")\n",(k_u64)seed);
       release_cluster(); return 0;
     }
     if(!all_read_same("sn000","sv1")){
-      fprintf(stderr,"FAIL snapshot key divergence (seed %llu)\n",(unsigned long long)seed);
+      fprintf(stderr,"FAIL snapshot key divergence (seed %" K_U64_FMT ")\n",(k_u64)seed);
       release_cluster(); return 0;
     }
     { /* crash/restart a follower: recovery must now come from the snapshot */
@@ -739,14 +742,14 @@ static int run_one_cluster(unsigned long long seed){
       for(vi=0;vi<nnode;vi++) if(!nodes[vi].is_leader){ victim=vi; break; }
       if(vi>=nnode) victim=0;
       if(crash_restart_node(victim)!=0){
-        fprintf(stderr,"FAIL snapshot restart (seed %llu)\n",(unsigned long long)seed);
+        fprintf(stderr,"FAIL snapshot restart (seed %" K_U64_FMT ")\n",(k_u64)seed);
         release_cluster(); return 0;
       }
       for(steps=0;steps<600;steps++) step(50u);
       if(!all_hash_same()){
-        fprintf(stderr,"FAIL snapshot-recovery divergence (seed %llu)\n",(unsigned long long)seed);
-        for(i=0;i<nnode;i++) fprintf(stderr,"  n%d hash%llu\n",nodes[i].id,
-          (unsigned long long)state_hash(nodes[i].tree));
+        fprintf(stderr,"FAIL snapshot-recovery divergence (seed %" K_U64_FMT ")\n",(k_u64)seed);
+        for(i=0;i<nnode;i++) fprintf(stderr,"  n%d hash%" K_U64_FMT "\n",nodes[i].id,
+          (k_u64)state_hash(nodes[i].tree));
         release_cluster(); return 0;
       }
     }
@@ -773,7 +776,7 @@ static int run_one_cluster(unsigned long long seed){
     if(!mtotal){ release_cluster(); return 0; }
     k_server_client_received(L->connections,mbuf,mtotal);
     for(steps=0;steps<MAXSTEP;steps++){ step(50u); if(all_read_same("acct_a","100")&&all_read_same("acct_b","50")) break; }
-    if(!all_read_same("acct_a","100")){ fprintf(stderr,"FAIL multi-op staging (seed %llu)\n",(unsigned long long)seed); release_cluster(); return 0; }
+    if(!all_read_same("acct_a","100")){ fprintf(stderr,"FAIL multi-op staging (seed %" K_U64_FMT ")\n",(k_u64)seed); release_cluster(); return 0; }
     /* MSET: 3-key atomic batch */
     memset(&tmp,0,sizeof(tmp));
     k_buf_u32(&tmp,3u);
@@ -817,7 +820,7 @@ static int run_one_cluster(unsigned long long seed){
          &&all_read_same("m1","v1")&&all_read_same("m3","v3")&&all_read_same("cas_key","cv2")){ settled=1; break; }
     }
     if(!settled){
-      fprintf(stderr,"FAIL multi-op divergence (seed %llu)\n",(unsigned long long)seed);
+      fprintf(stderr,"FAIL multi-op divergence (seed %" K_U64_FMT ")\n",(k_u64)seed);
       for(i=0;i<nnode;i++){
         const unsigned char *v=0; unsigned int vl=0;
         char aa[16]="-",ab[16]="-",m1[16]="-",ck[16]="-";
@@ -825,16 +828,16 @@ static int run_one_cluster(unsigned long long seed){
         if(treap_get(nodes[i].tree,(const unsigned char*)"acct_b",6,&v,&vl)==1&&vl<16){ memcpy(ab,v,vl); ab[vl]=0; }
         if(treap_get(nodes[i].tree,(const unsigned char*)"m1",2,&v,&vl)==1&&vl<16){ memcpy(m1,v,vl); m1[vl]=0; }
         if(treap_get(nodes[i].tree,(const unsigned char*)"cas_key",7,&v,&vl)==1&&vl<16){ memcpy(ck,v,vl); ck[vl]=0; }
-        fprintf(stderr,"  n%d L%d la%lld acct_a=%s acct_b=%s m1=%s cas_key=%s hash%llu\n",
-          nodes[i].id,nodes[i].is_leader,(long long)nodes[i].last_applied,aa,ab,m1,ck,
-          (unsigned long long)state_hash(nodes[i].tree));
+        fprintf(stderr,"  n%d L%d la%" K_I64_FMT " acct_a=%s acct_b=%s m1=%s cas_key=%s hash%" K_U64_FMT "\n",
+          nodes[i].id,nodes[i].is_leader,(k_i64)nodes[i].last_applied,aa,ab,m1,ck,
+          (k_u64)state_hash(nodes[i].tree));
       }
       release_cluster(); return 0;
     }
   }
 
   /* concurrent-client register linearizability oracle */
-  if(lincheck_phase()!=0){ fprintf(stderr,"FAIL linearizability (seed %llu)\n",(unsigned long long)seed); release_cluster(); return 0; }
+  if(lincheck_phase()!=0){ fprintf(stderr,"FAIL linearizability (seed %" K_U64_FMT ")\n",(k_u64)seed); release_cluster(); return 0; }
   for(steps=0;steps<MAXSTEP;steps++){
     step(50u);
     why=final_check(&leaders);
@@ -842,13 +845,13 @@ static int run_one_cluster(unsigned long long seed){
   }
   why=final_check(&leaders);
   if(why){
-    fprintf(stderr,"FAIL %s (seed %llu drop=%d dup=%d churn=%d leaders=%d)\n",
-            why,(unsigned long long)seed,g_drop_pct,g_dup_pct,g_part_churn_pct,leaders);
+    fprintf(stderr,"FAIL %s (seed %" K_U64_FMT " drop=%d dup=%d churn=%d leaders=%d)\n",
+            why,(k_u64)seed,g_drop_pct,g_dup_pct,g_part_churn_pct,leaders);
     for(i=0;i<nnode;i++){
       const unsigned char *v=0; unsigned int vl=0; int r=0;
       r=treap_get(nodes[i].tree,(const unsigned char*)"k2",2,&v,&vl);
-      fprintf(stderr,"  n%d L%d la%lld getk2=%d vl%u hash%llu\n",nodes[i].id,nodes[i].is_leader,
-        (long long)nodes[i].last_applied,r,(unsigned)vl,(unsigned long long)state_hash(nodes[i].tree));
+      fprintf(stderr,"  n%d L%d la%" K_I64_FMT " getk2=%d vl%u hash%" K_U64_FMT "\n",nodes[i].id,nodes[i].is_leader,
+        (k_i64)nodes[i].last_applied,r,(unsigned)vl,(k_u64)state_hash(nodes[i].tree));
     }
     release_cluster(); return 0;
   }
@@ -857,7 +860,7 @@ static int run_one_cluster(unsigned long long seed){
 }
 
 int main(int argc,char **argv){
-  unsigned long long seed=(argc>1)?strtoull(argv[1],0,10):1;
+  k_u64 seed=(argc>1)?strtoull(argv[1],0,10):1;
   int count=(argc>2)?atoi(argv[2]):1;
   int i,ok=0;
   if(lincheck_selftest()!=0){ fprintf(stderr,"lincheck selftest failed\n"); return 1; }
@@ -865,12 +868,12 @@ int main(int argc,char **argv){
   signal(SIGILL,kscf_crash_dump);
   signal(SIGABRT,kscf_crash_dump);
   for(i=0;i<count;i++){
-    unsigned long long s=seed+(unsigned long long)i;
+    k_u64 s=seed+(k_u64)i;
     /* print the seed BEFORE running so a crash or hang is reproducible from the
        last line of output (the FAIL messages also carry it, but a crash prints
        nothing at all) */
     g_current_seed=s;
-    fprintf(stderr,"seed %llu\n",(unsigned long long)s);
+    fprintf(stderr,"seed %" K_U64_FMT "\n",(k_u64)s);
     fflush(stderr);
     if(run_one_cluster(s)) ok++;
   }
