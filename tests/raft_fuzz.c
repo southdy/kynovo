@@ -96,17 +96,29 @@ static void *fuzz_realloc(void *p,size_t n){
 #define RAFT_REALLOC fuzz_realloc
 #define RAFT_IMPLEMENTATION
 #include "../code/raft.h"
-#include "t64.h"   /* 64-bit types/format macros that MSVC 6 can compile */
+/* MSVC 6 has no `long long`, no ULL literals and no %llu; MinGW-w64 accepts all of them, so this file
+   defines its own two types and two macros rather than pulling in a header it otherwise does not need. */
+#if defined(_MSC_VER)
+typedef __int64 fuzz_i64;
+typedef unsigned __int64 fuzz_u64;
+#define FUZZ_I64_FMT "I64d"
+#define FUZZ_U64_C(x) x##ui64
+#else
+typedef long long fuzz_i64;
+typedef unsigned long long fuzz_u64;
+#define FUZZ_I64_FMT "lld"
+#define FUZZ_U64_C(x) x##ULL
+#endif
 
 /* ---- deterministic PRNG: splitmix64 (self-contained, no stdint.h) ---- */
-static test_u64 fuzz_state;
+static fuzz_u64 fuzz_state;
 
-static test_u64 fuzz_next_u64(void){
-  test_u64 z;
-  fuzz_state += TEST_U64_C(0x9E3779B97F4A7C15);
+static fuzz_u64 fuzz_next_u64(void){
+  fuzz_u64 z;
+  fuzz_state += FUZZ_U64_C(0x9E3779B97F4A7C15);
   z = fuzz_state;
-  z = (z ^ (z >> 30)) * TEST_U64_C(0xBF58476D1CE4E5B9);
-  z = (z ^ (z >> 27)) * TEST_U64_C(0x94D049BB133111EB);
+  z = (z ^ (z >> 30)) * FUZZ_U64_C(0xBF58476D1CE4E5B9);
+  z = (z ^ (z >> 27)) * FUZZ_U64_C(0x94D049BB133111EB);
   z = z ^ (z >> 31);
   return z;
 }
@@ -131,8 +143,8 @@ static raft_i64 g_last_commit = RAFT_I64_C(-1);
 static raft_i64 g_last_apply  = RAFT_I64_C(-1);
 
 static void invariant_fail(const char *what,raft_i64 got,raft_i64 bound){
-  fprintf(stderr,"\nINVARIANT VIOLATION: %s (got %" TEST_I64_FMT ", bound %" TEST_I64_FMT ")\n",
-          what,(test_i64)got,(test_i64)bound);
+  fprintf(stderr,"\nINVARIANT VIOLATION: %s (got %" FUZZ_I64_FMT ", bound %" FUZZ_I64_FMT ")\n",
+          what,(fuzz_i64)got,(fuzz_i64)bound);
   act_dump();
   fflush(stderr);
   exit(1);
@@ -395,7 +407,7 @@ static void fuzz_one_node(unsigned long seed){
   raft_persist_entry rpe[4];
   int i,n_actions,with_restore;
 
-  fuzz_state = (test_u64)seed;
+  fuzz_state = (fuzz_u64)seed;
   fuzz_oom_at = 0;
   fuzz_alloc_calls = 0;
   act_count = 0;
