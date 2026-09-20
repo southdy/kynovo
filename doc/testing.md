@@ -293,11 +293,13 @@ against the repository before transfer:
 - crash contract: after an abrupt `taskkill` and a restart on the same store, the key written before
   the kill reads back, and a key that was never written reads `(not found)` - the negative control
   that keeps the check from being unable to fail;
-- unit suites: `cemon_test 5/5`, `kclient_test 16/16`, `raft_test 221/221`, `kserver_test 33/33`,
-  identical to the local gate.
+- unit suites: `cemon_test 5/5`, `kclient_test 16/16`, `raft_test 221/221`, `kserver_test 34/34`,
+  `vfs_fault_test 4/4` - identical to the local gate, including the storage injection seam, whose four
+  cases (transparent wrapper / fsync failure / write failure / failure during open) build and pass under
+  cl 12.00.8804 with the Platform SDK;
 
-The fuzz drivers were added to that evidence afterwards; all fourteen compile/link/run exit codes are
-zero there too:
+The fuzz drivers were added to that evidence afterwards.  With the seam test included, every one of the
+twenty-four compile/link/run exit codes is zero as well (`cl` and `link` for eight drivers, then eight runs):
 
 - fuzz drivers: `raft_fuzz 0 200` -> `done: 200 iterations`, `raft_cluster_fuzz 1 2` -> `done: 2
   iterations`, and `kserver_cluster_fuzz 1 1` -> `done: 1/1 clusters consistent` with

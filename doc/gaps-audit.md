@@ -1046,3 +1046,23 @@ that node 4 does not exist yet), no line while it lasts, no reason/age/progress,
 that says "a voter has been unreachable for X while a replacement is pending".  The wait is unbounded on
 purpose (a config change that is not committed must not simply be abandoned - Ongaro Sec 4.1), so the fix
 is observability, not a give-up timer.
+
+### (5b) The storage injection seam ran on the XP guest
+
+The seam test added for A7 (`tests/vfs_fault_test.c`) now builds and runs on Windows XP SP3 with cl
+12.00.8804 + the Platform SDK, which is what the plan for item 3 asked for.  Evidence from the guest's own
+uploaded logs (`D:\kynovo-xp\inbox`):
+
+```
+GET failures: 0 (0 is required)          <- 23 sources + 4 scripts, each md5-verified over the wire (27/27)
+build_exit=0   run_exit=0   tests_exit=0
+vfs_fault_test_compile_rc=0  vfs_fault_test_link_rc=0  vfs_fault_test_run_rc=0
+SUMMARY: 5/5 passed / 16/16 / 221/221 / 34/34 / 4/4 passed
+done: 200 iterations / done: 2 iterations / 1/1 clusters consistent / linearizability: 4 histories, 0 inconclusive
+```
+
+Two supporting facts worth keeping: the guest ran the NEW scripts (it echoes `ver=G` / `ver=F`, the bumps
+made for this run - a stale `xp_tests.bat` would have reported `ver=E` and no vfs block at all), and the
+end-to-end run still reproduces the crash contract (`taskkill`, restart, `survive-me`) with its negative
+control reading `(not found)`.  `kserver_test` reports 34/34 rather than the previously recorded 33/33
+because the membership-visibility work added a deterministic case, and it passes here too.
