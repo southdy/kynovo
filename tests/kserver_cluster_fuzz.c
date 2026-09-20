@@ -666,7 +666,12 @@ static int run_one_cluster(k_u64 seed){
          application records that in its own flag (kserver.h:4440).  A heal loop that only looks at
          stopped/fatal cannot see such a node, leaves it dead at its old commit index for the rest of the
          run, and then fails the snapshot check - which is exactly what seed 99 did. */
-      if(!nodes[vi].stopped&&!nodes[vi].fatal&&!nodes[vi].raft_stopped) continue;
+      /* stopping is the application's own shutdown flag and the one that matters here: k_server_begin_stop
+         clears admission, and k_server_reconnect returns immediately without admission, so a node that
+         stopped for ANY reason never dials again.  stop/fatal/raft_stopped alone miss that - raft_stopped
+         only follows once a later ready bundle carries phase_stopped, which a stopped node never produces.
+         Seed 99 left node 2 exactly there: alive, full membership, admission 0, stranded at commit 2. */
+      if(!nodes[vi].stopped&&!nodes[vi].fatal&&!nodes[vi].raft_stopped&&!nodes[vi].stopping) continue;
       if(crash_restart_node(vi)!=0){
         fprintf(stderr,"FAIL restart stopped node %d (seed %" K_U64_FMT ")\n",vi+1,(k_u64)seed);
         release_cluster(); return 0;
@@ -749,8 +754,10 @@ static int run_one_cluster(k_u64 seed){
       /* Print the same fields as the no-leader dump above, plus leader/fatal/stopped: without them a
          restarting node that never catches up is indistinguishable from one that died again, and that
          distinction decides whether this is a harness/ injector matter or a product finding. */
-      for(i=0;i<nnode;i++) fprintf(stderr,"  n%d leader=%d fatal=%d stopped=%d raft_stopped=%d snap_idx%" K_I64_FMT " la%" K_I64_FMT " raft{state=%d commit=%" K_I64_FMT "}\n",
-        nodes[i].id,nodes[i].is_leader,nodes[i].fatal,nodes[i].stopped,nodes[i].raft_stopped,
+      for(i=0;i<nnode;i++) fprintf(stderr,"  n%d leader=%d fatal=%d stopped=%d stopping=%d raft_stopped=%d voter=%d learner=%d joint=%d reconn=%u snap_idx%" K_I64_FMT " la%" K_I64_FMT " raft{state=%d commit=%" K_I64_FMT "}\n",
+        nodes[i].id,nodes[i].is_leader,nodes[i].fatal,nodes[i].stopped,nodes[i].stopping,nodes[i].raft_stopped,
+        nodes[i].self_is_voter,nodes[i].self_is_learner,nodes[i].cfg_joint,
+        nodes[i].reconnect_elapsed,
         (k_i64)nodes[i].snapshot.index,(k_i64)nodes[i].last_applied,
         nodes[i].raft?nodes[i].raft->state:-1,
         (k_i64)(nodes[i].raft?nodes[i].raft->commit_index:-1));
