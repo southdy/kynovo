@@ -288,3 +288,21 @@ against the repository before transfer:
 
 Scope at the time of writing: the fuzz / linearizability tier does not build with MSVC 6 yet (raw
 `long long` and `LL`/`ULL` literals across those files); see P2 for the list and the follow-up.
+
+### Harness rule learned here: the SDK include path AND the target version
+
+Two separate things were needed before the test programs would compile on that guest, and only
+fixing both made the `SwitchToThread` C4013 disappear:
+
+1. the SDK include path must be on the `cl` command line (`/I"%SDKINC%"`), exactly as in the
+   application build script - it was missing from the test script, so VC98's headers were used;
+2. the target version must be passed explicitly (`/D_WIN32_WINNT=0x0501 /DWINVER=0x0500`), because
+   the test files include `<winsock2.h>`/`<windows.h>` *before* any project header, and it is
+   `code/cemon.h` that sets `_WIN32_WINNT`.  With `<windows.h>` already processed under an
+   undefined version, the XP-era SDK skipped that API in `winbase.h`, the compiler assumed a cdecl
+   extern and the linker asked for `_SwitchToThread` instead of `_SwitchToThread@0`.  The
+   application build never showed this because `kdbsvr.c` includes `cemon.h` first.
+
+After both fixes: all four suites compile with no C4013 for that symbol, link with rc=0, and pass
+(`cemon 5/5`, `kclient 16/16`, `raft 221/221`, `kserver 33/33`) - with the product carrying no
+workaround, which is why the earlier `cemon.h` declaration was reverted.
