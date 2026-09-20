@@ -1291,3 +1291,14 @@ the `//`-comment rule blinded by apostrophes in comments).
   **管道输入的 CLI 修复（5.1）也已在 XP 上验证**：`piped.bat`（ver=B，二进制目录依次试探并写入日志）
   在客人机上 `piped_init_rc=0`、**`piped_rc=0`**（修复前是 rc=124 + 挂死，且一条命令都不执行），输出为
   `connected to 127.0.0.1:9601` / **`ok`** / **`v1`** ⇒ 管道里的 `SET` 真的执行了、`GET` 读回了值。
+
+## U. Round-4 review: findings and their terminal state
+
+The fourth full review (7 read-only audits, `doc/code-review-2026-09d.md`) runs with one extra instruction the
+third round earned: **do not trust the ledger, the review documents or code comments - verify them against the
+code**, because the third round ended with three of its own write-ups refuted.  This section records each finding
+of the fourth round with its terminal state.
+
+| # | finding | state |
+|---|---------|-------|
+| 1 | The mem backend's lock was acquired as `((vfs_mem_ctx *)file->be)->lock`.  `file->be` is the mem backend only when the file came straight from `vfs_open`; the fault-injection seam in `tests/vfs_fault_test.c` wraps mem and re-points each file's `be` at itself, so the cast locked and wrote memory belonging to the wrapper.  MinGW's layout made that harmless (the local full gate stayed `14/14` through the same code), the Linux runner hung inside the test's first case. | **FIXED** (`62790f5`): a file-scope `static vfs_spin vfs_mem_lock`, so the lock cannot depend on how a caller reached the backend; the ctx no longer carries a lock field.  Found by investigating two pushes that had a red linux-gate job (`cd4252e`, `1887455`) - not by the audits.  The `regress-logs-linux` artifact named the layer: every other log green, `vfs_fault_test.log` stopping after `BEGIN [1/5]`.  The same job is `success` on the fix. |

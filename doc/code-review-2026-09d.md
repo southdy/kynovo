@@ -49,3 +49,7 @@ Evidence:
 Lesson recorded in the skill reference: a lock must be reached through the object's own instance, and **a green
 local gate is not a green gate** - the pushed CI run has to be read, and the per-layer artifacts are what name the
 failing layer.
+
+Confirmed by the oracle the defect was found through: on the fix (`62790f5`) both jobs are `success`, including the
+linux-gate job whose "Regression gate (quick)" step hung on the two earlier pushes.  The local gate was green
+*before* the fix as well, which is the whole point of the finding.
