@@ -825,3 +825,21 @@ gated on a `clean_end` only "zero bytes" sets, three silent break paths), **B1**
 on a log cut - the one that could present as committed data lost), **B2** (heartbeat ACK skips the
 persistence gate), **D13/D14/D16-D19**, the E-series (client) and F2 (the nightly's misleading issue body),
 plus the coverage decisions A7/A9/A10/C3/C4/C7.
+
+### B1 and B2 fixed (same day, second batch)
+
+- **B1** `raft.h`: `raft_durable_clamp` now lowers `durable_index` as well.  Its own field comment already
+  required that ("clamped to the log tip at report time, and lowered by any truncation"), so the change
+  restores the documented contract rather than deciding a new one; the leader's `require_durable`
+  self-count reads that field, which is why a stale high-water could commit an entry that was not on a
+  majority's disk.  Basis cited in the message: Sec. 3.8, Sec. 5.4.2 and Ongaro 10.2.1.  Regression:
+  `raft_fuzz 1 20000`, `raft_cluster_fuzz 1 2000`, a 10-cluster `kserver_cluster_fuzz` (40 histories /
+  2,509 ops decided, 0 inconclusive), plus the fuzz gate (`pass=12 fail=0`).  Reachability in a production
+  driver is still not demonstrated - the fix is correct at the contract level either way.
+- **B2** `raft.h`: the empty-heartbeat fast path now applies the same two-part persistence gate as the
+  reject path (`persist_needed || persist_gen < term_dirty_gen`), so no response advertises a term that is
+  still in memory (Sec. 3.8).  The comment in the file records that a *different* narrowing once stalled
+  the leader's read barrier on `raft_cluster_fuzz` seed 869; that seed range was re-run explicitly
+  (`raft_cluster_fuzz 800 200`), together with a release-sized `1 2000` and a 10-cluster
+  `kserver_cluster_fuzz` sweep - all green, so the wider gate is kept rather than documented as a
+  deviation.

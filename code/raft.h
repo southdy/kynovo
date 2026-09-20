@@ -3694,7 +3694,11 @@ append_done:
   }
   if(rpc->entry_count>0||log_changed) r->persist_needed=1;
   /* heartbeat: always acknowledge so leader can track quorum contact */
-  if(rpc->entry_count==0&&!r->persist_needed){
+  /* Sec. 3.8: no response may leave before the term/vote it advertises is durable.  persist_needed is
+     cleared when the persist view is HANDED to the caller, while persist_gen only advances when the caller
+     reports completion, so the window in between used to acknowledge a heartbeat for a term that was still
+     in memory.  Same two-part gate the reject path applies. */
+  if(rpc->entry_count==0&&!r->persist_needed&&r->persist_gen>=r->term_dirty_gen){
     raft_peer_message *rm2;
     if(raft_msg_ensure(r,r->msg_count+1)==0){
       rm2=&r->msg_buf[r->msg_count];
