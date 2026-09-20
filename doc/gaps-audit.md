@@ -717,8 +717,82 @@ kserver_cluster_fuzz.c - MSVC 6 has neither strtoull nor _strtoui64, so its seed
 now), which is the same class the unit tier had already paid for.  `bench_persist.c` remains the one
 test program outside the set: it includes `<pthread.h>` and needs a port, not a rename, and it is a
 benchmark rather than part of the gate chain.  The gate's rule 9 (`no new C99 64-bit spellings in tests/`) is a ratchet at that
-budget: it may shrink as files are converted, never grow.  It was self-certified in the repository's
-established way - inject a violation, watch `PRINCIPLES|FAIL|rules=17 fail=1`, revert exactly, watch
-it pass again.  Note a trap for whoever lowers the budget: a raw `grep` counts 236, because it also
+budget: it may shrink as files are converted, never grow.  **Retracted (2026-09b review).**  That rule was certified by injection at the time it was written,
+but **it does not hold now**: the slice stayed at `sites[162:]` while the message in front of it walked
+161 -> 127 -> 122 -> 60 -> 13 -> 7, so the enforcement threshold is still 162 and up to 155 new sites pass
+silently.  Verified by injecting `unsigned long long probe = 1ULL;` into `tests/kclient_test.c` and
+watching the gate print `PRINCIPLES|OK|rules=17 fail=0`, rc=0.  The earlier claim in this very entry - that
+the ratchet had reached its floor and refused growth - was therefore false in effect.  See
+`doc/code-review-2026-09b.md` item A1; the fix is to make the threshold one value (`len(sites) <= budget`)
+instead of a message plus an unrelated slice, and to re-certify by injection.  Note a trap for whoever lowers the budget: a raw `grep` counts 236, because it also
 matches comments; the budget must come from the checker's own count (157), or it leaves ~80 sites of
 slack for new violations.
+
+
+## K. Full-project review 2026-09b: retractions and newly verified gaps
+
+Artifact: `doc/code-review-2026-09b.md` (scope, method, evidence and recommendations per item).  What
+backs it: the top-tier gate was run on the reviewed HEAD and passed - `REGRESS|full|pass=13 fail=0
+duration=307s` with the 24-round soak - followed by six read-only module audits whose findings I then
+re-opened and verified individually.  Everything below is verified at the cited line or by an experiment;
+items I could not verify are listed separately in that document (§3) and are not presented here as facts.
+
+**Retracted in this review (my own errors).**
+
+1. **The rule-9 ratchet "is at its floor of 7 and was self-certified" - wrong in effect.**  The slice is
+   `sites[162:]`, so the enforcement threshold never moved while the message walked down; the ledger entry
+   above is corrected in place.  Verified by injecting a C99 64-bit spelling and watching the gate stay
+   green (A1).  This also retracts the accompanying advice that a raw grep leaves "~80 sites of slack":
+   the slack was real and larger, and it was in the rule itself.
+2. **"`mem://` + thread runtime fails every write" - my instrument lied.**  The probe compared a line
+   ending `ok\r\r\n` against `ok`, so ten successes were scored as failures.  The combination works
+   (a healthy single-node leader in STATS); the mem backend's lock-free global inode table stays a
+   *structural* finding, not an observed failure (C3).
+3. **A module audit's claim that CI's LF assertion makes CI permanently red - refuted.**  The CI job log
+   shows the step passing *vacuously*: there is no `git` on the MSYS2 PATH, so it checks 0 files and prints
+   `LF ok (0 tracked files checked)`.  The invariant is still enforced inside the gate's `principles`
+   layer (the checker resolves git by absolute path; running it with git removed from `PATH` still yields
+   `rules=17 fail=0`).  The defect is a green line that means "checked nothing" (F1).
+4. **"A do-nothing fuzz can wear the same green line - partially refuted.**  True for `raft_fuzz` and
+   `raft_cluster_fuzz` (`done: 0 iterations` passes both); false for the gate, which goes red because the
+   linearizability layer requires a non-zero decided-history count (`./build.sh regress fuzz 0 0 0` ->
+   `pass=11 fail=1`).
+
+**Newly opened (verified; fixes not applied - the review was the deliverable).**
+
+| id | sev | one line | evidence |
+|---|---|---|---|
+| A1 | high | rule-9 ratchet advertises 7, enforces 162 | `check-principles.py:180` + injection experiment |
+| B1 | high | `durable_index` is the one frontier field never clamped on a log cut, and the leader's commit self-count reads it | `raft.h:1135-1143` vs `:2003-2006`, `:2436-2456`, `:4360` |
+| C1 | high | `thread_create` returns `-1` from a pointer-returning function on the POSIX branch; caller's null check passes | `runtime.h:439, 462-466`; `kserver.h:4999-5005` |
+| D1 | high | five teardown sites close the socket then write `conn->sock=0` after the inline CEMON_CLOSED callback already freed the conn | `kserver.h:3486-3532`; `cemon.h:1505, 2629-2655, 3572`; `kserver.h:2235` |
+| A2 | medium | the "no `//` comments" rule scans comment-stripped text and can never fail | `check-principles.py:65-68, 78-84, 129` |
+| A4 | medium | four unit layers accept `SUMMARY: 0/0 passed` (no third layer covers it) | `build.sh:373-376`; `tests/test.h:178-183` |
+| A5 | medium | soak layer checks one of the two documented criteria | `build.sh:392` vs `doc/testing.md:58, 231, 245` |
+| A6 | medium | `stall_hunt.sh` cannot run (`$ROOT` never assigned under `set -u`) and describes an abort it does not implement - while both docs cite it as evidence | `tools/harness/stall_hunt.sh:13, 22`; `grep -c 'ROOT='` = 0 |
+| A7 | medium | the vfs injection seam is unused by every test (`grep` = 0), so disk-I/O failure paths are uncovered | `tests/` grep; `code/vfs.h:423` |
+| B2 | medium | the heartbeat ACK fast path skips the persistence gate the reject path applies | `raft.h:3689` vs `:3747-3751` |
+| C2 | medium | the uninitialised `key` read the same file documents and fixes elsewhere still exists at the other completion site | `cemon.h:3256` vs `:2994` |
+| C3 | medium | `mem://` is a lock-free process-global while the default runtime is threaded | `vfs.h:222-225, 287-344, 414-422`; `kserver.h:4999` |
+| D2 | medium | `k_server_maybe_finish_stop` has no latch and is reached three times per advance, so `on_stop` can fire up to three times | `kserver.h:4236-4239, 4295, 4503, 4565` |
+| D3 | medium | `k_server_release` frees connections before the requests that dereference them | `kserver.h:4854-4870, 1977-1980` |
+| D4 | medium | `release` clears `write_*` but not `gate_*`, so a stop inside the FCALL window can double-free | `kserver.h:4875-4877, 2005-2011, 2985-2989` |
+| D5 | medium | every `k_server_drive` failure becomes a silent stop: no reason, no `fatal`, exit code 1 with `exited: fatal=0` | `kserver.h:4800, 4459, 4557, 4584, 4604`; `kdbsvr.c:436` |
+| D8 | medium | the `fatal: snapshot failed` branch is dead code (`k_server_maybe_snapshot` never returns non-zero) and the snapshot failure paths print nothing | `kserver.h:4801-4804` + all `return 0` in the body |
+| D9 | medium | a follower's snapshot-chunk write failure is answered with a silent disconnect, not fail-stop, so the node retries forever | `kserver.h:2342-2344, 3499-3501, 2269` |
+| D10 | medium | WAL metadata with `generation==0` is accepted as "nothing to restore" and new writes overwrite segment 0's first record | `kserver.h:1549, 1900-1914, 4996` |
+| D11/D12 | medium | the cross-segment continuity check depends on a `clean_end` that only "zero bytes" can set, and three scan break paths are silent | `kserver.h:1582-1597, 1667-1670` |
+| D13/D14 | medium | silent `-1` paths in `kdbsvr` under a caller that says "see the fatal line above"; `kdbctl` drops trailing argv silently and can execute a different command | `kdbsvr.c:380, 397, 446, 455, 416`; `kdbctl.c:726-733, 322` |
+| D15 | medium | `sscanf("PIPE %u %u %7s %64s %255s", ..., prefix[64])` can write 65 bytes | `kdbctl.c:453, 462`; `kproto.h:19` |
+| E1 | medium | `kdbctl` hangs forever when stdin is not a TTY (measured: rc=124) although the CLI claims scripted use works | experiment; `cli.h:731, 602-606` |
+| E2 | medium | an FCALL name over 64 bytes is accepted by the client and answered with a disconnect by the server | `kserver.h:3342`; `kproto.h:269-270`; `kdbctl.c:359` |
+| E3 | medium | the one-shot client reports "the command was not executed" where the library says "outcome unknown" | `kdbctl.c:678, 687-692`; `kclient.h:480-481` |
+| F1 | medium | the CI LF step checks 0 files and prints `ok` | CI run `35486663891` job log; `ci.yml:47-55` |
+| F2 | medium | the nightly's summary pattern matches every line and its issue body quotes only the gate's (green) lines, hiding a failing coverage/UBSan step | `nightly.yml:71, 93-94` |
+| F3/F5/F6/F7/F8 | medium | the ledger's "complete" unhandled list, the principles doc's numbers, the testing doc's broken table and stale counts, the old review's self-contradiction, and the automation plan's private/public conflict | see `doc/code-review-2026-09b.md` F3-F8 with line references |
+
+**Not claimed:** the reachability of B1 in a production driver, of D10's metadata state, and of the
+`mem://` race; the exploitability of C2 on XP; anything about the kanban cards.  See §3 of the review.
+
+**State of the gate:** unchanged and green at the reviewed HEAD; no fix from this review has been applied
+yet, deliberately - the audit and the remediation are separate batches.
