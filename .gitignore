@@ -16,3 +16,5 @@ doc/dissertation.md
 # Personal editor configuration: .vscode/c_cpp_properties.json contains a machine-specific absolute
 # compiler path, so it must not be committed (each contributor keeps their own).
 .vscode/
+__pycache__/
+*.pyc

@@ -697,9 +697,13 @@ winpthreads and a C99-complete compiler) and to Linux/gcc:
    `build_rc=0` while every compile had in fact failed.  That is the project's own rule about never
    interpreting a run before confirming the build, applied to the harness itself.
 
-**Debt, and the rule that now holds it.**  The conversion is staged: `tests/t64.h` is the one place
-allowed to spell the C99 forms (it holds the per-compiler mapping), `tests/test.h` includes it, and
-`tests/raft_fuzz.c` is fully converted and green.  Still carrying the raw spellings, with the count
+**Debt, and the rule that now holds it.**  Each file defines what it needs locally rather than sharing
+a header: `tests/test.h` carries the unit-test layer (`test_i64`/`test_u64`, `TEST_*_FMT`, `TEST_*_C`,
+`test_strtoull`), and `tests/raft_fuzz.c` is fully converted with its own `fuzz_i64`/`fuzz_u64`/
+`FUZZ_I64_FMT`/`FUZZ_U64_C`.  A shared `tests/t64.h` was tried and removed by review: a fuzz driver
+that includes `test.h` only for the types gets five `-Wunused-variable` diagnostics for the harness
+state (measured, not assumed), and a `TEST_TYPES_ONLY` switch inside the header was more machinery
+than the problem deserves.  Still carrying the raw spellings, with the count
 measured by the new ratchet's own comment-stripping pass: `raft_cluster_fuzz.c` 64,
 `kserver_cluster_fuzz.c` 47, `lincheck.h` 35, `bench_persist.c` 6, `cemon_stress.c` 5 - 157 sites,
 so the fuzz and linearizability tier cannot be built with MSVC 6 yet and the XP run covers the four
