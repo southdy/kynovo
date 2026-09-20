@@ -303,6 +303,11 @@ struct k_conn{
   int recv_paused;
   int node_index;
   int peer_id;
+  /* Set when the socket died.  The free itself is DEFERRED to the top of the advance step: cemon emits
+     CEMON_CLOSED inline from inside close(), so a send failure inside a frame handler used to free this
+     object while k_rx_feed (and the caller) were still walking it.  Only the reaper frees. */
+  int close_pending;
+  struct k_conn *close_next;   /* server->closing chain */
 };
 static k_u32 k_request_bucket(const void *cookie);
 struct k_request{
@@ -486,6 +491,7 @@ struct k_server{
   k_u32 client_connection_count;
   k_conn *peer_conns[K_MAX_NODES];
   k_conn *connections;
+  k_conn *closing;          /* connections whose socket died; reaped at the top of each advance */
   k_request *requests;
   k_request *request_hash[K_REQUEST_HASH_BUCKETS];   /* cookie index (see k_request_bucket) */
   k_request *write_head;
@@ -2288,8 +2294,24 @@ static void k_conn_closed(k_conn *conn){
       server->rx_buffer_bytes=conn->rx.len<=server->rx_buffer_bytes?server->rx_buffer_bytes-(k_u64)conn->rx.len:0;
     if(conn->kind==K_CONN_CLIENT&&server->client_connection_count>0) server->client_connection_count--;
   }
-  k_rx_free(&conn->rx);
-  K_FREE(conn);
+  /* Do NOT free here: cemon calls this inline from close(), which is reached from inside frame handlers
+     (k_server_send_response) and from the reader itself.  Queue it and let k_server_reap_closed free it
+     at the top of the advance step, where nothing below holds a pointer to it. */
+  if(!conn->close_pending){
+    conn->close_pending=1;
+    k_rx_free(&conn->rx);          /* the reader is done with this buffer before any reap */
+    conn->close_next=server?server->closing:0;
+    if(server) server->closing=conn;
+    else K_FREE(conn);
+  }
+}
+static void k_server_reap_closed(k_server *server){
+  k_conn *conn;
+  if(!server) return;
+  while((conn=server->closing)!=0){
+    server->closing=conn->close_next;
+    K_FREE(conn);
+  }
 }
 static int k_server_send_response(k_server *server,k_conn *conn,k_u32 request_id,k_u8 status,int leader_id,const void *body,k_u32 body_size){
   const char *host=0;
@@ -3677,9 +3699,16 @@ static void k_server_peer_dialed(k_conn *conn){
 }
 static void k_server_peer_received(k_conn *conn,const void *data,k_u32 size){
   k_server *server=conn->server;
-  if(k_rx_feed(&conn->rx,K_PEER_MAGIC,data,size,k_server_peer_frame,conn)!=0||server->transport->recv(conn->sock)!=0){
+  if(k_rx_feed(&conn->rx,K_PEER_MAGIC,data,size,k_server_peer_frame,conn)!=0){
     /* Stash, clear, close - in that order: cemon's close emits CEMON_CLOSED inline, and the handler
        frees this k_conn, so touching conn->sock afterwards writes into freed memory. */
+    { void *dead=conn->sock; conn->sock=0; server->transport->close(dead); }
+    return;
+  }
+  /* The frame handler may have closed this connection (a send failure); conn->sock is 0 then and
+     cemon_recv on a null handle dereferences it, so this must be checked before re-arming. */
+  if(conn->close_pending) return;
+  if(server->transport->recv(conn->sock)!=0){
     { void *dead=conn->sock; conn->sock=0; server->transport->close(dead); }
   }
 }
@@ -3708,6 +3737,7 @@ static void k_server_client_received(k_conn *conn,const void *data,k_u32 size){
     return;
   }
   rc=k_rx_feed(&conn->rx,K_CLIENT_MAGIC,data,size,k_server_client_frame,conn);
+  if(conn->close_pending) return;   /* k_conn_closed already accounted for this conn; it may be freed later */
   if(conn->rx.len>=old_len) server->rx_buffer_bytes+=(k_u64)(conn->rx.len-old_len);
   else server->rx_buffer_bytes-=(k_u64)(old_len-conn->rx.len);
   if(rc!=0){
@@ -5041,6 +5071,9 @@ static void k_server_advance_at(k_server *server,unsigned int elapsed_ms,unsigne
      when the WAL has work, so the wait age lagged reality (8.6s reported after 36s of waiting) and the
      unit test never accumulated at all.  This is the one place every advance passes through. */
   k_server_membership_tick(server,elapsed_ms);
+  /* Connections whose socket died during the previous step (a frame handler closing on a failed send,
+     a peer EOF, ...) are freed HERE, the one place nothing below can still hold a pointer to them. */
+  k_server_reap_closed(server);
   if(server->runtime&&runtime_should_stop(server->runtime)) k_server_begin_stop(server);
   write_ms=batch_ms;
   if(server->write_count){
@@ -5130,6 +5163,7 @@ static void k_server_release(k_server *server){
   }
   server->connections=0;
   server->client_connection_count=0;
+  k_server_reap_closed(server);            /* anything still queued (a close during the stop path) */
   server->rx_buffer_bytes=0;
   /* The peer_socks/peer_conns index arrays dangling-reference the just-freed
      connections; clear them too, or a reopen sees stale non-NULL socks and

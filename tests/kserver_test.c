@@ -1247,6 +1247,55 @@ static void test_client_response_failure_closes_connection(void){
   TEST_END();
 }
 
+/* The real transport's close emits CEMON_CLOSED inline, whose handler FREES the k_conn.  The capture
+   transport used above never frees, so nothing in the deterministic suites could see what happens when a
+   send failure closes the connection from inside a frame handler.  This test makes close behave like the
+   real one and pins what used to go wrong: the connection must not be freed under the reader, and the rx
+   accounting must run exactly once (the second decrement wrapped the counter, and a wrapped counter pauses
+   every later client for good). */
+static k_conn *g_close_target;
+static void cap_fatal_close(void *sock){
+  (void)sock;
+  gcap.close_calls++;
+  if(g_close_target) k_conn_closed(g_close_target);   /* what cemon_close + the app's CLOSED handler do */
+}
+static void test_close_during_send_is_deferred(void){
+  k_server s;
+  k_server_transport fatal;
+  k_u8 frame[K_FRAME_HEADER+64];
+  k_u32 one,total=0;
+  TEST_BEGIN("server: a close from inside a frame handler defers the free and accounts the rx buffer once");
+  setup(&s,1,"mem://kstest-close-defer");
+  /* HELP is answered straight from the frame handler, so a send failure there closes the connection
+     WHILE k_rx_feed is still walking the read - the real stack does exactly this (cemon emits
+     CEMON_CLOSED inline and the app handler frees the k_conn). */
+  fatal=cap_transport;
+  fatal.close=cap_fatal_close;
+  s.transport=&fatal;
+  TEST_ASSERT(k_server_open(&s)==0,"open");
+  TEST_ASSERT(elect(&s)==0,"leader");
+  k_server_client_accepted(&s,(void*)(size_t)1);
+  one=make_client_frame(frame,sizeof(frame),K_REQ_HELP,1u,0,0,0,0);
+  TEST_ASSERT(one>0,"first HELP frame");
+  total=one;
+  one=make_client_frame(frame+total,sizeof(frame)-total,K_REQ_HELP,2u,0,0,0,0);
+  TEST_ASSERT(one>0,"second HELP frame in the same read");
+  total+=one;
+  g_close_target=s.connections;
+  gcap.fail_send=1;
+  k_server_client_received(s.connections,frame,total);
+  gcap.fail_send=0;
+  g_close_target=0;
+  TEST_ASSERT(gcap.close_calls>0,"the failed response closed the connection");
+  TEST_ASSERT(s.closing!=0,"the connection is queued for the reaper, not freed under the reader");
+  TEST_ASSERT(s.rx_buffer_bytes<(k_u64)1u<<32,"the rx accounting ran once (a double decrement wrapped it)");
+  turn(&s,50u);
+  TEST_ASSERT(s.closing==0,"the reaper frees it at the top of the advance step");
+  TEST_ASSERT(s.connections==0,"the dead connection is unlinked from the live list");
+  k_server_release(&s);
+  TEST_END();
+}
+
 static void test_single_voter_waits_for_local_wal(void){
   k_server s;
   const unsigned char *value=0;
@@ -1477,7 +1526,7 @@ static void test_membership_wait_reporting(void){
 
 int main(int argc,char **argv){
   if(argc>=3&&strcmp(argv[1],"--apply-stress")==0) return apply_stress(test_strtoull(argv[2]),argc>=4?test_strtoull(argv[3]):TEST_U64_C(4096),argc>=5&&strcmp(argv[4],"thread")==0,argc>=6&&strcmp(argv[5],"nosnap")==0);
-  TEST_PLAN(34);
+  TEST_PLAN(35);
   g_run_tag=0;
   if(k_monotonic_us(&g_run_tag)!=0) g_run_tag=(k_u64)time(0);
   test_fcall_gate_reopens_when_its_request_dies();
@@ -1507,6 +1556,7 @@ int main(int argc,char **argv){
   test_peer_send_drop_counted();
   test_peer_encode_splits_large_append();
   test_client_response_failure_closes_connection();
+  test_close_during_send_is_deferred();
   test_single_voter_waits_for_local_wal();
   test_wal_backpressure_pauses_client_receive();
   test_global_client_admission_limits();
