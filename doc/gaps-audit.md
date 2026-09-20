@@ -919,3 +919,19 @@ started, `auto-replace: node 4 is committed as a voter` never appears, so an ope
 then nothing.  Named cause: the replacement must catch up before the ADD commits, so a replacement that is
 not running stalls the swap.  Fixing that needs a rate-limited reminder (a new field), so it is recorded
 here rather than half-done.
+
+### (4) Unverified platforms (C4) - Linux added to CI, macOS deliberately not added
+
+CI only ever compiled the Windows/MSYS2 path, so the POSIX branches of `runtime.h` (including the
+`return 0` fix in C1), `cemon.h` and `vfs.h` were never built by any automated job.
+
+Added a `linux-gate` job to `ci.yml`: LF assertion, `chmod +x` for the harness scripts (a checkout made
+on Windows does not carry the executable bit), then `./build.sh regress quick` on ubuntu-latest.  It runs
+without a log publisher and without the issue reporter on purpose - the Windows gate owns both, and two
+reporters would fight over the same issue title.
+
+macOS was NOT added, although the plan said "compile only".  A compile job that cannot fail is not
+coverage: the kqueue path in `cemon.h` has never been compiled anywhere, and from this machine I cannot
+iterate on a macOS-only failure.  Adding it would either put a permanently red check on main or a job
+wrapped in `continue-on-error` - a check that never ran pretending to be a pass.  Open item: add a
+macOS compile job that is allowed to fail once someone can iterate on it.

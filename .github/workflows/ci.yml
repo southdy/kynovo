@@ -139,3 +139,49 @@ jobs:
           name: regress-logs
           path: build/regress/*.log
           if-no-files-found: ignore
+
+  # Unverified-platform coverage (review C4).  Everything above only ever compiled the Windows/MSYS2
+  # path, so the POSIX branches of runtime.h / cemon.h / vfs.h were never built by CI at all - and a
+  # branch nobody compiles is a branch nobody can trust.  GitHub's standard hosted runners are free for
+  # public repositories, so this costs nothing.  No log publisher and no issue reporter here on purpose:
+  # the Windows gate owns those, and two reporters would fight over one issue title.  A Linux failure
+  # shows up as a red check on the run and in the artifact below.
+  linux-gate:
+    name: build + quick gate (ubuntu, system gcc)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Record the toolchain
+        run: |
+          gcc --version | head -1
+          python3 --version
+
+      - name: Assert LF line endings in every tracked file
+        run: |
+          bad="$(git ls-files --eol | grep -Ei '(i|w)/crlf' || true)"
+          if [ -n "$bad" ]; then
+            echo "::error::CRLF in tracked files - this project requires LF everywhere"
+            echo "$bad"
+            exit 1
+          fi
+          echo "LF ok ($(git ls-files --eol | wc -l) tracked files checked)"
+
+      # A checkout made on Windows does not carry the executable bit, and the harness scripts are run
+      # by build.sh.
+      - name: Make the scripts executable
+        run: chmod +x build.sh tools/harness/*.sh
+
+      - name: Regression gate (quick)
+        run: |
+          ./build.sh regress quick 2>&1 | tee regress.log
+          tail -1 regress.log >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload gate logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: regress-logs-linux
+          path: build/regress/*.log
+          if-no-files-found: ignore
