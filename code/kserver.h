@@ -1537,34 +1537,46 @@ static int k_wal_state_load(const char *base,k_restore *restore,k_wal_meta_state
   int prev_seg_clean;
   int clean_end;
   vfs_file *file;
-  int meta_rc,have,pick_base;
-  k_u64 n_gen,n_seg,n_off,n_size,bad_gen;
+  int meta_rc,have,pick_base,meta_absent;
+  k_u64 n_gen,n_seg,n_off,n_size;
   k_u64 bseg,boff,bsize,vseg,voff,vsize;
   raft_i64 n_base,prev_base,base_of_use;
-  int have_bad,records,kept,i;
+  int records,kept,i;
   if(!base||!restore||!meta) return -1;
   memset(restore,0,sizeof(*restore));
   meta_rc=k_wal_meta_load(base,meta);
   if(meta_rc<=0) return meta_rc;
-  if(meta->generation==0) return 1;
+  /* A generation of 0 means the metadata slot was never written - which happens for the FIRST 63 records
+     of a store (the slot is fsynced every 64 records and at segment switches), so treating it as "nothing
+     to recover" silently started such a store from an empty tree and then wrote over segment 0's first
+     record (review D10).  The metadata is a hint, not the authority: without it, scan the segments. */
+  meta_absent=(meta->generation==0)?1:0;
   /* Recovery = the newest usable snapshot + every WAL record after its base, concatenated.
      Records carry only the DELTA of the log above what was already durable, so recovery
      stitches them together in generation order; a later record re-stating an index (a log
      truncation) wins.  Entry bytes are copied into owned blocks, so the record payload can
      be released immediately and the whole WAL is read exactly ONCE. */
   last_seg=meta->next.segment;
-  have_bad=0;
-  bad_gen=0;
   records=0;
   n_gen=0; n_seg=0; n_off=0; n_size=0; n_base=0;
   bseg=0; boff=0; bsize=0;
   vseg=0; voff=0; vsize=0;
   prev_base=0;
   prev_seg=0; prev_seg_gen=0; prev_seg_clean=0;
-  for(seg=0;seg<=last_seg;seg++){
+  for(seg=0;seg<=last_seg||meta_absent;seg++){
     if(k_path_wal_segment(path,base,seg)!=0) return -1;
     file=vfs_open(path);
-    if(!file) continue;                       /* segment released by snapshot cleanup */
+    if(!file){
+      if(meta_absent) break;                  /* no metadata: stop at the first segment that cannot be opened */
+      continue;                               /* segment released by snapshot cleanup */
+    }
+    if(meta_absent){
+      /* vfs_open uses OPEN_ALWAYS/O_CREAT - it CREATES the file - so "it opened" cannot mean "the segment
+         exists".  A segment with no bytes is the end of the chain: read one byte to decide, or this scan
+         walks to infinity creating empty segments (the first version of this loop did exactly that). */
+      k_u8 probe_byte;
+      if(vfs_read(file,0,&probe_byte,1u)!=0){ vfs_close(file); break; }
+    }
     offset=0;
     have=0;
     prev_gen=0;
@@ -1584,32 +1596,53 @@ static int k_wal_state_load(const char *base,k_restore *restore,k_wal_meta_state
                " (that record was never completed, so it was never acked)\n",seg,offset);
         break;
       }
-      if(k_read_u32(header)!=K_WAL_MAGIC||k_read_u32(header+4)!=K_WAL_VERSION) break;
+      if(k_read_u32(header)!=K_WAL_MAGIC||k_read_u32(header+4)!=K_WAL_VERSION){
+        /* Bytes are present but are not a record header - that is mid-history damage, not a torn tail.
+           Only a crash-interrupted FINAL record may be tolerated (the RocksDB/etcd rule); accepting this
+           one silently drops committed history (review D11/D12). */
+        printf("wal: segment %" K_U64_FMT " offset %" K_U64_FMT
+               " holds neither a record header nor a torn tail (magic/version mismatch): refusing to recover\n",
+               seg,offset);
+        vfs_close(file); return -1;
+      }
       payload_size=k_read_u32(header+16);
       gen=k_read_u64(header+8);
-      if(!payload_size||payload_size>K_STATE_MAX||gen==0) break;
+      if(!payload_size||payload_size>K_STATE_MAX||gen==0){
+        printf("wal: segment %" K_U64_FMT " offset %" K_U64_FMT
+               " has an illegal record header (payload_size=%u generation=%" K_U64_FMT "): refusing to recover\n",
+               seg,offset,(unsigned)payload_size,gen);
+        vfs_close(file); return -1;
+      }
       if(!have&&prev_seg_clean&&prev_seg_gen&&gen!=prev_seg_gen+1u){
+        /* The previous segment ended at a record boundary, so the generations MUST continue here: a gap
+           means a segment is missing or foreign.  This used to ignore the segment and carry on, which is
+           how a hole in the middle of history went unnoticed (review D11). */
         printf("wal: segment %" K_U64_FMT " starts at generation %" K_U64_FMT " but segment %" K_U64_FMT
-               " ended at %" K_U64_FMT " (missing or foreign segment; ignoring this segment's records)\n",
+               " ended cleanly at %" K_U64_FMT " (missing or foreign segment): refusing to recover\n",
                seg,gen,prev_seg,prev_seg_gen);
-        if(!have_bad){ have_bad=1; bad_gen=prev_seg_gen+1u; }
-        break;
+        vfs_close(file); return -1;
       }
       if(have&&gen!=prev_gen+1u){
-        if(!have_bad){ have_bad=1; bad_gen=prev_gen+1u; }    /* a record is missing */
-        break;
+        printf("wal: segment %" K_U64_FMT " jumps from generation %" K_U64_FMT " to %" K_U64_FMT
+               " (a record is missing inside the segment): refusing to recover\n",seg,prev_gen,gen);
+        vfs_close(file); return -1;
       }
       payload=(k_u8 *)K_MALLOC(payload_size);
       if(!payload) { vfs_close(file); return -1; }
       if(vfs_read(file,offset+K_WAL_HEADER_SIZE,payload,payload_size)!=0){
         K_FREE(payload);
-        break;                                               /* short payload: torn tail */
+        printf("wal: segment %" K_U64_FMT " ends with a torn payload at offset %" K_U64_FMT
+               " (the record was never completed, so it was never acked)\n",seg,offset);
+        break;                                               /* short payload: torn tail, tolerated */
       }
       k_crc32(payload,payload_size,&crc);
       if(crc!=k_read_u32(header+20)){
+        /* etcd's decoder refuses to continue past a CRC mismatch; a record whose bytes are present but
+           whose checksum fails is corruption, not a torn tail (review D11/D12). */
+        printf("wal: segment %" K_U64_FMT " offset %" K_U64_FMT
+               " fails its CRC check (generation %" K_U64_FMT "): refusing to recover\n",seg,offset,gen);
         K_FREE(payload);
-        if(!have_bad){ have_bad=1; bad_gen=gen; }             /* readable but corrupt */
-        break;
+        vfs_close(file); return -1;
       }
       records++;
       if(payload_size>=24u){
@@ -1643,6 +1676,7 @@ static int k_wal_state_load(const char *base,k_restore *restore,k_wal_meta_state
     if(have){ prev_seg=seg; prev_seg_gen=prev_gen; prev_seg_clean=clean_end; }
   }
   if(!records){
+    if(meta_absent) return 1;                  /* no metadata and no parsable record: a never-written store */
     printf("wal: no usable record found in segments 0..%" K_U64_FMT ": refusing to recover\n",last_seg);
     return -1;
   }
@@ -1664,11 +1698,8 @@ static int k_wal_state_load(const char *base,k_restore *restore,k_wal_meta_state
       return -1;
     }
   }
-  if(have_bad&&bad_gen>n_gen){
-    printf("wal: corrupt record after the recoverable position (generation %" K_U64_FMT
-           " > %" K_U64_FMT "): refusing to recover\n",bad_gen,n_gen);
-    return -1;
-  }
+  /* Every non-torn anomaly above is already fatal, so the old "hole tolerated unless it is past the newest
+     record" test has nothing left to judge and is gone with it. */
   /* Snapshot metadata (last included index/term, snapshot size, config masks) from the
      record that carries the base in use: one small read, not another full pass. */
   if(base_of_use>0){

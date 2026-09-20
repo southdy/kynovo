@@ -843,3 +843,36 @@ plus the coverage decisions A7/A9/A10/C3/C4/C7.
   (`raft_cluster_fuzz 800 200`), together with a release-sized `1 2000` and a 10-cluster
   `kserver_cluster_fuzz` sweep - all green, so the wider gate is kept rather than documented as a
   deviation.
+
+### ① WAL recovery strictness (D10-D12) - fixed
+
+Rule adopted: **only a torn tail (an incomplete final record) is tolerated**; every other anomaly is
+fail-stop with a printed reason.  That is etcd's decoder rule (it refuses to continue past a CRC mismatch)
+and the conservative end of RocksDB's `kTolerateCorruptedTailRecords`, chosen over
+`kPointInTimeRecovery` because this WAL is also Raft's durability layer: a mid-history cut amputates the
+Raft log, and if a majority of nodes were cut the same way (one bad disk batch) a truncated majority could
+elect and lose committed data.
+
+Changed:
+- metadata with `generation==0` no longer means "nothing to recover": the slot is fsynced only every 64
+  records, so a healthy store inside its first 63 records - or one whose slot was lost - has it at 0, and
+  recovery used to start from an empty tree and then write over segment 0's first record.  Without
+  metadata the segments are scanned instead.
+- magic/version mismatch, illegal payload size, `gen==0`, an intra-segment generation gap, a cross-segment
+  gap after a cleanly-ended segment, and a CRC mismatch are all fatal now (each with its own message);
+  they used to break out of the scan silently and the only fatal test was "the hole is past the newest
+  record", so a hole in the middle of history was accepted.
+- a torn header/payload still ends the scan quietly-but-not-silently: both now print.
+- the `have_bad`/`bad_gen` machinery and its final check are gone with the leniency they implemented.
+
+Two defects in the first attempt, found by probing rather than by reading:
+- the scan used `vfs_open` as an existence test, but that opens with `OPEN_ALWAYS`/`O_CREAT`; with the
+  metadata absent the loop therefore created empty segments without bound (83,643 of them in one run) and
+  recovery never finished.  The existence test reads one byte now.
+- the store is a set of files sharing the base as a PREFIX, not a directory: a probe that cloned it with
+  `cp -r` cloned nothing, which is worth knowing when writing recovery tests.
+
+Verified by probe (not by inspection): healthy restart keeps the data; a torn tail (last 7 bytes cut off
+a segment) still recovers and prints `ends with a torn payload at offset ...`; a single flipped byte
+inside a record refuses to start with `fails its CRC check (generation 1): refusing to recover` and exit
+code 1; a corrupted metadata slot falls back to the segment scan and recovers.
