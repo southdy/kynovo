@@ -116,6 +116,23 @@ static void *fuzz_realloc(void *p,size_t n){
 #define RAFT_REALLOC fuzz_realloc
 #define RAFT_IMPLEMENTATION
 #include "../code/raft.h"
+/* MSVC 6 has no `long long`, no ULL/LL literals and no %llu, while MinGW-w64 accepts all of them - which
+   is why this class of defect only ever surfaced on the legacy guest.  This driver includes only
+   code/raft.h (which pulls in stdlib/string), so it carries its own small layer; a test that already
+   includes code/kbase.h uses the project's k_u64/K_U64_FMT instead. */
+#if defined(_MSC_VER)
+typedef __int64 fuzz_i64;
+typedef unsigned __int64 fuzz_u64;
+#define FUZZ_I64_FMT "I64d"
+#define FUZZ_U64_FMT "I64u"
+#define FUZZ_U64_C(x) x##ui64
+#else
+typedef long long fuzz_i64;
+typedef unsigned long long fuzz_u64;
+#define FUZZ_I64_FMT "lld"
+#define FUZZ_U64_FMT "llu"
+#define FUZZ_U64_C(x) x##ULL
+#endif
 
 /* ---- tuning ---- */
 #define MAX_NODES    5
@@ -126,14 +143,14 @@ static void *fuzz_realloc(void *p,size_t n){
 #define MAX_STEPS    1500    /* harness steps per cluster run */
 
 /* ---- deterministic PRNG: splitmix64 ---- */
-static unsigned long long fuzz_state;
+static fuzz_u64 fuzz_state;
 
-static unsigned long long fuzz_next_u64(void){
-  unsigned long long z;
-  fuzz_state += 0x9E3779B97F4A7C15ULL;
+static fuzz_u64 fuzz_next_u64(void){
+  fuzz_u64 z;
+  fuzz_state += FUZZ_U64_C(0x9E3779B97F4A7C15);
   z = fuzz_state;
-  z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ULL;
-  z = (z ^ (z >> 27)) * 0x94D049BB133111EBULL;
+  z = (z ^ (z >> 30)) * FUZZ_U64_C(0xBF58476D1CE4E5B9);
+  z = (z ^ (z >> 27)) * FUZZ_U64_C(0x94D049BB133111EB);
   z = z ^ (z >> 31);
   return z;
 }
@@ -193,11 +210,11 @@ static void fail(const char *fmt,...){
 }
 
 /* ---- content hash (FNV-1a 64-bit) over the applied command bytes ---- */
-static unsigned long long hash_bytes(const void *p,unsigned int n){
+static fuzz_u64 hash_bytes(const void *p,unsigned int n){
   const unsigned char *b=(const unsigned char*)p;
-  unsigned long long h=14695981039346656037ULL;
+  fuzz_u64 h=FUZZ_U64_C(14695981039346656037);
   unsigned int i;
-  for(i=0;i<n;i++){ h ^= b[i]; h *= 1099511628211ULL; }
+  for(i=0;i<n;i++){ h ^= b[i]; h *= FUZZ_U64_C(1099511628211); }
   return h;
 }
 /* ---- config-content hash (P0-1 config log-matching + P1-3 snapshot config
@@ -205,18 +222,18 @@ static unsigned long long hash_bytes(const void *p,unsigned int n){
    is canonical across nodes; a length tag between the three masks removes
    set-boundary ambiguity.  A NULL ids pointer (mask-less CONFIG entry) hashes
    as an empty mask, matching the library's no-op treatment. ---- */
-static unsigned long long cfg_hash(raft_mask old,raft_mask new_,raft_mask learn){
-  unsigned long long h=14695981039346656037ULL;
+static fuzz_u64 cfg_hash(raft_mask old,raft_mask new_,raft_mask learn){
+  fuzz_u64 h=FUZZ_U64_C(14695981039346656037);
   int i,n;
   n=(old.ids&&old.id_count>0)?old.id_count:0;
-  for(i=0;i<n;i++){ h ^= (unsigned long long)old.ids[i]; h *= 1099511628211ULL; }
-  h ^= (unsigned long long)n; h *= 1099511628211ULL;
+  for(i=0;i<n;i++){ h ^= (fuzz_u64)old.ids[i]; h *= FUZZ_U64_C(1099511628211); }
+  h ^= (fuzz_u64)n; h *= FUZZ_U64_C(1099511628211);
   n=(new_.ids&&new_.id_count>0)?new_.id_count:0;
-  for(i=0;i<n;i++){ h ^= (unsigned long long)new_.ids[i]; h *= 1099511628211ULL; }
-  h ^= (unsigned long long)n; h *= 1099511628211ULL;
+  for(i=0;i<n;i++){ h ^= (fuzz_u64)new_.ids[i]; h *= FUZZ_U64_C(1099511628211); }
+  h ^= (fuzz_u64)n; h *= FUZZ_U64_C(1099511628211);
   n=(learn.ids&&learn.id_count>0)?learn.id_count:0;
-  for(i=0;i<n;i++){ h ^= (unsigned long long)learn.ids[i]; h *= 1099511628211ULL; }
-  h ^= (unsigned long long)n; h *= 1099511628211ULL;
+  for(i=0;i<n;i++){ h ^= (fuzz_u64)learn.ids[i]; h *= FUZZ_U64_C(1099511628211); }
+  h ^= (fuzz_u64)n; h *= FUZZ_U64_C(1099511628211);
   return h;
 }
 
@@ -547,10 +564,10 @@ typedef struct{
 /* ---- global safety oracle ---- */
 static raft_i64 g_term[MAX_LOG];            /* committed term at index (0=unset) */
 static unsigned char g_term_set[MAX_LOG];
-static unsigned long long g_hash[MAX_LOG];  /* committed command hash at index */
+static fuzz_u64 g_hash[MAX_LOG];  /* committed command hash at index */
 static unsigned int g_size[MAX_LOG];        /* committed command byte length */
 static int g_first_node[MAX_LOG];           /* node that first applied the index */
-static unsigned long long g_state[MAX_LOG]; /* canonical applied-state hash at index */
+static fuzz_u64 g_state[MAX_LOG]; /* canonical applied-state hash at index */
 static raft_i64 g_leader_term[MAX_LEADERS];
 static int g_leader_id[MAX_LEADERS];
 static int g_leader_count;
@@ -564,9 +581,9 @@ static raft_i64 g_commit_max;   /* max commit_index observed across nodes */
    CONFIG log entry / snapshot at an absolute index.  First-writer-wins; a
    differing second writer is a config divergence (two nodes holding different
    memberships at the same index). */
-static unsigned long long g_cfg_hash[MAX_LOG];
+static fuzz_u64 g_cfg_hash[MAX_LOG];
 static unsigned char g_cfg_set[MAX_LOG];
-static unsigned long long g_snap_cfg_hash[MAX_LOG];
+static fuzz_u64 g_snap_cfg_hash[MAX_LOG];
 static unsigned char g_snap_cfg_set[MAX_LOG];
 
 /* ---- outstanding client requests (P0-1 result liveness + P0-2 Sec. 6.4 reads) ---- */
@@ -637,28 +654,28 @@ static void out_abandon_node(int node_idx){
    byte image derived from the running applied-state hash.  Local snapshots are
    filled with this image and installed snapshots must match it, catching any
    byte-copy / offset / truncation corruption in streaming or install. */
-static unsigned long long state_mix(unsigned long long prev,raft_i64 idx,
-                                    raft_i64 term,unsigned long long data_hash){
-  unsigned long long h=prev ^ (unsigned long long)idx;
-  h ^= (unsigned long long)term;
+static fuzz_u64 state_mix(fuzz_u64 prev,raft_i64 idx,
+                                    raft_i64 term,fuzz_u64 data_hash){
+  fuzz_u64 h=prev ^ (fuzz_u64)idx;
+  h ^= (fuzz_u64)term;
   h ^= data_hash;
   h ^= h>>32;
-  h *= 1099511628211ULL;
+  h *= FUZZ_U64_C(1099511628211);
   h ^= h>>32;
   return h;
 }
 static unsigned int snap_size_for(raft_i64 index){
-  unsigned long long st=(index>=0&&index<MAX_LOG)?g_state[index]:0;
+  fuzz_u64 st=(index>=0&&index<MAX_LOG)?g_state[index]:0;
   return 64u+(unsigned int)(st%1024u);
 }
 static unsigned char snap_byte_for(raft_i64 index,unsigned int i){
-  unsigned long long st=(index>=0&&index<MAX_LOG)?g_state[index]:0;
+  fuzz_u64 st=(index>=0&&index<MAX_LOG)?g_state[index]:0;
   return (unsigned char)((st>>((i&7u)*8u)) ^ (i*131u));
 }
-static unsigned long long canonical_snap_hash(raft_i64 index,unsigned int size){
-  unsigned long long h=14695981039346656037ULL;
+static fuzz_u64 canonical_snap_hash(raft_i64 index,unsigned int size){
+  fuzz_u64 h=FUZZ_U64_C(14695981039346656037);
   unsigned int i;
-  for(i=0;i<size;i++){ unsigned char b=snap_byte_for(index,i); h ^= b; h *= 1099511628211ULL; }
+  for(i=0;i<size;i++){ unsigned char b=snap_byte_for(index,i); h ^= b; h *= FUZZ_U64_C(1099511628211); }
   return h;
 }
 
@@ -784,8 +801,8 @@ static void dump_logs(void){
       int ci=(int)(off>>L->chunk_bits);
       int co=(int)(off&L->chunk_mask);
       if(ci>=L->num_chunks||!L->chunks[ci].terms) break;
-      fprintf(stderr,"  [%lld] term=%lld kind=%d\n",(long long)idx,
-              (long long)L->chunks[ci].terms[co],(int)L->chunks[ci].kinds[co]);
+      fprintf(stderr,"  [%" FUZZ_I64_FMT "] term=%" FUZZ_I64_FMT " kind=%d\n",(fuzz_i64)idx,
+              (fuzz_i64)L->chunks[ci].terms[co],(int)L->chunks[ci].kinds[co]);
     }
   }
 }
@@ -804,21 +821,21 @@ static void cfgfmt(node *n,char *out){
 }
 static void check_apply(node *n,raft_i64 index,raft_i64 term,
                         const void *data,unsigned int size){
-  unsigned long long h;
+  fuzz_u64 h;
   char cb[32];
   if(index<1) return;
   if(index>=MAX_LOG)
-    fail("APPLY: index %lld out of oracle range (MAX_LOG=%d)",index,MAX_LOG);
+    fail("APPLY: index %" FUZZ_I64_FMT " out of oracle range (MAX_LOG=%d)",index,MAX_LOG);
   cfgfmt(n,cb);
-  ev("APPLY node %d idx %lld term %lld size %u commit %lld cfg%s",
-     n->id,index,term,size,(long long)n->r->commit_index,cb);
+  ev("APPLY node %d idx %" FUZZ_I64_FMT " term %" FUZZ_I64_FMT " size %u commit %" FUZZ_I64_FMT " cfg%s",
+     n->id,index,term,size,(fuzz_i64)n->r->commit_index,cb);
   h=hash_bytes(data,size);
   if(g_term_set[index]){
     if(g_term[index]!=term)
-      fail("LOG MATCHING: index %lld applied with term %lld but term %lld was applied elsewhere (node %d)",
+      fail("LOG MATCHING: index %" FUZZ_I64_FMT " applied with term %" FUZZ_I64_FMT " but term %" FUZZ_I64_FMT " was applied elsewhere (node %d)",
            index,term,g_term[index],n->id);
     if(g_hash[index]!=h)
-      fail("STATE MACHINE SAFETY: index %lld term %lld data differs: node %d size %u hash %llu vs node %d size %u hash %llu",
+      fail("STATE MACHINE SAFETY: index %" FUZZ_I64_FMT " term %" FUZZ_I64_FMT " data differs: node %d size %u hash %" FUZZ_U64_FMT " vs node %d size %u hash %" FUZZ_U64_FMT "",
            index,term,n->id,size,h,g_first_node[index],g_size[index],g_hash[index]);
   }else{
     g_term[index]=term;
@@ -838,14 +855,14 @@ static void check_leader(node *n,raft_i64 term){
   w+=sprintf(cb+w,"}/{");
   for(j=0;j<n->r->config_new.id_count;j++) w+=sprintf(cb+w,"%s%d",j?",":"",n->r->config_new.ids[j]);
   sprintf(cb+w,"} j=%d",n->r->config_joint);
-  ev("LEADER node %d term %lld cfg %s",n->id,term,cb);
+  ev("LEADER node %d term %" FUZZ_I64_FMT " cfg %s",n->id,term,cb);
   for(i=0;i<g_leader_count;i++){
     if(g_leader_term[i]==term&&g_leader_id[i]!=n->id)
-      fail("ELECTION SAFETY: two leaders in term %lld (nodes %d and %d)",
+      fail("ELECTION SAFETY: two leaders in term %" FUZZ_I64_FMT " (nodes %d and %d)",
            term,g_leader_id[i],n->id);
   }
   if(g_leader_count>=MAX_LEADERS)
-    fail("ELECTION SAFETY COVERAGE: term %lld exceeds MAX_LEADERS=%d (leader tracking overflow)",term,MAX_LEADERS);
+    fail("ELECTION SAFETY COVERAGE: term %" FUZZ_I64_FMT " exceeds MAX_LEADERS=%d (leader tracking overflow)",term,MAX_LEADERS);
   g_leader_term[g_leader_count]=term;
   g_leader_id[g_leader_count]=n->id;
   g_leader_count++;
@@ -865,15 +882,15 @@ static void check_leader(node *n,raft_i64 term){
     if(i<=n->last_included_index){
       if(i==n->last_included_index&&n->last_included_term_known
          &&n->last_included_term!=g_cterm[i])
-        fail("LEADER COMPLETENESS: leader %d term %lld has snapshot boundary term %lld at index %d, committed term is %lld",
+        fail("LEADER COMPLETENESS: leader %d term %" FUZZ_I64_FMT " has snapshot boundary term %" FUZZ_I64_FMT " at index %d, committed term is %" FUZZ_I64_FMT "",
              n->id,term,n->last_included_term,i,g_cterm[i]);
       continue; /* snapshot prefix: correct by induction, not directly verifiable */
     }
     if(i>n->last_index)
-      fail("LEADER COMPLETENESS: leader %d term %lld is missing committed entry %d (log tip %lld)",
+      fail("LEADER COMPLETENESS: leader %d term %" FUZZ_I64_FMT " is missing committed entry %d (log tip %" FUZZ_I64_FMT ")",
            n->id,term,i,n->last_index);
     else if(n->term_known[i]&&n->term_at[i]!=g_cterm[i])
-      fail("LEADER COMPLETENESS: leader %d term %lld has term %lld at committed index %d, expected %lld",
+      fail("LEADER COMPLETENESS: leader %d term %" FUZZ_I64_FMT " has term %" FUZZ_I64_FMT " at committed index %d, expected %" FUZZ_I64_FMT "",
            n->id,term,n->term_at[i],i,g_cterm[i]);
   }
 }
@@ -1057,8 +1074,8 @@ static void disk_commit_pending(node *n){
           &&n->snap_recv_size==(unsigned int)n->r->snapshot.size)
     memcpy(n->disk_snap,n->snap_recv,(size_t)n->snap_recv_size);
   else if(n->r->snapshot.size>0&&n->r->snapshot.size<=MAX_SNAP)
-    fail("SNAPSHOT BYTES: publish source mismatch (size %lld not found in any app image)",
-         (long long)n->r->snapshot.size);
+    fail("SNAPSHOT BYTES: publish source mismatch (size %" FUZZ_I64_FMT " not found in any app image)",
+         (fuzz_i64)n->r->snapshot.size);
   n->disk_snap_old_n=so.id_count;
   for(i=0;i<so.id_count&&i<MAX_NODES;i++) n->disk_snap_old[i]=so.ids[i];
   n->disk_snap_new_n=sn_.id_count;
@@ -1294,8 +1311,8 @@ static void node_restore(node *n){
   }
   n->alive=1;
   n->persist_inflight=0;   /* restart from the disk image: nothing is in-flight */
-  ev("RESTART node %d term %lld lii %lld count %d",n->id,(long long)n->disk_term,
-     (long long)n->disk_lii,n->disk_log_count);
+  ev("RESTART node %d term %" FUZZ_I64_FMT " lii %" FUZZ_I64_FMT " count %d",n->id,(fuzz_i64)n->disk_term,
+     (fuzz_i64)n->disk_lii,n->disk_log_count);
   /* a local snapshot pending at crash time never finalized: drop it */
   n->snap_tmp_pending=0;
   n->snap_tmp_size=0;
@@ -1496,7 +1513,7 @@ static void process_ready(node *n,int step){
       if(idx>ready.commit_index) continue;   /* uncommitted: mutable, skip */
       if(g_cfg_set[idx]){
         if(g_cfg_hash[idx]!=cfg_hash(e->cfg_old,e->cfg_new,e->cfg_learners))
-          fail("CONFIG LOG MATCHING: index %lld has different config entries on different nodes",(long long)idx);
+          fail("CONFIG LOG MATCHING: index %" FUZZ_I64_FMT " has different config entries on different nodes",(fuzz_i64)idx);
       }else{
         g_cfg_hash[idx]=cfg_hash(e->cfg_old,e->cfg_new,e->cfg_learners);
         g_cfg_set[idx]=1;
@@ -1506,11 +1523,11 @@ static void process_ready(node *n,int step){
        boundary index must carry identical membership metadata (the byte-level
        snapshot oracle covers command bytes only, not config). */
     if(p->snapshot_dirty&&p->last_included_index>=1&&p->last_included_index<MAX_LOG){
-      unsigned long long h=cfg_hash(p->snapshot_cfg_old,p->snapshot_cfg_new,p->snapshot_cfg_learners);
+      fuzz_u64 h=cfg_hash(p->snapshot_cfg_old,p->snapshot_cfg_new,p->snapshot_cfg_learners);
       raft_i64 li=p->last_included_index;
       if(g_snap_cfg_set[li]){
         if(g_snap_cfg_hash[li]!=h)
-          fail("SNAPSHOT CONFIG: index %lld snapshot config differs between nodes",(long long)li);
+          fail("SNAPSHOT CONFIG: index %" FUZZ_I64_FMT " snapshot config differs between nodes",(fuzz_i64)li);
       }else{
         g_snap_cfg_hash[li]=h;
         g_snap_cfg_set[li]=1;
@@ -1577,7 +1594,7 @@ static void process_ready(node *n,int step){
     for(i=0;i<ready.apply_count;i++){
       const raft_apply_entry *e=&ready.apply_entries[i];
       if(e->index!=prev+1)
-        fail("APPLY ORDER: node %d applied index %lld after %lld (gap/overlap)",
+        fail("APPLY ORDER: node %d applied index %" FUZZ_I64_FMT " after %" FUZZ_I64_FMT " (gap/overlap)",
              n->id,e->index,prev);
       check_apply(n,e->index,e->term,e->command,e->command_size);
       prev=e->index;
@@ -1610,9 +1627,9 @@ static void process_ready(node *n,int step){
   /* record a pending snapshot install + verify its boundary term */
   if(ready.snapshot_install_needed){
     raft_i64 li=ready.snapshot_last_index;
-    ev("INSTALL node %d idx %lld term %lld",n->id,li,ready.snapshot_last_term);
+    ev("INSTALL node %d idx %" FUZZ_I64_FMT " term %" FUZZ_I64_FMT "",n->id,li,ready.snapshot_last_term);
     if(li>=1&&li<MAX_LOG&&g_term_set[li]&&g_term[li]!=ready.snapshot_last_term)
-      fail("SNAPSHOT CONSISTENCY: install boundary index %lld term %lld vs committed term %lld",
+      fail("SNAPSHOT CONSISTENCY: install boundary index %" FUZZ_I64_FMT " term %" FUZZ_I64_FMT " vs committed term %" FUZZ_I64_FMT "",
            li,ready.snapshot_last_term,g_term[li]);
     /* byte-level snapshot oracle: the installed image must equal the canonical
        applied-state image at li (catches wrong-copy/offset/truncation).  The
@@ -1620,10 +1637,10 @@ static void process_ready(node *n,int step){
        of rejected streams. */
     if(li>=0&&li<MAX_LOG&&n->snap_recv_size>0){
       unsigned int want=snap_size_for(li);
-      unsigned long long got=hash_bytes(n->snap_recv,n->snap_recv_size);
-      unsigned long long wh=canonical_snap_hash(li,want);
+      fuzz_u64 got=hash_bytes(n->snap_recv,n->snap_recv_size);
+      fuzz_u64 wh=canonical_snap_hash(li,want);
       if(n->snap_recv_size!=want||got!=wh)
-        fail("SNAPSHOT BYTES: node %d installed %u bytes at index %lld (canonical %u bytes, hash %llu vs %llu)",
+        fail("SNAPSHOT BYTES: node %d installed %u bytes at index %" FUZZ_I64_FMT " (canonical %u bytes, hash %" FUZZ_U64_FMT " vs %" FUZZ_U64_FMT ")",
              n->id,n->snap_recv_size,li,want,got,wh);
     }
     install_to=li;
@@ -1668,7 +1685,7 @@ static void process_ready(node *n,int step){
          at least the submission-time commit lower bound. */
       if(g_out[oi].kind==RAFT_CLIENT_BARRIER&&cr->status==RAFT_CLIENT_READY){
         if(n->last_applied<g_out[oi].submit_commit)
-          fail("READ LINEARIZABILITY: node %d barrier READY at last_applied %lld below submission commit %lld",
+          fail("READ LINEARIZABILITY: node %d barrier READY at last_applied %" FUZZ_I64_FMT " below submission commit %" FUZZ_I64_FMT "",
                n->id,n->last_applied,g_out[oi].submit_commit);
       }
       out_resolve(cr->cookie,(int)(n-nodes));
@@ -1702,8 +1719,8 @@ static void process_ready(node *n,int step){
       const raft_install_snapshot *is=&tm->install_snapshot;
       if(is->snapshot_offset>0||is->snapshot_done){
         tgt_fired=1;
-        ev("TGT DROP SNAPSHOT off=%lld done=%d to node %d",
-           (long long)is->snapshot_offset,(int)is->snapshot_done,tgt_target);
+        ev("TGT DROP SNAPSHOT off=%" FUZZ_I64_FMT " done=%d to node %d",
+           (fuzz_i64)is->snapshot_offset,(int)is->snapshot_done,tgt_target);
         continue;   /* drop: skip enqueue */
       }
     }
@@ -1925,7 +1942,7 @@ static void deliver_one(queued_msg *q){
          advanced to off+n), so the app's snap_recv never mixes bytes from a
          rejected/different stream - otherwise the byte-level snapshot oracle
          would false-positive on dropped/reordered chunks. */
-      if(off>=0&&n>0&&(unsigned long long)off+n<=MAX_SNAP
+      if(off>=0&&n>0&&(fuzz_u64)off+n<=MAX_SNAP
          &&t->r->snapshot_recv_expected_offset==off+(raft_i64)n){
         memcpy(t->snap_recv+off,is->snapshot_data,n);
         if(is->snapshot_done){
@@ -2447,7 +2464,7 @@ static void run_targeted_scenarios(void){
 
 static void run_cluster(unsigned long seed){
   int step,k,i;
-  fuzz_state=(unsigned long long)seed;
+  fuzz_state=(fuzz_u64)seed;
   ev_count=0;
   ev("SEED %lu",(unsigned long)seed);
   memset(nodes,0,sizeof(nodes));
@@ -2476,7 +2493,7 @@ static void run_cluster(unsigned long seed){
   g_xfer_resolved=0;
   g_xfer_status=0;
   g_xfer_target=0;
-  g_state[0]=14695981039346656037ULL; /* base of the canonical applied-state chain */
+  g_state[0]=FUZZ_U64_C(14695981039346656037); /* base of the canonical applied-state chain */
   g_leader_count=0;
   g_leader=0; g_marker=0; g_clean=0;
   part_mask=0; part_until=0; part_mask2=0; part_until2=0;
