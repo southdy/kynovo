@@ -1133,6 +1133,14 @@ static int raft_log_truncate(raft_log *log,raft_i64 idx){
    it towards a commit (State Machine Safety rests on match index meaning "durably
    written to this server's disk", dissertation 10.2.1). */
 static void raft_durable_clamp(raft_ctx *r,raft_i64 highest_valid){
+  /* durable_index is part of the same frontier and was the one field missing here, against its own
+     contract two screens up: "the reported value clamped to the log tip at report time, and LOWED BY ANY
+     TRUNCATION".  The leader's durability self-count reads it (see require_durable in the commit loop), so
+     keeping a stale high-water across a cut let a leader count ITSELF as a durable voter for entries that
+     exist only in memory - one real ACK away from committing an entry that is not on a majority's disk.
+     The semantic basis: Sec. 3.8 (nothing is acknowledged before it is durable) and Sec. 5.4.2, with the
+     match index meaning "durably written to this server's disk" (Ongaro, Sec. 10.2.1). */
+  if(r->durable_index>highest_valid) r->durable_index=highest_valid;
   if(r->durable_confirm>highest_valid) r->durable_confirm=highest_valid;
   /* A cut rewrites entries at indices the caller may already have written: those records
      are stale from that index on, so the delta must start there again. */
