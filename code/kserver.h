@@ -52,6 +52,18 @@
    record that reads completely but fails its CRC is corruption (fail-stop), while a
    partially written record is the crash tail and is skipped. */
 #define K_WAL_META_FSYNC_EVERY 64u
+/* Snapshot cleanup unlinks whole segments BELOW the snapshot base, so a healthy store can start with a run of
+   segments that hold no byte at all, and recovery must walk past that prefix instead of stopping at the first
+   empty segment.  How far to walk is only knowable from the segments themselves, so the walk needs a ceiling:
+   it is set where a released prefix stops being plausible (64 segments of 64 MiB is 4 GiB of history) and past
+   it recovery refuses LOUDLY rather than scanning an arbitrarily large directory - a store that big has a
+   metadata file, and losing it is damage that must not be papered over. */
+#define K_WAL_SCAN_EMPTY_PREFIX_MAX 64u
+/* A slot that decoded but was never used (generation 0) means fewer than K_WAL_META_FSYNC_EVERY records have
+   ever been written, so its records can only sit in the first segment - and a wake-up probe of a couple of
+   segments is enough to say "nothing there".  Walking 64 segments on every start of a fresh store would be
+   pure noise, so this case stops early and stays quiet. */
+#define K_WAL_SCAN_EMPTY_PREFIX_MAX_UNUSED_SLOT 2u
 #ifndef K_CLIENT_CONNECTION_MAX
 #define K_CLIENT_CONNECTION_MAX 4096u
 #endif
@@ -1570,6 +1582,7 @@ static int k_wal_state_load(const char *base,k_restore *restore,k_wal_meta_state
   int clean_end;
   vfs_file *file;
   int meta_rc,have,pick_base,meta_absent;
+  k_u64 skipped_prefix;
   k_u64 n_gen,n_seg,n_off,n_size;
   k_u64 bseg,boff,bsize,vseg,voff,vsize;
   raft_i64 n_base,prev_base,base_of_use;
@@ -1577,12 +1590,26 @@ static int k_wal_state_load(const char *base,k_restore *restore,k_wal_meta_state
   if(!base||!restore||!meta) return -1;
   memset(restore,0,sizeof(*restore));
   meta_rc=k_wal_meta_load(base,meta);
-  if(meta_rc<=0) return meta_rc;
+  /* meta_rc: 1 = a slot decoded, 0 = nothing was ever written (no file, or a zero-length one), -1 = the file
+     is THERE but holds no decodable slot (short, bad magic/version/CRC).  The project's rule is that the last
+     one is damage and stops the start - and it used to stop it *silently*, which is the one thing a fail-stop
+     must not do (etcd's decoder prints; the operator needs the why).  The first two are "nothing written yet"
+     and fall through to the segment scan below, because there the metadata is only an index while the
+     segments are the facts. */
+  if(meta_rc<0){
+    printf("wal: the WAL metadata under '%s' exists but holds no decodable slot (bad magic/version/CRC): "
+           "refusing to recover\n",base);
+    return -1;
+  }
+  if(meta_rc==0){
+    meta_absent=1;
+  }else{
   /* A generation of 0 means the metadata slot was never written - which happens for the FIRST 63 records
      of a store (the slot is fsynced every 64 records and at segment switches), so treating it as "nothing
      to recover" silently started such a store from an empty tree and then wrote over segment 0's first
      record (review D10).  The metadata is a hint, not the authority: without it, scan the segments. */
-  meta_absent=(meta->generation==0)?1:0;
+    meta_absent=(meta->generation==0)?1:0;   /* a slot that was never used: the first 63 records of a store */
+  }
   /* Recovery = the newest usable snapshot + every WAL record after its base, concatenated.
      Records carry only the DELTA of the log above what was already durable, so recovery
      stitches them together in generation order; a later record re-stating an index (a log
@@ -1595,19 +1622,49 @@ static int k_wal_state_load(const char *base,k_restore *restore,k_wal_meta_state
   vseg=0; voff=0; vsize=0;
   prev_base=0;
   prev_seg=0; prev_seg_gen=0; prev_seg_clean=0;
+  skipped_prefix=0;
   for(seg=0;seg<=last_seg||meta_absent;seg++){
     if(k_path_wal_segment(path,base,seg)!=0) return -1;
+    if(!records&&seg>=(meta_absent?K_WAL_SCAN_EMPTY_PREFIX_MAX_UNUSED_SLOT:K_WAL_SCAN_EMPTY_PREFIX_MAX)){
+      /* The ceiling is reached with nothing read.  Two very different situations look identical here, since the
+         write position lives in the metadata and the metadata is exactly what is missing: a store that has never
+         been written (the ordinary first start, and the reason this must not be an error), and one whose
+         metadata is damaged.  The damaged case is the one that must not be papered over, so it refuses; the
+         other stops quietly.  A metadata file that is merely ABSENT together with a prefix longer than the
+         ceiling is indistinguishable from both and is treated as the harmless one - the ceiling is 64 segments
+         of 64 MiB, and the alternative would be an unbounded directory scan at every start. */
+      /* Nothing to say here: this is also the ordinary first start of a store (no metadata file yet, no
+         segment, and the server initialises the metadata right after this call).  The residual risk - a store
+         whose metadata was lost AND whose records all sit beyond the ceiling - is accepted and recorded in
+         doc/gaps-audit.md: telling the two apart needs a read-only existence probe, which this layer
+         deliberately does not have. */
+      break;
+    }
     file=vfs_open(path);
     if(!file){
-      if(meta_absent) break;                  /* no metadata: stop at the first segment that cannot be opened */
-      continue;                               /* segment released by snapshot cleanup */
+      /* vfs_open uses OPEN_ALWAYS/O_CREAT, so a failure here means the path itself is unusable, not that the
+         segment is missing.  Either way nothing was read: treat it like an empty segment below. */
+      if(records) break;
+      skipped_prefix++;
+      continue;
     }
-    if(meta_absent){
-      /* vfs_open uses OPEN_ALWAYS/O_CREAT - it CREATES the file - so "it opened" cannot mean "the segment
-         exists".  A segment with no bytes is the end of the chain: read one byte to decide, or this scan
-         walks to infinity creating empty segments (the first version of this loop did exactly that). */
+    /* vfs_open CREATES the file when it is missing, so "it opened" cannot mean "the segment exists".  A
+       segment with no bytes tells the two apart well enough: read one byte to decide.  A leading empty
+       segment is not the end of the chain - snapshot cleanup may have released a whole prefix below the
+       snapshot base - so recovery walks on until it finds a record; only after records were read does an
+       empty segment end the chain. */
+    {
       k_u8 probe_byte;
-      if(vfs_read(file,0,&probe_byte,1u)!=0){ vfs_close(file); break; }
+      if(vfs_read(file,0,&probe_byte,1u)!=0){
+        vfs_close(file);
+        if(records) break;
+        /* Never leave the files this scan created behind: a probed segment that holds no byte is either the
+           released prefix or one the writer has not reached yet, and either way its absence is not ours to
+           invent.  Unlinking it also keeps "how many leading segments are empty" (below) meaningful. */
+        vfs_unlink(path);
+        skipped_prefix++;
+        continue;
+      }
     }
     offset=0;
     have=0;
@@ -1708,9 +1765,29 @@ static int k_wal_state_load(const char *base,k_restore *restore,k_wal_meta_state
     if(have){ prev_seg=seg; prev_seg_gen=prev_gen; prev_seg_clean=clean_end; }
   }
   if(!records){
-    if(meta_absent) return 1;                  /* no metadata and no parsable record: a never-written store */
-    printf("wal: no usable record found in segments 0..%" K_U64_FMT ": refusing to recover\n",last_seg);
-    return -1;
+    /* No segment holds a byte of record: this store has no WAL.  Which of the two ways to say that is right
+       depends on whether a metadata FILE exists, and that is exactly what meta_rc reports: with no file at all
+       the caller must create one (return 0 = a fresh store, and the server initialises the metadata), while a
+       file that is there but unused means the caller already owns a slot and must keep it (return 1).
+       The segment holding the NEWEST record is never released by snapshot cleanup - cleanup only drops whole
+       segments below the snapshot base - so "nothing anywhere" cannot mean "the history was released". */
+    return (meta_rc==0)?0:1;
+  }
+  if(meta_absent)
+    printf("wal: the WAL metadata is missing under '%s': rebuilt the index from %d record(s) in the segments\n",
+           base,records);
+  /* The metadata stores record/record_size = the last ACKNOWLEDGED record, so recovery must have reached it.
+     If the log ends earlier, records that were acked are missing (a deleted segment, a hole) and continuing on
+     top of this store would overwrite - and silently outlive - whatever they held (review 2.2). */
+  if(!meta_absent&&meta->record_size>0u){
+    k_u64 end_seg=n_seg,end_off=n_off+n_size;
+    k_u64 ack_seg=meta->record.segment,ack_off=meta->record.offset+meta->record_size;
+    if(end_seg<ack_seg||(end_seg==ack_seg&&end_off<ack_off)){
+      printf("wal: the metadata says the record at segment %" K_U64_FMT " offset %" K_U64_FMT
+             " was acknowledged, but the log ends at segment %" K_U64_FMT " offset %" K_U64_FMT
+             " (records are missing): refusing to recover\n",ack_seg,ack_off,end_seg,end_off);
+      return -1;
+    }
   }
   /* Bases only advance, so a record whose base goes BACKWARDS carries a stale header
      (observed after a restart: the newest record said 0 while its own entries started

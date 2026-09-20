@@ -757,6 +757,53 @@ static void test_wal_recovery_across_segment_rotation(void){
   TEST_END();
 }
 
+/* ---- the newest segment that holds acknowledged records is gone ----
+   Records are fsynced as they are written, but the metadata slot only every 64 records (and at a segment
+   switch), so the slot cannot witness everything: the segments are the only authority on what was acked.  If
+   the segment holding the newest acknowledged record is missing, recovery must REFUSE - continuing on top of
+   this store would write over, and silently outlive, whatever that segment held (review 2.2).  Before the fix
+   this recovered the older records, pulled the write position back and carried on. */
+static unsigned int g_walmiss_seq;
+static void test_wal_recovery_refuses_missing_newest_segment(void){
+  k_server s;
+  char base[64],path[K_URI_MAX];
+  const unsigned char *val=0;
+  unsigned int vlen=0;
+  k_u8 frame[K_FRAME_HEADER+64];
+  k_u32 total;
+  raft_i64 bl;
+  k_u64 newest;
+  int i;
+  TEST_BEGIN("server WAL recovery refuses a deleted newest segment (fail-stop)");
+  sprintf(base,"mem://kstest-walmiss-%u",g_walmiss_seq++);
+  setup(&s,1,base);
+  TEST_ASSERT(k_server_open(&s)==0,"open");
+  TEST_ASSERT(elect(&s)==0,"leader");
+  s.cfg.wal_seg_size=900u;                 /* rotate every few records */
+  for(i=0;i<40;i++){
+    char key[8];
+    sprintf(key,"k%d",i);
+    bl=s.last_applied;
+    k_server_client_accepted(&s,(void*)(size_t)1);
+    total=make_client_frame(frame,sizeof(frame),K_REQ_SET,1u,key,(k_u32)strlen(key),"v",1);
+    TEST_ASSERT(total>0,"SET frame");
+    k_server_client_received(s.connections,frame,total);
+    apply_until(&s,bl+1);
+    for(bl=0;bl<3;bl++) turn(&s,20u);
+  }
+  for(i=0;i<40;i++) turn(&s,20u);
+  TEST_ASSERT(s.wal_meta.next.segment>1,"several segments were written");
+  TEST_ASSERT(treap_get(s.tree,(const unsigned char*)"k0",2,&val,&vlen)==1,"the run really landed in the tree");
+  TEST_ASSERT(treap_get(s.tree,(const unsigned char*)"k39",3,&val,&vlen)==1,"the newest key landed in the tree");
+  newest=(s.wal_meta.next.offset>0)?s.wal_meta.next.segment:(s.wal_meta.next.segment-1u);
+  k_server_release(&s);
+  TEST_ASSERT(k_path_wal_segment(path,base,newest)==0,"segment path");
+  TEST_ASSERT(vfs_unlink(path)==0,"remove the newest segment that holds records");
+  setup(&s,1,base);
+  TEST_ASSERT(k_server_open(&s)!=0,"a store whose newest acknowledged segment is gone refuses to open");
+  TEST_END();
+}
+
 /* ---- snapshot file validation and retention ----
    A snapshot is written straight to its versioned file and verified by streaming CRC
    before anything is trusted or unlinked (no temp file + rename): a torn, truncated or
@@ -1526,7 +1573,7 @@ static void test_membership_wait_reporting(void){
 
 int main(int argc,char **argv){
   if(argc>=3&&strcmp(argv[1],"--apply-stress")==0) return apply_stress(test_strtoull(argv[2]),argc>=4?test_strtoull(argv[3]):TEST_U64_C(4096),argc>=5&&strcmp(argv[4],"thread")==0,argc>=6&&strcmp(argv[5],"nosnap")==0);
-  TEST_PLAN(35);
+  TEST_PLAN(36);
   g_run_tag=0;
   if(k_monotonic_us(&g_run_tag)!=0) g_run_tag=(k_u64)time(0);
   test_fcall_gate_reopens_when_its_request_dies();
@@ -1543,6 +1590,7 @@ int main(int argc,char **argv){
   test_wal_recovery_rejects_corrupt_record_after_checkpoint();
   test_wal_recovery_rejects_missing_generation();
   test_wal_recovery_across_segment_rotation();
+  test_wal_recovery_refuses_missing_newest_segment();
   test_wal_meta_slot_only_written_when_durable();
   test_wal_meta_both_slots_invalid_fail_stop();
   test_wal_meta_one_slot_torn_still_starts();

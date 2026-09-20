@@ -1099,3 +1099,33 @@ and the source are server-global), 4.1 (a real C89 violation at `code/cemon.h:25
 compile), 4.2 (the mem backend's inode table is an unlocked process-global), 6.1/6.2/6.3 (three gates that go
 green on nothing: `scan()` re-scoping to the whole library, the naive LF step still in the primary CI job, and
 the `//`-comment rule blinded by apostrophes in comments).
+
+## N. 恢复（第三轮审视 2.1/2.2/2.3）—— 已修，并记录一条保留的残留
+
+- **2.1 元数据不可用 + 快照已释放前缀 ⇒ 静默空库启动（已修）**。原扫描在**第一个空段**就 `break`，于是被快照
+  释放掉的前缀让恢复错过后面所有记录，`records==0` 直接当"从未写过的库"返回，历史被孤儿化、随后被覆写。现在
+  空前缀只跳过不终止（有界：未用过的槽最多 2 段、没有元数据最多 64 段），恢复继续走到持记录的段。
+  真机探针：删掉 `<base>.wal.meta` 后重启 ⇒
+  `wal: the WAL metadata is missing under '<base>': rebuilt the index from 6 record(s) in the segments`，
+  全部键读回如初（旧行为：空库启动）。
+- **2.2 元数据指向的最新段缺失 ⇒ 静默缩短历史（已修）**。记录是随写随 fsync 的，元数据槽每 64 条才落盘，所以
+  槽无法见证全部——段才是"已确认"的唯一权威。现在恢复到的最远位置若**早于**元数据里"最后一条已确认记录"的
+  位置，一律 fail-stop 并指名位置。确定性单测
+  `test_wal_recovery_refuses_missing_newest_segment`（小段配置 + 删掉持记录的最新段 ⇒ `k_server_open` 必须失败）；
+  把该校验临时禁用即红（`35/36`，断言 `k_server_open(&s)!=0`）。旧行为是把写位置回退到更早的记录上继续跑。
+- **2.3 零字节 `.wal.meta` ⇒ 静默当作新库（已修）**。零字节文件与"从未写过"在读取探针下同形，所以旧代码短路成
+  新库。现在元数据"在但无字节"和"文件缺失"一样落到**段为准**的扫描路径：探针实测清零元数据后重启 ⇒ 同样是
+  `rebuilt the index from 6 record(s)`，数据完整。同时把**行为一致性**补齐：文件在但解不出槽（短/魔数/版本/CRC
+  ⇒ `k_wal_meta_load` 返回 -1）**保持 fail-stop**，但不再静默——新增原因打印
+  `wal: the WAL metadata under '<base>' exists but holds no decodable slot (bad magic/version/CRC): refusing to recover`。
+- **顺带修掉一条未被审视列出的潜在缺陷**：**合法**元数据 + 已被释放的前缀。旧扫描同样在第一个空段 `break`，
+  于是快照清理过的库重启会走到 `wal: no usable record found in segments 0..N: refusing to recover` ——即"清理过
+  前缀的库重启会在门里假红"。上面的空前缀跳过把这一类一并覆盖（单测 `test_wal_recovery_across_segment_rotation`
+  在多段旋转下通过，探针的"健康重启"一例打印为空 = 无副作用）。
+- **保留的残留（明确记录，不做）**：**完全没有元数据 + 已释放前缀长于 64 段 + 记录全在前缀之后**时，恢复会安静地
+  按空库启动。要把这种情形和"确实从未写过"区分开，需要一个**只读存在性探针**；该层明确不提供（用户裁定
+  `vfs 不需要 exists 接口`），因此这里用 64 段（64 MiB × 64 = 4 GiB 历史）作为"前缀还可能有多长"的上界，
+  超界即安静停下。判断依据：**最新记录所在的段永远不会被快照释放**（清理只丢弃完全位于快照基点之下的段），
+  所以"扫不到任何记录"在元数据存在时不会发生；这条残留只在元数据也被删除且历史远超 4 GiB 时才有观感。
+- 探针自身的两处失误已更正：把"单段库里移走最新段"当成 2.2（该段没有已确认记录 ⇒ 照常启动是**正确**行为，
+  真正的 2.2 需要小段配置 ⇒ 做成单测）；以及 `GET` 取值时把客户端横幅当成返回值。

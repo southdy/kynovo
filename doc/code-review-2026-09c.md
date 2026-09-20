@@ -290,3 +290,17 @@ reads identically; unit-suite layers accept any positive count.
    synchronous rejections too, hang the note off the request).
 6. **4.1** (one-line C89 fix) and **4.2** (lock the mem inode table or refuse the threaded mem combination), then
    the documentation corrections in §7.
+
+## Status after the first fix round
+
+| item | state | evidence |
+|---|---|---|
+| 1.1 + 1.2 connection freed inside a frame handler | fixed, `server: never free a connection from inside a frame handler` | new deterministic test; with the inline free restored the process dies inside it |
+| 3.1 MEMBER body swallowed into `ok` | fixed, `client: print the MEMBER response body` | test reports `expected "note: node 4 is still catching up" / actual "ok"` without the whitelist entry |
+| 4.1 declaration after a statement (POSIX branch) | fixed, plus the correction commit after the first hoist landed in the wrong function | linux-gate job: red then green (the job ④ added caught it twice) |
+| 6.2 naive LF check in the primary CI job | fixed (removed; the principles layer owns the rule with its exemption) | YAML valid, `gate` steps = 8 |
+| 2.1 / 2.2 / 2.3 recovery | fixed, `server: recover past a released prefix and refuse a missing newest segment` | probes + a deterministic fail-stop test; see doc/gaps-audit.md §N, including the residual that is deliberately kept |
+| 3.3 / 3.4 / 3.5 membership visibility truthfulness | open | planned: per-entry source instead of a server-global, clear the pending report on a refusal, count a synchronous rejection in the auto-replace backoff |
+| 4.2 mem backend inode table and the WAL/snapshot worker threads | open | |
+| 6.1 / 6.3 gate holes (empty file list widens the scan; `//` rule blinded by apostrophes) | open | |
+| 7 documentation drift (crash-contract line refs, testing.md's retired L0 rule) | partly fixed (counts and verdict examples in this round) | crash-contract refs still to do |
