@@ -3253,7 +3253,7 @@ static int cemon_progress_stop(cemon *loop){
    The first call keeps the blocking wait so an idle loop still sleeps. */
 static int cemon_poll_once(cemon *loop,int timeout_ms){
   DWORD bytes;
-  ULONG_PTR key;
+  ULONG_PTR key=0;   /* GQCS leaves it untouched on failure; an uninitialised read could look like a wake */
   OVERLAPPED *ov;
   int timeout;
   BOOL ok;

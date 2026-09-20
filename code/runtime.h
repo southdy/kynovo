@@ -462,8 +462,10 @@ static runtime_ctx *thread_create(runtime_backend *be,int n_threads,void (*entry
 #if !defined(__APPLE__)
   {
     pthread_condattr_t attr;
-    if(pthread_condattr_init(&attr)!=0) return -1;
-    if(pthread_condattr_setclock(&attr,CLOCK_MONOTONIC)!=0){ pthread_condattr_destroy(&attr); return -1; }   /* a realtime-clock cond would be fed absolute monotonic deadlines */
+    /* Return 0, not -1: this function returns a POINTER, so -1 would reach the caller as a non-NULL
+       handle and be dereferenced.  Mirror the Windows branch: destroy what was built, then 0. */
+    if(pthread_condattr_init(&attr)!=0){ thread_destroy((runtime_ctx *)t); return 0; }
+    if(pthread_condattr_setclock(&attr,CLOCK_MONOTONIC)!=0){ pthread_condattr_destroy(&attr); thread_destroy((runtime_ctx *)t); return 0; }   /* a realtime-clock cond would be fed absolute monotonic deadlines */
     pthread_cond_destroy(&t->task.wake);
     pthread_cond_destroy(&t->result.wake);
     pthread_cond_init(&t->task.wake,&attr);

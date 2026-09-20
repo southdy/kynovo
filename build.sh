@@ -370,10 +370,10 @@ do_regress(){
     reg_build
     # Principles first: cheap, and it catches a violation while the context is still fresh.
     reg_gate principles     '^PRINCIPLES\|OK' $PYTHON tools/check-principles.py
-    reg_gate raft_test      'SUMMARY: [0-9]+/[0-9]+ passed' "$BUILD_DIR/raft_test.exe"
-    reg_gate kserver_test   'SUMMARY: [0-9]+/[0-9]+ passed' "$BUILD_DIR/kserver_test.exe"
-    reg_gate kclient_test   'SUMMARY: [0-9]+/[0-9]+ passed' "$BUILD_DIR/kclient_test.exe"
-    reg_gate cemon_test     'SUMMARY: [0-9]+/[0-9]+ passed' "$BUILD_DIR/cemon_test.exe"
+    reg_gate raft_test  'SUMMARY: [1-9][0-9]*/[0-9]+ passed' "$BUILD_DIR/raft_test.exe"
+    reg_gate kserver_test   'SUMMARY: [1-9][0-9]*/[0-9]+ passed' "$BUILD_DIR/kserver_test.exe"
+    reg_gate kclient_test   'SUMMARY: [1-9][0-9]*/[0-9]+ passed' "$BUILD_DIR/kclient_test.exe"
+    reg_gate cemon_test 'SUMMARY: [1-9][0-9]*/[0-9]+ passed' "$BUILD_DIR/cemon_test.exe"
     reg_gate selftest       'selftest: PASS'                "$BUILD_DIR/selftest.exe"
     # Leftover guard: the selftest writes its store into the working directory (the repo root), so a
     # failure path that returns early leaves kdb-selftest-* artifacts behind - two of them sat in the
@@ -381,15 +381,18 @@ do_regress(){
     reg_gate selftest_cleanup 'selftest-cleanup: 0 leftover' bash -c 'n=$(ls -1 kdb-selftest-* 2>/dev/null | wc -l); printf "selftest-cleanup: %s leftover file(s) %s\n" "$n" "$(ls kdb-selftest-* 2>/dev/null | head -3 | tr "\n" " ")"; [ "$n" = 0 ]'
     reg_gate cli_smoke      'cli_smoke: PASS'               bash tests/cli_smoke.sh
     if [ "$mode" != quick ]; then
-        reg_gate raft_fuzz            'done: [0-9]+ iterations' "$BUILD_DIR/raft_fuzz.exe" 1 "${2:-$fz}"
-        reg_gate raft_cluster_fuzz    'done: [0-9]+ iterations' "$BUILD_DIR/raft_cluster_fuzz.exe" 1 "${3:-$cf}" 0
+        reg_gate raft_fuzz            'done: [1-9][0-9]* iterations' "$BUILD_DIR/raft_fuzz.exe" 1 "${2:-$fz}"
+        reg_gate raft_cluster_fuzz    'done: [1-9][0-9]* iterations' "$BUILD_DIR/raft_cluster_fuzz.exe" 1 "${3:-$cf}" 0
         # The linearizability checker must SAY what it decided: a run whose checker decided no
         # history is not a pass (the harness returns non-zero for that), and requiring a non-zero count
         # here means neither "never ran" nor "decided nothing" can wear the success line.
         reg_gate kserver_cluster_fuzz 'linearizability: [1-9][0-9]* histories'  "$BUILD_DIR/kserver_cluster_fuzz.exe" 1 "${4:-$ks}"
     fi
     if [ "$mode" = full ]; then
-        reg_gate soak_release         'rounds_without_full_success=0' env RUNS="${RUNS:-24}" bash tools/harness/soak_release.sh
+        # The harness prints ONE verdict line that encodes rounds_run, failures and final liveness, so a
+        # soak that dies after round 1 (round 1 successful -> rounds_without_full_success=0) can no longer
+        # wear the success line the testing doc's two criteria were meant to guard.
+        reg_gate soak_release         '^SOAK\|PASS' env RUNS="${RUNS:-24}" bash tools/harness/soak_release.sh
     fi
     t0="$REG_T0"
     printf 'REGRESS|%s|pass=%s fail=%s duration=%ss\n' "$mode" "$REG_PASS" "$REG_FAIL" "$(( $(date +%s) - t0 ))"

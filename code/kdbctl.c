@@ -459,7 +459,7 @@ static int k_cli_pipeline_run(k_client_app *app,cemon *loop,const char *line){
   memset(mode,0,sizeof(mode));
   memset(prefix,0,sizeof(prefix));
   memset(value,0,sizeof(value));
-  fields=sscanf(line,"PIPE %u %u %7s %64s %255s",&k,&count,mode,prefix,value);
+  fields=sscanf(line,"PIPE %u %u %7s %63s %255s",&k,&count,mode,prefix,value);   /* %63s: prefix is K_HOST_MAX (64) INCLUDING the terminator */
   if(fields<4||k<1u||k>100000u||count<1u||count>1000000u){
     printf("usage: PIPE <K> <count> <SET|GET> <prefix> [value]\n");
     return -1;

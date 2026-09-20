@@ -69,9 +69,51 @@ def strip_comments(text):
         out.append(c); i += 1
     return ''.join(out)
 
+def strip_literals(text):
+    """Blank out string and char literal CONTENTS (keeping length and newlines) without touching
+    comments.  Used by the \"// comments\" rule: scanning comment-stripped text can never find a // comment,
+    and scanning raw text would flag every \"disk://...\" string literal.  Stripping literals only is what
+    makes that rule able to fail."""
+    out = []
+    i = 0
+    n = len(text)
+    while i < n:
+        c = text[i]
+        if c == '"' or c == "'":
+            quote = c
+            out.append(' ')
+            i += 1
+            while i < n and text[i] != quote:
+                if text[i] == '\\' and i + 1 < n:
+                    out.append(' ')
+                    i += 1
+                out.append('\n' if text[i] == '\n' else ' ')
+                i += 1
+            if i < n:
+                out.append(' ')
+                i += 1
+            continue
+        out.append(c)
+        i += 1
+    return ''.join(out)
+
+
 def code_text(path):
     with open(path, 'r', encoding='utf-8', errors='replace', newline='') as fh:
         return strip_comments(fh.read())
+
+def scan_raw(pattern, files=None):
+    """Like scan(), but strips literals instead of comments - for rules that are ABOUT comments."""
+    rx = re.compile(pattern)
+    hits = []
+    for path in (files or SRC):
+        with open(path, 'r', encoding='utf-8', errors='replace', newline='') as fh:
+            txt = strip_literals(fh.read())
+        for ln, line in enumerate(txt.split('\n'), 1):
+            if rx.search(line):
+                hits.append('%s:%d: %s' % (path, ln, line.strip()[:110]))
+    return hits
+
 
 def scan(pattern, files=None, label=None):
     rx = re.compile(pattern)
@@ -126,7 +168,10 @@ report('no drive-letter paths in tracked shell scripts', bad)
 report('no <stdint.h>', scan(r'#\s*include\s*<stdint\.h>'))
 report("no 'inline' keyword", scan(r'\binline\b'))
 report('no ULL literals in the shipped library (code/)', scan(r'[0-9]+ULL', LIB))
-report('no // comments in C sources', scan(r'(^|[^:])//[^/]'))
+# Scans text with LITERALS stripped (not comments stripped): a real // comment is a violation, a
+# "disk://x" URI inside a string is not.  Previously this rule ran on comment-stripped text and therefore
+# could never match anything - a permanently green rule.
+report('no // comments in C sources', [h for h in scan_raw(r'(^|[^:])//[^/]')])
 
 # 5. Windows XP+ only
 report('no post-XP Windows APIs', scan(r'GetQueuedCompletionStatusEx|GetTickCount64|CreateFile2|'
@@ -176,8 +221,14 @@ report('no new bare sprintf in code/ (budget 13, use k_text_append/k_snprintf)',
 # 157 sites measured with THIS checker's own comment-stripping (a raw grep says 236 - it counts
 # comments, and a budget taken from that number would leave ~80 sites of slack for new violations).
 TESTS_C = (git_out('ls-files', 'tests/*.c', 'tests/*.h') or '').split()
-sites = scan(r'\blong long\b|(?:0[xX][0-9a-fA-F]+|[0-9]+)(?:ULL|ull|LL|ll)\b|%ll[du]', TESTS_C)
-report('no new C99 64-bit spellings in tests/ (budget 7 = the sanctioned per-compiler blocks, use the project macros or a local layer)', sites[162:] or [])
+# The budget lives in ONE place and the message is derived from it: the old form kept the number in the
+# message text and a different number in the slice, so the message walked 161->7 while the threshold stayed
+# 162 and ~155 new violations passed silently.  The measured count is printed too, so a budget that no
+# longer matches the tree is visible in the ok line instead of only on the day someone injects a test.
+BUDGET_C99_TESTS = 7
+c99_sites = scan(r'\blong long\b|(?:0[xX][0-9a-fA-F]+|[0-9]+)(?:ULL|ull|LL|ll)\b|%ll[du]', TESTS_C)
+report('no new C99 64-bit spellings in tests/ (measured %d, budget %d = the sanctioned per-compiler blocks, use the project macros or a local layer)'
+       % (len(c99_sites), BUDGET_C99_TESTS), c99_sites[BUDGET_C99_TESTS:] or [])
 
 # 8. contract files: changing them must be deliberate
 dirty = (git_out('status', '--porcelain', 'code/raft.h', 'code/treap.h') or '').strip()

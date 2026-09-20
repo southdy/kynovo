@@ -3483,22 +3483,25 @@ static void k_server_peer_accepted(k_server *server,void *sock){
   conn=k_conn_create(server,sock,K_CONN_PEER,0,-1);
   if(!conn){ server->transport->close(sock); return; }
   if(k_server_send_hello(conn)!=0||server->transport->recv(conn->sock)!=0){
-    server->transport->close(conn->sock);
-    conn->sock=0;
+    /* Stash, clear, close - in that order: cemon's close emits CEMON_CLOSED inline, and the handler
+       frees this k_conn, so touching conn->sock afterwards writes into freed memory. */
+    { void *dead=conn->sock; conn->sock=0; server->transport->close(dead); }
   }
 }
 static void k_server_peer_dialed(k_conn *conn){
   k_server *server=conn->server;
   if(k_server_send_hello(conn)!=0||server->transport->recv(conn->sock)!=0){
-    server->transport->close(conn->sock);
-    conn->sock=0;
+    /* Stash, clear, close - in that order: cemon's close emits CEMON_CLOSED inline, and the handler
+       frees this k_conn, so touching conn->sock afterwards writes into freed memory. */
+    { void *dead=conn->sock; conn->sock=0; server->transport->close(dead); }
   }
 }
 static void k_server_peer_received(k_conn *conn,const void *data,k_u32 size){
   k_server *server=conn->server;
   if(k_rx_feed(&conn->rx,K_PEER_MAGIC,data,size,k_server_peer_frame,conn)!=0||server->transport->recv(conn->sock)!=0){
-    server->transport->close(conn->sock);
-    conn->sock=0;
+    /* Stash, clear, close - in that order: cemon's close emits CEMON_CLOSED inline, and the handler
+       frees this k_conn, so touching conn->sock afterwards writes into freed memory. */
+    { void *dead=conn->sock; conn->sock=0; server->transport->close(dead); }
   }
 }
 static void k_server_client_accepted(k_server *server,void *sock){
@@ -3520,21 +3523,24 @@ static void k_server_client_received(k_conn *conn,const void *data,k_u32 size){
   k_u32 old_len=conn->rx.len;
   int rc;
   if(server->rx_buffer_bytes>=K_RX_BYTES_MAX||(k_u64)size>K_RX_BYTES_MAX-server->rx_buffer_bytes){
-    server->transport->close(conn->sock);
-    conn->sock=0;
+    /* Stash, clear, close - in that order: cemon's close emits CEMON_CLOSED inline, and the handler
+       frees this k_conn, so touching conn->sock afterwards writes into freed memory. */
+    { void *dead=conn->sock; conn->sock=0; server->transport->close(dead); }
     return;
   }
   rc=k_rx_feed(&conn->rx,K_CLIENT_MAGIC,data,size,k_server_client_frame,conn);
   if(conn->rx.len>=old_len) server->rx_buffer_bytes+=(k_u64)(conn->rx.len-old_len);
   else server->rx_buffer_bytes-=(k_u64)(old_len-conn->rx.len);
   if(rc!=0){
-    server->transport->close(conn->sock);
-    conn->sock=0;
+    /* Stash, clear, close - in that order: cemon's close emits CEMON_CLOSED inline, and the handler
+       frees this k_conn, so touching conn->sock afterwards writes into freed memory. */
+    { void *dead=conn->sock; conn->sock=0; server->transport->close(dead); }
   }else if(server->wal_inflight_count>=K_WAL_INFLIGHT_MAX||server->request_count>=K_REQUEST_INFLIGHT_MAX||server->request_bytes>=K_REQUEST_BYTES_MAX||server->rx_buffer_bytes>=K_RX_BYTES_MAX){
     conn->recv_paused=1;
   }else if(server->transport->recv(conn->sock)!=0){
-    server->transport->close(conn->sock);
-    conn->sock=0;
+    /* Stash, clear, close - in that order: cemon's close emits CEMON_CLOSED inline, and the handler
+       frees this k_conn, so touching conn->sock afterwards writes into freed memory. */
+    { void *dead=conn->sock; conn->sock=0; server->transport->close(dead); }
   }
 }
 /* ================= Server: snapshot chunk streaming ================= */

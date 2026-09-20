@@ -45,8 +45,16 @@ for i in $(seq 1 $RUNS); do
   case "$res" in *"ok=$N"*) : ;; *) fails=$((fails+1)) ;; esac
   if [ "$alive" = "0" ]; then echo "=== server died during round $i ==="; break; fi
 done
+liveness=$(ps -W | grep -ci kdbsvr)
 echo "rounds_run=$i rounds_without_full_success=$fails"
-echo "=== final liveness: $(ps -W | grep -ci kdbsvr) ==="
+echo "=== final liveness: $liveness ==="
+# Verdict line for the gate: it must encode all three criteria (every round ran, none failed, the server
+# is still alive), because grepping one substring let a 1-round run pass as a full soak.
+if [ "$i" = "$RUNS" ] && [ "$fails" = 0 ] && [ "$liveness" != 0 ]; then
+  echo "SOAK|PASS|rounds_run=$i fails=$fails liveness=$liveness"
+else
+  echo "SOAK|FAIL|rounds_run=$i of $RUNS fails=$fails liveness=$liveness"
+fi
 echo "=== server log ==="
 tail -12 $out/rel-srv.log
 taskkill /F /IM kdbsvr.exe >/dev/null 2>&1
