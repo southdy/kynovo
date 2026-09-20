@@ -39,6 +39,27 @@ out=$(timeout 20 "$BIN/kdbctl.exe" "127.0.0.1:$PORT" GET k 2>&1); check "GET(mis
 timeout 30 "$BIN/kdbctl.exe" "127.0.0.1:1" GET k >/dev/null 2>&1; check "dead host exit" "$?" "1"
 timeout 20 "$BIN/kdbctl.exe" "127.0.0.1:$PORT" BOGUS >/dev/null 2>&1; check "unknown command exit" "$?" "1"
 
+# piped script input: the CLI must RUN the commands it is fed and exit at EOF.  It used to ignore stdin
+# entirely - the input path in cli.h is gated on a console - so a pipe produced the connect banner and then
+# hung until the caller killed it, with every command silently unexecuted.
+out=$(printf 'SET pipe1 a\nSET pipe2 b\nGET pipe1\n' | timeout 20 "$BIN/kdbctl.exe" "127.0.0.1:$PORT" 2>&1); check "piped script exit" "$?" "0"
+contain "piped script ran the first command" "$out" "a"
+contain "piped script ran the second command" "$out" "ok"
+
+# a malformed RGET limit is refused by the CLI itself: non-zero exit, an explanation, and NO claim about the
+# network (it used to be parsed as 0, which means "unbounded", so `limit abc` silently scanned everything).
+out=$(timeout 20 "$BIN/kdbctl.exe" "127.0.0.1:$PORT" RGET '' '' asc limit abc 2>&1); check "bad RGET limit exit" "$?" "1"
+contain "bad RGET limit message" "$out" "limit must be a positive integer"
+case "$out" in
+  *"no response from the server"*) say "FAIL bad RGET limit blamed the network"; fails=$((fails+1));;
+  *) say "PASS bad RGET limit did not blame the network";;
+esac
+
+# PIPE: every operation succeeds => exit 0, ok=n and other=0, and the mean says how many samples it used
+out=$(timeout 60 "$BIN/kdbctl.exe" "127.0.0.1:$PORT" PIPE 4 200 SET pk 2>&1); check "PIPE exit" "$?" "0"
+contain "PIPE ok count" "$out" "ok=200 not_found=0 other=0"
+contain "PIPE mean carries its sample count" "$out" "ops_timed=200"
+
 MSYS2_ARG_CONV_EXCL='*' taskkill /F /IM kdbsvr.exe >/dev/null 2>&1
 if [ "$fails" -eq 0 ]; then say "cli_smoke: PASS"; exit 0; fi
 say "cli_smoke: $fails check(s) FAILED"; exit 1

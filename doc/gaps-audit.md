@@ -1223,3 +1223,36 @@ the `//`-comment rule blinded by apostrophes in comments).
 真机复核（`mem://` + 真实线程后端）：`SET k1 hello` ⇒ `ok` ✓、`GET k1` ⇒ `hello` ✓、`STATS` 显示
 `wal_records=2`（WAL worker 确实在跑）✓。手写压力工具的线程模式此前已改走 `disk://`：那条改动**保留**（它更贴近
 真实路径，且工具离开时会清理自己写出的库），但不再是"因为被拒绝才绕开" ✓。
+
+## S. 客户端与 CLI（第三轮审视 5.x）—— 已修五项，一项转为开放
+
+- **5.1 管道输入被完全忽略、且进程永不退出（已修）**。根因：`cli.h` 的 `cli_poll` 把输入循环写成
+  `while(cli->tty && ...)`（`cli.h:736`）——脚本模式（`tty=0`，即管道/重定向）**根本不读**，命令不执行，
+  EOF 也看不到。修复前实测：`printf 'SET pk1 v1\nGET pk1\n' | kdbctl 127.0.0.1:9601` ⇒ **rc=124**（被调用方
+  kill）、输出只有连接横幅（30 字节）。现在 `kdbctl` 在脚本模式下自己按行读入并走同一个分发入口
+  （`cli_exec_line`），EOF 即收工。修复后实测同一条命令 ⇒ rc=0、三条命令都执行、数据可读回
+  （`ok`/`ok`/`x`）。`tests/cli_smoke.sh` 新增三项断言（含"管道里第一条命令必须执行"）。
+- **5.1b 由此暴露：连接建立前派发的请求会丢（转为开放）**。修 5.1 时发现脚本里**第一条**命令总是超时
+  （`request timed out: no response from the server`），因为它在连接/握手完成前就入队并被当作已发送。脚本模式
+  现在等 CLI 与服务器真正说上话后再读第一行（与 one-shot 路径同一个信号）⇒ 该现象在 CLI 上不再出现。但
+  **客户端 API 层面**仍可构造"连接前入队 ⇒ 无人重发"的窗口，**记为开放**（未伪造修复）。
+- **5.2 one-shot 把"可能已提交"说成"未执行"（已修）**。一次性等待是 **3 s**，而客户端自己的请求超时是
+  `K_CLIENT_REQUEST_TIMEOUT_MS=5000`（`kclient.h:18`）⇒ CLI 先放弃，然后断言"命令未执行"——这是它无从知道的。
+  现在等待预算由常量派生为 `K_CLIENT_REQUEST_TIMEOUT_MS+1s`，消息改为
+  `no response from the server within 6000ms; the request may or may not have been applied`；**并且**把"本地就被
+  拒绝（根���没发请求）"与"发了没等到响应"分开说——前者现在打印
+  `the command was not run: no request was sent (see the message above)`，不再把用户引向网络。
+- **5.3 PIPE 把 REDIRECT 记成"该操作的结局"（已修）**。完成回调是**按响应**触发的（`kclient.h:243-245`），而
+  客户端收到 REDIRECT 后会**重发**同一请求 ⇒ 同一个操作被计两次：重定向的那次往返进了延迟样本、计数进了吞吐、
+  状态落进 `other` ⇒ **全部成功也可能退出码非 0**。现在回调直接跳过 `K_STATUS_REDIRECT`（它不是结局）。
+  实测：`PIPE 4 200 SET pk` ⇒ `ok=200 not_found=0 other=0 end=complete`、rc=0（`cli_smoke.sh` 亦断言此三项）。
+- **5.4 `avg_us` 的分母是封顶的样本数（已修）**。延迟样本上限 `K_PIPE_SAMPLES=8192`，而 `g_pipe_us_sum` 累加
+  **每一条**操作 ⇒ 平均值被放大约 `ops/8192`（n=100000 时约 12 倍）。现在单独统计"参与求和的操作数"并按它求平均，
+  报告行同时给出 `ops_timed=`（统计量必须自带采样数）。实测：`avg_us=5574 ops_timed=200`。
+- **5.5 `RGET limit abc` 静默变成无界（已修）**。`strtoul` 把 "abc" 解析成 0，而 0 在这里表示**无上限**；
+  `"10abc"` 静默变 10、`"-1"` 回绕成 4294967295。现在严格解析：只接受正整数，否则报
+  `error: limit must be a positive integer ("limit N")` 并 rc=1（实测修复前：rc=0、零报错、跑了一个无界扫描）。
+
+**验证**：`tests/cli_smoke.sh` 从 12 项扩到 19 项，全部 PASS（新增：管道脚本 3 项、非法 limit 2 项含一条"必须不
+把本地拒绝归咎于网络"的反向断言、PIPE 的 ok/other 与 ops_timed 2 项）。这些断言的"能失败"证据就是修复前的同路径
+实测（rc=124 零执行 / rc=0 静默无界），已记在上面。

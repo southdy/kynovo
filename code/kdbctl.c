@@ -271,7 +271,22 @@ static int k_cli_rget(cli_ctx *cli,int argc,char **argv){
   /* The limit needs its keyword: treating a bare trailing number as the limit made a numeric
      end key impossible to express ("RGET a 100" was read as begin=a limit=100). */
   if(argc>2&&strcmp(argv[argc-2],"limit")==0){
-    limit=(k_u32)strtoul(argv[argc-1],0,10);
+    /* Strictly a number, and strictly positive.  strtoul alone accepted "abc" as 0 - and 0 means
+       UNBOUNDED here, so `RGET ... limit abc` silently ran an unbounded scan instead of complaining, while
+       "10abc" quietly became 10 and "-1" wrapped to 4294967295 (review 5.x). */
+    const char *num=argv[argc-1];
+    char *end=0;
+    unsigned long parsed;
+    if(!num[0]||num[0]=='-'||num[0]=='+'){
+      cli_print(cli,"error: limit must be a positive integer");
+      return 0;
+    }
+    parsed=strtoul(num,&end,10);
+    if(!end||*end||parsed==0||parsed>4294967295ul){
+      cli_print(cli,"error: limit must be a positive integer (\"limit N\")");
+      return 0;
+    }
+    limit=(k_u32)parsed;
     argc-=2;
   }
   if(argc>1&&(strcmp(argv[argc-1],"asc")==0||strcmp(argv[argc-1],"desc")==0)){
@@ -409,11 +424,18 @@ static k_u32 g_pipe_lat_n;
 static k_u32 g_pipe_first_id;   /* ids below this belong to the automatic discovery/handshake */
 static k_u32 g_pipe_status_ok,g_pipe_status_nf,g_pipe_status_other;
 static k_u64 g_pipe_us_sum;
+static k_u64 g_pipe_us_n;        /* how many durations went into g_pipe_us_sum (NOT capped like the samples) */
 static void k_cli_pipe_on_done(void *ud,k_u32 id,k_u8 status,k_u64 duration_us){
   (void)ud;(void)id;
   if(id<g_pipe_first_id) return;   /* the client's own discovery request, not part of the load */
+  /* A REDIRECT is not this operation's outcome: the client follows it and re-issues the request, so counting
+     it here (a) put the redirect's round trip into the latency samples, (b) counted the operation twice in the
+     completion count, and (c) landed in `other`, which is why a run in which every operation eventually
+     succeeded could still report a non-zero exit status (review 5.x). */
+  if(status==K_STATUS_REDIRECT) return;
   if(g_pipe_lat_n<K_PIPE_SAMPLES) g_pipe_lat[g_pipe_lat_n++]=(k_u32)(duration_us>4294967295u?4294967295u:duration_us);
   g_pipe_us_sum+=duration_us;
+  g_pipe_us_n++;
   if(status==K_STATUS_OK) g_pipe_status_ok++;
   else if(status==K_STATUS_NOT_FOUND) g_pipe_status_nf++;
   else g_pipe_status_other++;
@@ -444,7 +466,11 @@ static void k_pipe_report(const char *mode,k_u32 k,k_u32 count,k_u64 wall_us,k_u
         printf(" %s=%u",pct==50u?"p50":(pct==90u?"p90":(pct==99u?"p99":(pct==999u?"p99.9":"max"))),
                (unsigned)sorted[(k_u32)(((k_u64)pct*(k_u64)(g_pipe_lat_n-1u))/1000u)]);
       }
-      printf(" avg_us=%" K_U64_FMT "\n",(k_u64)(g_pipe_us_sum/g_pipe_lat_n));
+      /* The mean is over EVERY timed operation, which is what g_pipe_us_sum sums: dividing that sum by the
+         capped percentile-sample count inflated the average by roughly ops/K_PIPE_SAMPLES (measured ~12x at
+         n=100000).  The sample count is printed too - a statistic has to carry how many samples it came from. */
+      printf(" avg_us=%" K_U64_FMT " ops_timed=%" K_U64_FMT "\n",
+             (k_u64)(g_pipe_us_n?g_pipe_us_sum/g_pipe_us_n:0),g_pipe_us_n);
       K_FREE(sorted);
     }
   }
@@ -472,6 +498,7 @@ static int k_cli_pipeline_run(k_client_app *app,cemon *loop,const char *line){
   g_pipe_end="complete";
   g_pipe_status_ok=g_pipe_status_nf=g_pipe_status_other=0;
   g_pipe_us_sum=0;
+  g_pipe_us_n=0;
   g_pipe_first_id=app->next_id+1u;   /* the first request THIS run will queue */
   app->inflight_limit=(int)k;
   app->on_done=k_cli_pipe_on_done;
@@ -616,6 +643,9 @@ static int k_client_run(const char *seed_list,const char *one_shot){
     return -1;
   }
   if(k_client_connect(&app)!=0) cli_print(&cli,"connection attempt failed");
+  /* The CLI's settle budget must outlast the CLIENT's request timeout (kclient.h), otherwise a command whose
+     response is merely late is reported as "not executed" while the request may be committing right then. */
+#define K_CLI_SETTLE_BUDGET_US ((k_u64)(K_CLIENT_REQUEST_TIMEOUT_MS+1000u)*1000u)
   if(one_shot){
     /* Scripted use (no TTY).  TWO phases, because the handshake itself produces output
        ("connected to ...") - counting that as the command's result used to close the
@@ -660,7 +690,7 @@ static int k_client_run(const char *seed_list,const char *one_shot){
           if(cemon_poll(loop,10)!=0) break;
           k_monotonic_us(&app.now_us);
           k_client_poll(&app);
-          if(t0&&k_monotonic_us(&now)==0&&now-t0>3000000u) break;
+          if(t0&&k_monotonic_us(&now)==0&&now-t0>K_CLI_SETTLE_BUDGET_US) break;
         }
         continue;
       }
@@ -675,7 +705,7 @@ static int k_client_run(const char *seed_list,const char *one_shot){
         if(cemon_poll(loop,10)!=0) break;
         k_monotonic_us(&app.now_us);
         k_client_poll(&app);
-        if(t0&&k_monotonic_us(&now)==0&&now-t0>3000000u) break;
+        if(t0&&k_monotonic_us(&now)==0&&now-t0>K_CLI_SETTLE_BUDGET_US) break;
       }
       /* Structural success test: the command's own request id received an OK response.
          "Some output appeared" was not enough - a connect failure prints a notice too. */
@@ -684,17 +714,46 @@ static int k_client_run(const char *seed_list,const char *one_shot){
       if(cmd_id&&app.last_done_id==cmd_id&&!k_client_busy(&app)&&app.last_done_status!=K_STATUS_ERROR) one_shot_ok=1;
       break;
     }
-    if(!one_shot_ok){
+    if(!one_shot_ok&&(was_queued&&cmd_id)){
       /* One-shot mode must not report success when the command never produced output: a
          timeout, a refused command or an unreachable server all left rc==0 before, so scripts
          and CI read silence as success. */
-      printf("error: no response from the server; the command was not executed\n");
+      /* "was not executed" was a claim the client cannot make: it stops waiting at its own request timeout,
+         and a request that timed out may still have been applied (the response is what was lost).  Say what is
+         known - no response within the budget - and leave the outcome open. */
+      printf("error: no response from the server within %ums; the request may or may not have been applied\n",
+             (unsigned)(K_CLI_SETTLE_BUDGET_US/1000u));
+      rc=-1;
+    }else if(!one_shot_ok){
+      /* Nothing was ever queued, so this is not a lost response: the command was refused locally (a usage
+         error, a typo, no leader) and the message above says why.  Saying "no response from the server" here
+         sent the operator looking at the network for a mistake the CLI had already caught. */
+      printf("error: the command was not run: no request was sent (see the message above)\n");
       rc=-1;
     }
     app.stopping=1;
     }
   }
   while(!app.stopping){
+    /* Script mode: with stdin redirected (a pipe, a file, a service) cli.h disables its input path - it is
+       gated on cli->tty - so piped commands were accepted and never run, and EOF was never noticed, which is
+       why `printf 'GET k\n' | kdbctl <host>` printed the connect banner and then hung until it was killed.
+       Read the commands here instead: one line per turn, through the same dispatcher the one-shot path uses,
+       and stop at EOF.  A request in flight keeps the loop polling rather than blocking on the next line, so a
+       slow server cannot stall the client. */
+    if(!cli.tty&&!k_client_busy(&app)&&g_cli_out_count>0){
+      /* ... and only once the CLI has actually talked to the server: the same signal the one-shot path waits
+         for.  A line dispatched while the connection was still coming up was queued anyway and then timed out,
+         so the FIRST command of every script was lost - measured before this gate existed.  Nothing here
+         blocks while a request is in flight, and the loop falls through to the polling below, so a slow server
+         cannot stall the client. */
+      if(!fgets(line,sizeof(line),stdin)){ app.stopping=1; break; }   /* EOF: the script is done */
+      {
+        size_t ln=strlen(line);
+        while(ln&&(line[ln-1]== '\n'||line[ln-1]=='\r')) line[--ln]='\0';
+      }
+      if(line[0]) cli_exec_line(&cli,line);
+    }
     if(cli_poll(&cli)<0){
       app.stopping=1;
       break;
