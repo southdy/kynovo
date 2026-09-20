@@ -804,3 +804,24 @@ items I could not verify are listed separately in that document (§3) and are no
 
 **State of the gate:** unchanged and green at the reviewed HEAD; no fix from this review has been applied
 yet, deliberately - the audit and the remediation are separate batches.
+
+### Fix status of the §K findings (2026-09-20, same day)
+
+Fixed and gate-verified (`quick` + `fuzz` green before each push; every rule change was certified by
+injecting a real violation, watching exactly that rule fail, and reverting precisely with a zero-residue
+check):
+
+| commit | items | what changed |
+|---|---|---|
+| `0a23ae0` | A1, A2, A3, A4, A5, A6 | the rule-9 budget lives in one variable and the measured count is printed (injection: 7 -> 8 = FAIL); the `//` rule now scans literal-stripped text so it can actually fail; the four unit layers require a non-zero numerator; the two raft fuzz layers require at least one iteration; the soak layer greps one `SOAK\|PASS` verdict line (proven by a short run, with a FAIL negative control); `stall_hunt.sh` gets a working base path, a real abort and a verdict line |
+| `0a23ae0` | D1 (x6), C1, C2, D15 | all six teardown sites stash-clear-close instead of close-then-clear (the callback frees the conn inline); `thread_create` returns 0 from the pointer path on POSIX; the completion key is initialised; `%63s` into the 64-byte prefix |
+| `cdbeaaf` | F3, F5-F11 | the docs that claimed things the tree or the tool does not do: principles' numbers, testing's broken layer table + stale scope + duplicate section, README's missing gate entry point, the old review's self-contradiction (banner), the plan's private/public conflict, the ledger's stale C11/C12/C13 rows and its drifted line references |
+| `ef557ee` | D2, D3, D4, D5 | `release` frees requests before the connections they dereference; the FCALL gate fields are cleared; `maybe_finish_stop` has a latch; a failing `drive` prints a reason and marks the server fatal instead of stopping silently |
+
+Still open, each needing a decision rather than an edit: **D8/D9** (snapshot failure visibility: the
+`fatal: snapshot failed` branch is dead code and a follower's chunk-write failure is a silent disconnect
+loop), **D10/D11/D12** (WAL recovery: metadata with `generation==0` accepted as empty, the continuity check
+gated on a `clean_end` only "zero bytes" sets, three silent break paths), **B1** (`durable_index` not clamped
+on a log cut - the one that could present as committed data lost), **B2** (heartbeat ACK skips the
+persistence gate), **D13/D14/D16-D19**, the E-series (client) and F2 (the nightly's misleading issue body),
+plus the coverage decisions A7/A9/A10/C3/C4/C7.
