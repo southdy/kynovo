@@ -353,7 +353,11 @@ reg_build(){ # build + the 0-warning assertion (strict on the pinned toolchain o
     # A real compiler diagnostic is "file.c:12:3: warning|error: ...".  build.sh's own toolchain
     # notice and linker chatter are not source diagnostics and must not be counted as warnings.
     diag="$(grep -cE '^[^ :]+\.(c|h):[0-9]+:[0-9]+: (warning|error):' "$log")"
-    errs="$(grep -cE 'error:|fatal error:' "$log")"
+    # Compiler/linker errors only.  The loose form matched the WORD "error:" anywhere, which on Linux
+    # caught shell noise such as "grep: write error: Broken pipe" and turned a green Linux build into
+    # GATE|build|FAIL.  Tightening this cannot hide a real failure: rc is checked independently below, so
+    # a compile or link that actually fails is caught by rc even if its wording matches none of this.
+    errs="$(grep -cE '^[^ :]+\.(c|h):[0-9]+:[0-9]+: (error|fatal error):|undefined reference to|multiple definition of|unresolved external symbol' "$log")"
     # The 0-warning contract belongs to the PINNED toolchain - the compiler the project is built
     # and reviewed with.  A CI runner with a different gcc reports what it finds (the diagnostics
     # are printed below either way) but cannot enforce a contract that was never made for it.

@@ -56,6 +56,9 @@ jobs:
 
       - name: Regression gate
         run: |
+          # pipefail: the step's status must be the GATE's, not tee's.  Without it a red gate
+          # reported a green step, which is how the first Linux run looked fine.
+          set -o pipefail
           ./build.sh regress fuzz 2>&1 | tee regress.log
           tail -1 regress.log >> "$GITHUB_STEP_SUMMARY"
 
@@ -171,6 +174,9 @@ jobs:
 
       - name: Regression gate (quick)
         run: |
+          # pipefail: the step's status must be the GATE's, not tee's.  Without it a red gate
+          # reported a green step, which is how the first Linux run looked fine.
+          set -o pipefail
           ./build.sh regress quick 2>&1 | tee regress.log
           tail -1 regress.log >> "$GITHUB_STEP_SUMMARY"
 
