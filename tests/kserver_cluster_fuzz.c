@@ -859,8 +859,17 @@ static int run_one_cluster(k_u64 seed){
   return 1;
 }
 
+/* MSVC 6 declares neither strtoull nor _strtoui64 (C4013 "undefined" here, then an unresolved
+   __strtoui64 at link time), and the name differs across CRTs.  Only a decimal seed is ever read. */
+static k_u64 kscf_parse_u64(const char *s){
+  k_u64 v=0;
+  if(s==0) return 0;
+  while(*s==' '||*s=='\t') s++;
+  while(*s>='0'&&*s<='9'){ v=v*10u+(k_u64)(*s-'0'); s++; }
+  return v;
+}
 int main(int argc,char **argv){
-  k_u64 seed=(argc>1)?strtoull(argv[1],0,10):1;
+  k_u64 seed=(argc>1)?kscf_parse_u64(argv[1]):1;
   int count=(argc>2)?atoi(argv[2]):1;
   int i,ok=0;
   if(lincheck_selftest()!=0){ fprintf(stderr,"lincheck selftest failed\n"); return 1; }
