@@ -260,14 +260,20 @@ static void vfs_spin_release(vfs_spin *s){
 }
 #endif
 
+/* ONE lock for the in-memory backend, at file scope rather than inside vfs_mem_ctx, because the mem
+   functions cannot trust `be` or `file->be` to BE this backend: another backend may wrap mem and re-point
+   each file it opens at itself (tests/vfs_fault_test.c does exactly that), and casting that pointer to
+   vfs_mem_ctx and locking through it corrupted the wrapper instead of locking anything.  Verified the hard
+   way: the local MinGW build passed while the Linux gate hung inside vfs_fault_test's first case. */
+static vfs_spin vfs_mem_lock=VFS_SPIN_INIT;
+
 typedef struct vfs_mem_file{
   vfs_file base;
   vfs_mem_inode *inode;
 } vfs_mem_file;
 typedef struct vfs_mem_ctx{
   vfs_backend base;
-  vfs_mem_inode *buckets[VFS_MEM_HASH_BUCKETS];
-  vfs_spin lock;                        /* guards buckets[] and every inode's refcount/linked flag */
+  vfs_mem_inode *buckets[VFS_MEM_HASH_BUCKETS];   /* guarded by vfs_mem_lock (file scope, see above) */
 } vfs_mem_ctx;
 static vfs_mem_block *vfs_mem_find_block(vfs_mem_inode *n,vfs_u64 id){
   vfs_mem_block *b;
@@ -336,7 +342,7 @@ static vfs_file *vfs_mem_open(vfs_backend *be,const char *path){
   unsigned int idx=vfs_hash(path,len)%VFS_MEM_HASH_BUCKETS;
   vfs_mem_file *f;
   vfs_mem_inode *n;
-  vfs_spin_acquire(&mem->lock);
+  vfs_spin_acquire(&vfs_mem_lock);
   for(n=mem->buckets[idx];n;n=n->next){
     if(n->linked&&strcmp(n->path,path)==0) break;
   }
@@ -346,7 +352,7 @@ static vfs_file *vfs_mem_open(vfs_backend *be,const char *path){
       n=(vfs_mem_inode *)VFS_CALLOC(1,sizeof(vfs_mem_inode)+len);
       if(!n){
         VFS_FREE(f);
-        vfs_spin_release(&mem->lock);
+        vfs_spin_release(&vfs_mem_lock);
         return 0;
       }
       n->logical_size=0;
@@ -359,7 +365,7 @@ static vfs_file *vfs_mem_open(vfs_backend *be,const char *path){
     f->base.be=be;
     f->inode=n;
   }
-  vfs_spin_release(&mem->lock);
+  vfs_spin_release(&vfs_mem_lock);
   return (vfs_file *)f;
 }
 static int vfs_mem_unlink(vfs_backend *be,const char *path){
@@ -367,7 +373,7 @@ static int vfs_mem_unlink(vfs_backend *be,const char *path){
   size_t len=strlen(path);
   unsigned int idx=vfs_hash(path,len)%VFS_MEM_HASH_BUCKETS;
   vfs_mem_inode **pp;
-  vfs_spin_acquire(&mem->lock);
+  vfs_spin_acquire(&vfs_mem_lock);
   for(pp=&mem->buckets[idx];*pp;pp=&(*pp)->next){
     if(strcmp((*pp)->path,path)==0){
       vfs_mem_inode *n=*pp;
@@ -387,11 +393,11 @@ static int vfs_mem_unlink(vfs_backend *be,const char *path){
         }
         VFS_FREE(n);
       }
-      vfs_spin_release(&mem->lock);
+      vfs_spin_release(&vfs_mem_lock);
       return 0;
     }
   }
-  vfs_spin_release(&mem->lock);
+  vfs_spin_release(&vfs_mem_lock);
   return -1;
 }
 static int vfs_mem_read(vfs_file *file,vfs_u64 offset,void *buf,unsigned int size){
@@ -447,7 +453,7 @@ static int vfs_mem_sync(vfs_file *file){
 static void vfs_mem_close(vfs_file *file){
   vfs_mem_file *f=(vfs_mem_file *)file;
   vfs_mem_inode *n=f->inode;
-  vfs_spin_acquire(&((vfs_mem_ctx *)file->be)->lock);
+  vfs_spin_acquire(&vfs_mem_lock);
   if(--n->refcount==0&&!n->linked){
     if(n->blocks){
       size_t i;
@@ -462,7 +468,7 @@ static void vfs_mem_close(vfs_file *file){
     }
     VFS_FREE(n);
   }
-  vfs_spin_release(&((vfs_mem_ctx *)file->be)->lock);
+  vfs_spin_release(&vfs_mem_lock);
   VFS_FREE(f);
 }
 /* The one process-global, unlocked piece of state in this layer: see the threading contract at the top. */
@@ -474,7 +480,7 @@ static vfs_mem_ctx vfs_mem={{
   vfs_mem_write,
   vfs_mem_sync,
   vfs_mem_close
-},{0},VFS_SPIN_INIT};
+},{0}};
 static vfs_backend *vfs_list[]={(vfs_backend *)&vfs_disk,(vfs_backend *)&vfs_mem,0};
 static vfs_backend *vfs_route(const char *uri,const char **path_out){
   const char *p=strstr(uri,"://");
