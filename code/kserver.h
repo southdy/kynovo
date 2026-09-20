@@ -58,12 +58,24 @@
    it is set where a released prefix stops being plausible (64 segments of 64 MiB is 4 GiB of history) and past
    it recovery refuses LOUDLY rather than scanning an arbitrarily large directory - a store that big has a
    metadata file, and losing it is damage that must not be papered over. */
+#ifndef K_WAL_SCAN_EMPTY_PREFIX_MAX
 #define K_WAL_SCAN_EMPTY_PREFIX_MAX 64u
+#endif
 /* A slot that decoded but was never used (generation 0) means fewer than K_WAL_META_FSYNC_EVERY records have
    ever been written, so its records can only sit in the first segment - and a wake-up probe of a couple of
    segments is enough to say "nothing there".  Walking 64 segments on every start of a fresh store would be
    pure noise, so this case stops early and stays quiet. */
+#ifndef K_WAL_SCAN_EMPTY_PREFIX_MAX_UNUSED_SLOT
 #define K_WAL_SCAN_EMPTY_PREFIX_MAX_UNUSED_SLOT 2u
+#endif
+/* Reaching the ceiling with nothing read and the metadata PRESENT means the store has acknowledged records and the
+   prefix really was released, so the scan must not give up where the write position is known: it jumps to this many
+   segments before the write position and looks there, because the newest records are always near it.  This is the
+   difference between "refuse loudly" and "start empty" (fourth-round review A1), and it is bounded, so a damaged
+   store cannot turn a start into a directory scan. */
+#ifndef K_WAL_SCAN_TAIL_SEGMENTS
+#define K_WAL_SCAN_TAIL_SEGMENTS 8u
+#endif
 #ifndef K_CLIENT_CONNECTION_MAX
 #define K_CLIENT_CONNECTION_MAX 4096u
 #endif
@@ -1589,7 +1601,7 @@ static int k_wal_state_load(const char *base,k_restore *restore,k_wal_meta_state
   int clean_end;
   vfs_file *file;
   int meta_rc,have,pick_base,meta_absent;
-  k_u64 skipped_prefix;
+  int jumped_to_tail;              /* the ceiling was reached once and the scan jumped to the tail (A1) */
   k_u64 n_gen,n_seg,n_off,n_size;
   k_u64 bseg,boff,bsize,vseg,voff,vsize;
   raft_i64 n_base,prev_base,base_of_use;
@@ -1629,10 +1641,10 @@ static int k_wal_state_load(const char *base,k_restore *restore,k_wal_meta_state
   vseg=0; voff=0; vsize=0;
   prev_base=0;
   prev_seg=0; prev_seg_gen=0; prev_seg_clean=0;
-  skipped_prefix=0;
+  jumped_to_tail=0;
   for(seg=0;seg<=last_seg||meta_absent;seg++){
     if(k_path_wal_segment(path,base,seg)!=0) return -1;
-    if(!records&&seg>=(meta_absent?K_WAL_SCAN_EMPTY_PREFIX_MAX_UNUSED_SLOT:K_WAL_SCAN_EMPTY_PREFIX_MAX)){
+    if(!records&&!jumped_to_tail&&seg>=(meta_absent?K_WAL_SCAN_EMPTY_PREFIX_MAX_UNUSED_SLOT:K_WAL_SCAN_EMPTY_PREFIX_MAX)){
       /* The ceiling is reached with nothing read.  Two very different situations look identical here, since the
          write position lives in the metadata and the metadata is exactly what is missing: a store that has never
          been written (the ordinary first start, and the reason this must not be an error), and one whose
@@ -1640,11 +1652,19 @@ static int k_wal_state_load(const char *base,k_restore *restore,k_wal_meta_state
          other stops quietly.  A metadata file that is merely ABSENT together with a prefix longer than the
          ceiling is indistinguishable from both and is treated as the harmless one - the ceiling is 64 segments
          of 64 MiB, and the alternative would be an unbounded directory scan at every start. */
-      /* Nothing to say here: this is also the ordinary first start of a store (no metadata file yet, no
-         segment, and the server initialises the metadata right after this call).  The residual risk - a store
-         whose metadata was lost AND whose records all sit beyond the ceiling - is accepted and recorded in
-         doc/gaps-audit.md: telling the two apart needs a read-only existence probe, which this layer
-         deliberately does not have. */
+      /* Two very different situations still look identical here, but only one of them may stay quiet:
+         - no metadata FILE at all (meta_absent): the ordinary first start of a store, and the accepted residual
+           recorded in doc/gaps-audit.md - the server initialises the metadata right after this call;
+         - the metadata is PRESENT, so the store HAS acknowledged records and the prefix beyond the ceiling really
+           was released.  The write position is known in that case, so giving up here is not allowed: jump to the
+           tail around it and look there.  Without this the call returned success with nothing read, and a store
+           whose released prefix ever passed the ceiling started as an EMPTY state machine - silently, with its
+           metadata present, and again on every later restart (fourth-round review A1). */
+      if(!meta_absent&&!jumped_to_tail){
+        jumped_to_tail=1;
+        seg=(last_seg>K_WAL_SCAN_TAIL_SEGMENTS+1u)?(last_seg-K_WAL_SCAN_TAIL_SEGMENTS-1u):0u;
+        continue;                     /* -1 compensates the loop's seg++ so the first visit is last_seg - TAIL */
+      }
       break;
     }
     file=vfs_open(path);
@@ -1652,7 +1672,6 @@ static int k_wal_state_load(const char *base,k_restore *restore,k_wal_meta_state
       /* vfs_open uses OPEN_ALWAYS/O_CREAT, so a failure here means the path itself is unusable, not that the
          segment is missing.  Either way nothing was read: treat it like an empty segment below. */
       if(records) break;
-      skipped_prefix++;
       continue;
     }
     /* vfs_open CREATES the file when it is missing, so "it opened" cannot mean "the segment exists".  A
@@ -1669,7 +1688,6 @@ static int k_wal_state_load(const char *base,k_restore *restore,k_wal_meta_state
            released prefix or one the writer has not reached yet, and either way its absence is not ours to
            invent.  Unlinking it also keeps "how many leading segments are empty" (below) meaningful. */
         vfs_unlink(path);
-        skipped_prefix++;
         continue;
       }
     }
@@ -1772,12 +1790,24 @@ static int k_wal_state_load(const char *base,k_restore *restore,k_wal_meta_state
     if(have){ prev_seg=seg; prev_seg_gen=prev_gen; prev_seg_clean=clean_end; }
   }
   if(!records){
-    /* No segment holds a byte of record: this store has no WAL.  Which of the two ways to say that is right
-       depends on whether a metadata FILE exists, and that is exactly what meta_rc reports: with no file at all
-       the caller must create one (return 0 = a fresh store, and the server initialises the metadata), while a
-       file that is there but unused means the caller already owns a slot and must keep it (return 1).
-       The segment holding the NEWEST record is never released by snapshot cleanup - cleanup only drops whole
-       segments below the snapshot base - so "nothing anywhere" cannot mean "the history was released". */
+    /* No segment in the range the scan is allowed to touch holds a byte of record.  Two cases, and they must not
+       be confused:
+       - no metadata FILE at all (meta_rc==0): the ordinary first start of a store - the caller creates the file
+         (return 0) - or a store whose metadata was lost, which is the accepted residual of doc/gaps-audit.md;
+       - a metadata file that decoded and NAMES an acknowledged record: the log is missing where the store itself
+         says its history should be, so starting empty would silently discard acknowledged history.
+       The text here used to claim the opposite - "the segment holding the NEWEST record is never released by
+       snapshot cleanup, so nothing anywhere cannot mean the history was released".  That is true of cleanup and
+       false of this scan: the ceiling can stop the walk before it ever reaches that segment, which is exactly the
+       silent-empty start of the fourth-round review A1. */
+    if(!meta_absent&&meta->record_size>0u){
+      printf("wal: the metadata under '%s' names an acknowledged record at segment %" K_U64_FMT
+             " offset %" K_U64_FMT " but nothing within the scan ceiling (%u segments) holds one:"
+             " refusing to recover an empty store\n",
+             base,meta->record.segment,meta->record.offset+meta->record_size,
+             (unsigned)K_WAL_SCAN_EMPTY_PREFIX_MAX);
+      return -1;
+    }
     return (meta_rc==0)?0:1;
   }
   if(meta_absent)

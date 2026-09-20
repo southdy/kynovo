@@ -22,7 +22,7 @@ Baseline evidence, taken before any conclusion: local `REGRESS|full|pass=14 fail
 
 ## A. Recovery - the worst cluster
 
-### A1 `[me]` CRITICAL: the 64-segment ceiling breaks the scan *before* the acknowledged-record check, so a store with a released prefix of 64+ segments restarts **silently empty, metadata present**
+### A1 `[me]` **[FIXED]** CRITICAL: the 64-segment ceiling broke the scan *before* the acknowledged-record check, so a store with a released prefix of 64+ segments restarted **silently empty, metadata present**
 
 `code/kserver.h:1635` `if(!records&&seg>=(meta_absent?K_WAL_SCAN_EMPTY_PREFIX_MAX_UNUSED_SLOT:K_WAL_SCAN_EMPTY_PREFIX_MAX)){`
 → `:1648` `break;`; then `:1775-1783` `if(!records){ … return (meta_rc==0)?0:1; }` - which returns **before** the
@@ -38,6 +38,29 @@ My own comment on that path carries the wrong reasoning, which is why the third 
 `code/kserver.h:1780-1781` `The segment holding the NEWEST record is never released by snapshot cleanup … so
 "nothing anywhere" cannot mean "the history was released".`  True and irrelevant - the break stops the scan before
 it can reach that segment.  The ledger repeats the mistake (`doc/gaps-audit.md:1128`).
+
+**Fix (this round).** The walk no longer gives up at the ceiling when the metadata is present: it knows the store
+has acknowledged records, so it jumps to `last_seg - K_WAL_SCAN_TAIL_SEGMENTS` and looks there (the newest records
+are always near the write position), and a second ceiling test is suppressed after that jump (`!jumped_to_tail`) -
+without it the walk re-trips the ceiling a few segments later and dies before reaching the records, which is exactly
+what the first attempt did. If the walk still finds nothing while the metadata names an acknowledged record, recovery
+now refuses loudly (`refusing to recover an empty store`) instead of returning success, and the `if(!records)`
+comment that carried the wrong reasoning is rewritten. `K_WAL_SCAN_EMPTY_PREFIX_MAX`, `..._UNUSED_SLOT` and the new
+`K_WAL_SCAN_TAIL_SEGMENTS` are `#ifndef`-guarded like the file's other tunables; the dead `skipped_prefix` (A7)
+is gone.
+
+Evidence: `tests/kserver_test.c` gains `test_wal_recovery_refuses_a_prefix_past_the_scan_ceiling` - it drives a
+`mem://` store past segment 64 with a 900-byte segment, releases the prefix by hand exactly as cleanup does, and
+asserts the store does **not** come back empty. With the fix neutered back to the old behaviour the case fails
+(`SUMMARY: 37/38`, `-- FAIL server WAL recovery refuses to start empty behind a released prefix past the scan
+ceiling`); with the fix it passes and the store refuses with `wal: replayed log has a hole at index 400 (expected
+383): refusing to recover` - loud, named, and not an empty state machine. Gates: `REGRESS|quick|pass=10 fail=0`,
+`REGRESS|fuzz|pass=13 fail=0`.
+
+Residual, stated rather than implied: the test proves the *no-silent-empty* property. The other branch - the tail
+walk rebuilding a store whose retained records still carry the state, i.e. one with a snapshot base inside the tail -
+is what the jump is for and is **not** covered by a test yet; it would need the test to drive a snapshot (this suite
+does not). The next store-level test that drives snapshots should cover it.
 
 ### A2 `[me]` HIGH: "the metadata stores the last ACKNOWLEDGED record" is false - the slot lags by up to 63 records
 
