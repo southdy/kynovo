@@ -1205,7 +1205,21 @@ the `//`-comment rule blinded by apostrophes in comments).
 1e-9/次快照。**本机无 TSan/ASan**（MinGW 无运行时库），所以这条无法在此自动抓取——属"低概率缺陷"，按纪律不被
 "单次干净样本"否定，也同样不被"一次推理"确认。
 
-**当前处置**：保留"`mem://` 不得配线程运行时"的拒绝，**但理由已改成上面这条**（真机原文见提交）；手写压力工具的
-线程模式继续走 `disk://`（更贴近真实路径，且它自己清理写出的库）。**仍未做、待定**：给 mem 后端加锁（约 15 行
-自旋锁，Win32 `InterlockedExchange` / POSIX `__sync_lock_test_and_set`），那样就能删掉这个拒绝、让 mem 与 disk
-行为一致——等维护者拍板。
+**最终处置（维护者裁定 B：加锁 + 恢复允许）**：`vfs.h` 的 mem 后端加了一把小型自旋锁
+（Win32 `InterlockedExchange` / 其他编译器 `__sync_lock_test_and_set`），保护**表与引用计数**（`vfs_mem_open`、
+`vfs_mem_unlink`、`vfs_mem_close`），`read`/`write` 的拷贝也在锁内（这个后端的全部意义就是简单、且与 disk 行为
+一致）。服务器核心里的 `mem://` + 线程**拒绝已删除** ✓；vfs.h 顶部的线程契约改写为"两个后端对线程的答案现在
+一致" ✓。
+
+**验证方式与量级修正**：先前我按"1/1024 桶碰撞 × 微秒窗口"估成约 1e-9/次，**偏低到离谱** ✗。新增确定性用例
+`vfs mem backend: two threads, two paths in one hash bucket`（两个路径**现场断言**同哈希桶 ⇒ 用例不会悄悄停止
+测它名字里的东西；两线程同步起跑，各自 20000 轮 open→write→read→close→unlink）给出：
+- **有锁**：`SUMMARY: 5/5 passed`，40,000 轮迭代 190 ms ✓；
+- **把锁改成空操作（同一构建路径）**：`SUMMARY: 4/5 passed  453 us`，失败断言
+  `a.opens == a.iterations`，`expected 20000` / `actual 124` —— 两万轮里只有 124 次打开成功，其余全部因
+  桶链被并发插入/摘链破坏而失败 ✓。
+⇒ 两个线程持续夹击同一个桶时，这个竞争**极易命中**（不是微秒级罕见事件），锁是**必要且充分**的 ✓。
+
+真机复核（`mem://` + 真实线程后端）：`SET k1 hello` ⇒ `ok` ✓、`GET k1` ⇒ `hello` ✓、`STATS` 显示
+`wal_records=2`（WAL worker 确实在跑）✓。手写压力工具的线程模式此前已改走 `disk://`：那条改动**保留**（它更贴近
+真实路径，且工具离开时会清理自己写出的库），但不再是"因为被拒绝才绕开" ✓。

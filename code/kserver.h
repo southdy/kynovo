@@ -5334,26 +5334,10 @@ static int k_server_open(k_server *server){
   local_index=k_cluster_index(&server->cluster,server->id);
   if(local_index<0){ k_open_fail("cluster lookup","this node id is not in the configured cluster",0); return -1; }
   if(k_cfg_open(server->base,&server->cfg)!=0){ k_open_fail("config open","unreadable or invalid config",server->base); return -1; }
-  /* The in-memory backend keeps its inodes in a PROCESS-GLOBAL table (vfs.h:414) and updates the bucket head
-     and the reference count without any lock (vfs.h:308/310 vs 324/326).  Two threads inside vfs_open or
-     vfs_unlink at the same moment can therefore lose one of those updates IF their two paths land in the same
-     hash bucket (~1 in VFS_MEM_HASH_BUCKETS).  That is NOT the same as two threads sharing a file - the write
-     paths are single-threaded by design (the WAL worker owns the segments and the metadata, the snapshot
-     worker owns the snapshot file) - and the close/unlink pair cannot collide on one inode either, because
-     cleanup only unlinks segments below the PREVIOUS snapshot base's segment (kserver.h:4677/4599) while the
-     writer's handle always sits at or above the current base's segment.  What is left is a narrow, low
-     probability lost-update window in a backend whose table is not lock-protected, so a store in memory may
-     only run with the synchronous runtime; disk:// is the backend for real threads.  Review 4.2. */
-  {
-    const char *be=server->runtime_backend?server->runtime_backend:"thread";
-    if(strncmp(server->base,"mem://",6)==0&&strcmp(be,"sync")!=0){
-      k_open_fail("runtime backend","a mem:// store cannot run with worker threads: the in-memory backend's "
-                  "inode table is process-global and not lock-protected, so two threads opening or unlinking "
-                  "files in the same hash bucket at once can lose an update; use disk:// or the sync runtime",
-                  server->base);
-      return -1;
-    }
-  }
+  /* mem:// and the worker threads were refused here once: the in-memory backend's table was unlocked, so two
+     threads inside vfs_open/vfs_unlink could lose an update (review 4.2).  That table is spinlock-protected
+     now, so mem:// runs with the real runtime exactly like disk:// - see the threading contract at the top of
+     vfs.h. */
   /* The adaptive flush window (kdbsvr's serve loop) may shrink cfg.flush_timeout_ms
      toward the measured sync cost; remember the configured ceiling so it can never
      grow past what the operator asked for. */

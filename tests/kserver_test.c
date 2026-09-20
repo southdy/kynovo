@@ -1566,20 +1566,21 @@ static int apply_stress(test_u64 ops,test_u64 keyspace,int threaded,int nosnap){
    wait needs a cluster to stage, so the state is injected exactly as the ADDR apply would leave it and the
    deterministic clock is driven: the age must accumulate, the reminder must not flood, and both must reset
    when the CONFIG apply drains the wait. */
-/* The in-memory backend's inode table is process-global and unlocked, and the WAL/snapshot workers are real
-   threads: the combination used to be accepted silently, which is the one way a mem:// store could be
-   corrupted without a single error being reported anywhere.  It is now refused at open, with a reason a
-   supervisor log will carry (review 4.2). */
-static void test_mem_store_rejects_worker_threads(void){
+/* mem:// and the worker threads: this pair was refused while the in-memory backend's table was unlocked (two
+   threads inside vfs_open/vfs_unlink could lose a bucket update).  The backend serialises that table with a
+   spinlock now, so the combination must be accepted like any other.  That the concurrency is then CORRECT is
+   not something this lifecycle check can show - tests/vfs_fault_test.c hammers two threads on two paths that
+   share one hash bucket for that. */
+static void test_mem_store_accepts_worker_threads(void){
   k_server s;
-  TEST_BEGIN("server: mem:// with the real runtime backend is refused at open");
+  TEST_BEGIN("server: mem:// starts with the real runtime backend (the table is locked now)");
   setup(&s,1,"mem://kstest-memthread-1");
   s.runtime_backend="thread";                 /* the default, spelled out: NOT the deterministic runtime */
-  TEST_ASSERT(k_server_open(&s)!=0,"a mem:// store must not start with worker threads");
+  TEST_ASSERT(k_server_open(&s)==0,"a mem:// store starts with worker threads");
   k_server_release(&s);
   setup(&s,1,"mem://kstest-memthread-2");
   s.runtime_backend="sync";
-  TEST_ASSERT(k_server_open(&s)==0,"the same store starts fine with the sync runtime");
+  TEST_ASSERT(k_server_open(&s)==0,"and with the sync runtime, as before");
   k_server_release(&s);
   TEST_END();
 }
@@ -1663,7 +1664,7 @@ int main(int argc,char **argv){
   test_snapshot_wal_byte_accounting();
   test_rx_buffer_admission_accounting();
   test_membership_wait_reporting();
-  test_mem_store_rejects_worker_threads();
+  test_mem_store_accepts_worker_threads();
   TEST_SUMMARY();
   return TEST_EXIT_CODE();
 }

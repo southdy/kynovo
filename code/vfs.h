@@ -17,28 +17,21 @@ typedef unsigned long long vfs_u64;
 #endif
 /* Threading contract (checked against this file, not assumed).
 
-   A vfs_file handle is used by ONE thread at a time, always - read/write/sync/close touch per-inode state
-   (blocks, logical_size, refcount) with no lock of their own.  The application honours this by construction:
-   the WAL worker owns the WAL segments and the metadata, the snapshot worker owns the snapshot files (save
-   and cleanup run on the same worker thread), and the event loop opens a snapshot only to send or to install
-   one, at a different index.
+   ONE thread per vfs_file handle, always: read/write/sync/close touch per-inode state, and the handle carries
+   the only reference to it.  The application honours this by construction - the WAL worker owns the WAL
+   segments and the metadata, the snapshot worker owns the snapshot files, the event loop opens a snapshot only
+   to send or to install one.
 
-   Beyond that the two backends differ, and the difference is where their state lives:
+   Sharing the BACKEND between threads is a separate question, and both backends now answer the same way:
 
-   - DISK keeps nothing in the process: every call is a syscall (CreateFileA/ReadFile/WriteFile/CloseHandle/
-     DeleteFileA, or their POSIX equivalents), so the operating system serialises it and any number of threads
-     may use the disk backend at once, each with its own handle.
+   - DISK keeps nothing in the process: each call is a syscall, so the operating system serialises it.
+   - MEM keeps one process-global table (vfs_mem below) and serialises it with a spinlock (vfs_spin above):
+     vfs_mem_open / vfs_mem_unlink / vfs_mem_close update the bucket head and the per-inode refcount, which
+     used to be unlocked read-modify-writes that could lose an update when two paths hashed to one bucket
+     (~1 in VFS_MEM_HASH_BUCKETS).  Any number of threads may use the mem backend at once.
 
-   - MEM is ONE process-global instance (vfs_mem below, vfs_mem_ctx.buckets), and vfs_mem_open / vfs_mem_unlink
-     update that bucket head and the per-inode reference count with no lock (vfs_mem_open's insert and
-     refcount++ versus vfs_mem_unlink's unlink, refcount test and free).  Two threads inside those two calls at
-     the same moment can lose one of those updates when their two paths hash to the same bucket (~1 in
-     VFS_MEM_HASH_BUCKETS).  The mem backend must therefore be used from one thread at a time; the application
-     enforces it - a mem:// store is refused at open when the worker threads are active (see k_server_open).
-
-   The exposure is narrow and has never been observed here (no TSan/ASan on the pinned Windows toolchain, and
-   the window is microseconds), which is exactly why it is written down instead of being argued from
-   probabilities. */
+   The lock covers the table and the refcount/linked flags, and the copy inside read/write is taken under it
+   too - deliberately, for a backend whose whole purpose is to be simple and to behave like disk. */
 typedef struct vfs_file vfs_file;
 VFS_DEF vfs_file *vfs_open(const char *uri);
 VFS_DEF int vfs_unlink(const char *uri);
@@ -239,6 +232,30 @@ struct vfs_mem_inode{
   vfs_mem_inode *next;
   char path[1];
 };
+/* A spinlock, so this layer stays dependency-free: Win32 uses the interlocked exchange it has had since
+   Windows 2000, every other compiler the GCC atomic builtin.  It guards the in-memory backend's shared
+   state (the bucket table plus each inode's refcount/linked) and nothing else - the disk backend needs no
+   lock because its state lives in the operating system. */
+#if defined(_WIN32)
+typedef volatile LONG vfs_spin;
+#define VFS_SPIN_INIT 0
+static void vfs_spin_acquire(vfs_spin *s){
+  while(InterlockedExchange(s,1)!=0) Sleep(0);
+}
+static void vfs_spin_release(vfs_spin *s){
+  InterlockedExchange(s,0);
+}
+#else
+typedef volatile int vfs_spin;
+#define VFS_SPIN_INIT 0
+static void vfs_spin_acquire(vfs_spin *s){
+  while(__sync_lock_test_and_set(s,1)){ /* spin: the critical sections are a handful of pointer updates */ }
+}
+static void vfs_spin_release(vfs_spin *s){
+  __sync_lock_release(s);
+}
+#endif
+
 typedef struct vfs_mem_file{
   vfs_file base;
   vfs_mem_inode *inode;
@@ -246,6 +263,7 @@ typedef struct vfs_mem_file{
 typedef struct vfs_mem_ctx{
   vfs_backend base;
   vfs_mem_inode *buckets[VFS_MEM_HASH_BUCKETS];
+  vfs_spin lock;                        /* guards buckets[] and every inode's refcount/linked flag */
 } vfs_mem_ctx;
 static vfs_mem_block *vfs_mem_find_block(vfs_mem_inode *n,vfs_u64 id){
   vfs_mem_block *b;
@@ -314,6 +332,7 @@ static vfs_file *vfs_mem_open(vfs_backend *be,const char *path){
   unsigned int idx=vfs_hash(path,len)%VFS_MEM_HASH_BUCKETS;
   vfs_mem_file *f;
   vfs_mem_inode *n;
+  vfs_spin_acquire(&mem->lock);
   for(n=mem->buckets[idx];n;n=n->next){
     if(n->linked&&strcmp(n->path,path)==0) break;
   }
@@ -323,6 +342,7 @@ static vfs_file *vfs_mem_open(vfs_backend *be,const char *path){
       n=(vfs_mem_inode *)VFS_CALLOC(1,sizeof(vfs_mem_inode)+len);
       if(!n){
         VFS_FREE(f);
+        vfs_spin_release(&mem->lock);
         return 0;
       }
       n->logical_size=0;
@@ -335,6 +355,7 @@ static vfs_file *vfs_mem_open(vfs_backend *be,const char *path){
     f->base.be=be;
     f->inode=n;
   }
+  vfs_spin_release(&mem->lock);
   return (vfs_file *)f;
 }
 static int vfs_mem_unlink(vfs_backend *be,const char *path){
@@ -342,6 +363,7 @@ static int vfs_mem_unlink(vfs_backend *be,const char *path){
   size_t len=strlen(path);
   unsigned int idx=vfs_hash(path,len)%VFS_MEM_HASH_BUCKETS;
   vfs_mem_inode **pp;
+  vfs_spin_acquire(&mem->lock);
   for(pp=&mem->buckets[idx];*pp;pp=&(*pp)->next){
     if(strcmp((*pp)->path,path)==0){
       vfs_mem_inode *n=*pp;
@@ -361,17 +383,23 @@ static int vfs_mem_unlink(vfs_backend *be,const char *path){
         }
         VFS_FREE(n);
       }
+      vfs_spin_release(&mem->lock);
       return 0;
     }
   }
+  vfs_spin_release(&mem->lock);
   return -1;
 }
 static int vfs_mem_read(vfs_file *file,vfs_u64 offset,void *buf,unsigned int size){
+  vfs_spin_acquire(&((vfs_mem_ctx *)file->be)->lock);
   if(size){
     vfs_mem_file *f=(vfs_mem_file *)file;
     vfs_mem_inode *n=f->inode;
     unsigned char *dst=(unsigned char *)buf;
-    if(offset>n->logical_size||size>n->logical_size-offset) return -1;
+    if(offset>n->logical_size||size>n->logical_size-offset){
+      vfs_spin_release(&((vfs_mem_ctx *)file->be)->lock);
+      return -1;
+    }
     while(size){
       vfs_u64 blockid=offset>>VFS_MEM_BLOCK_SHIFT;
       unsigned int block_off=(unsigned int)(offset&VFS_MEM_BLOCK_MASK);
@@ -386,15 +414,20 @@ static int vfs_mem_read(vfs_file *file,vfs_u64 offset,void *buf,unsigned int siz
       offset+=(vfs_u64)chunk;
     }
   }
+  vfs_spin_release(&((vfs_mem_ctx *)file->be)->lock);
   return 0;
 }
 static int vfs_mem_write(vfs_file *file,vfs_u64 offset,const void *buf,unsigned int size){
+  vfs_spin_acquire(&((vfs_mem_ctx *)file->be)->lock);
   if(size){
     vfs_mem_file *f=(vfs_mem_file *)file;
     vfs_mem_inode *n=f->inode;
     vfs_u64 end=offset+(vfs_u64)size;
     const unsigned char *src=(const unsigned char *)buf;
-    if(end<offset) return -1;
+    if(end<offset){
+      vfs_spin_release(&((vfs_mem_ctx *)file->be)->lock);
+      return -1;
+    }
     while(size){
       vfs_u64 blockid=offset>>VFS_MEM_BLOCK_SHIFT;
       unsigned int block_off=(unsigned int)(offset&VFS_MEM_BLOCK_MASK);
@@ -402,7 +435,10 @@ static int vfs_mem_write(vfs_file *file,vfs_u64 offset,const void *buf,unsigned 
       vfs_mem_block *b;
       if(chunk>size) chunk=size;
       b=vfs_mem_get_block(n,blockid);
-      if(!b) return -1;
+      if(!b){
+        vfs_spin_release(&((vfs_mem_ctx *)file->be)->lock);
+        return -1;
+      }
       memcpy(b->data+block_off,src,chunk);
       src+=chunk;
       size-=chunk;
@@ -410,6 +446,7 @@ static int vfs_mem_write(vfs_file *file,vfs_u64 offset,const void *buf,unsigned 
     }
     if(end>n->logical_size) n->logical_size=end;
   }
+  vfs_spin_release(&((vfs_mem_ctx *)file->be)->lock);
   return 0;
 }
 static int vfs_mem_sync(vfs_file *file){
@@ -419,6 +456,7 @@ static int vfs_mem_sync(vfs_file *file){
 static void vfs_mem_close(vfs_file *file){
   vfs_mem_file *f=(vfs_mem_file *)file;
   vfs_mem_inode *n=f->inode;
+  vfs_spin_acquire(&((vfs_mem_ctx *)file->be)->lock);
   if(--n->refcount==0&&!n->linked){
     if(n->blocks){
       size_t i;
@@ -433,6 +471,7 @@ static void vfs_mem_close(vfs_file *file){
     }
     VFS_FREE(n);
   }
+  vfs_spin_release(&((vfs_mem_ctx *)file->be)->lock);
   VFS_FREE(f);
 }
 /* The one process-global, unlocked piece of state in this layer: see the threading contract at the top. */
@@ -444,7 +483,7 @@ static vfs_mem_ctx vfs_mem={{
   vfs_mem_write,
   vfs_mem_sync,
   vfs_mem_close
-},{0}};
+},{0},VFS_SPIN_INIT};
 static vfs_backend *vfs_list[]={(vfs_backend *)&vfs_disk,(vfs_backend *)&vfs_mem,0};
 static vfs_backend *vfs_route(const char *uri,const char **path_out){
   const char *p=strstr(uri,"://");

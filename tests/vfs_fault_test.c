@@ -16,6 +16,12 @@
  *
  * AI contract: BEGIN / PASS / SUMMARY prefixes, fully deterministic.
  */
+/* Real threads for the concurrency case at the bottom of this file, and the runtime's gate for a
+   synchronised start so the two threads cannot simply miss each other. */
+#define RUNTIME_STATIC
+#define RUNTIME_IMPLEMENTATION
+#include "../code/runtime.h"
+
 #define VFS_STATIC
 #define VFS_IMPLEMENTATION
 #include "../code/vfs.h"
@@ -239,12 +245,94 @@ static void test_fault_during_open(void){
   TEST_END();
 }
 
+/* ---- the mem backend under two threads, on two paths that share ONE hash bucket ----
+   The in-memory backend keeps one process-global table, and vfs_mem_open's bucket insert / refcount++ used to
+   race with vfs_mem_unlink's unlink / refcount test / free: two threads inside those calls could lose an
+   update, which shows up as a file that is not there any more (or as a double free).  It serialises that table
+   with a spinlock now, and this is the case that would notice if the lock ever went away.
+
+   The two paths are asserted to collide, so the test cannot quietly stop testing what it is named after.  The
+   backend is driven directly - the wrapper this file installs under the "mem" scheme is not part of what is
+   being checked.  What is asserted is per-thread content: each thread opens its own path, writes, reads back,
+   closes and unlinks it, and counts anything that did not behave.  A lost bucket update makes one of those
+   steps fail; the double-free shape crashes here instead of passing silently. */
+typedef struct memlock_arg{
+  const char *path;
+  runtime_gate *gate;
+  int iterations;
+  int opens;
+  int failures;
+} memlock_arg;
+
+static void memlock_thread(runtime_ctx *rt,void *arg){
+  memlock_arg *a=(memlock_arg *)arg;
+  k_u8 payload[32],back[32];
+  int i,j;
+  runtime_worker_ready(rt);
+  runtime_gate_arrive(a->gate);
+  for(i=0;i<a->iterations;i++){
+    vfs_file *f;
+    for(j=0;j<32;j++) payload[j]=(k_u8)(i+j);
+    f=vfs_mem_open(&vfs_mem.base,a->path);
+    if(!f){ a->failures++; continue; }
+    a->opens++;
+    if(vfs_write(f,0,payload,32u)!=0) a->failures++;
+    memset(back,0,sizeof(back));
+    if(vfs_read(f,0,back,32u)!=0) a->failures++;
+    else if(memcmp(back,payload,32u)!=0) a->failures++;
+    vfs_close(f);
+    if(vfs_mem_unlink(&vfs_mem.base,a->path)!=0) a->failures++;   /* only this thread touches this path */
+  }
+  runtime_worker_exit(rt);
+}
+
+static void test_mem_backend_two_threads_one_bucket(void){
+  runtime_ctx *rt_a,*rt_b;
+  runtime_gate *gate;
+  memlock_arg a,b;
+  char path_a[64],path_b[64];
+  TEST_BEGIN("vfs mem backend: two threads, two paths in one hash bucket");
+  strcpy(path_a,"kstest-memlock-a");
+  strcpy(path_b,"kstest-memlock-b597");
+  /* the collision is the point of the test, so it is asserted and not assumed */
+  TEST_ASSERT(vfs_hash(path_a,strlen(path_a))%VFS_MEM_HASH_BUCKETS==
+              vfs_hash(path_b,strlen(path_b))%VFS_MEM_HASH_BUCKETS,
+              "the two paths hash to the same bucket");
+  memset(&a,0,sizeof(a));
+  memset(&b,0,sizeof(b));
+  a.path=path_a; b.path=path_b;
+  a.iterations=20000; b.iterations=20000;
+  gate=runtime_gate_create(2);
+  TEST_ASSERT(gate!=0,"gate");
+  a.gate=gate; b.gate=gate;
+  rt_a=runtime_create("thread",1,memlock_thread,&a);
+  rt_b=runtime_create("thread",1,memlock_thread,&b);
+  TEST_ASSERT(rt_a!=0&&rt_b!=0,"two worker threads");
+  runtime_wait_workers_ready(rt_a);
+  runtime_wait_workers_ready(rt_b);
+  runtime_gate_wait(gate);                 /* both threads are at the start line */
+  runtime_gate_open(gate);                 /* ... go */
+  runtime_wait_workers_exit(rt_a);
+  runtime_wait_workers_exit(rt_b);
+  TEST_ASSERT_I64_EQ(a.opens,a.iterations,"thread A ran its whole loop");
+  TEST_ASSERT_I64_EQ(b.opens,b.iterations,"thread B ran its whole loop");
+  TEST_ASSERT_I64_EQ(a.failures,0,"thread A saw no failed open/write/read/unlink");
+  TEST_ASSERT_I64_EQ(b.failures,0,"thread B saw no failed open/write/read/unlink");
+  TEST_ASSERT(vfs_mem_unlink(&vfs_mem.base,path_a)==-1,"nothing left behind under A's path");
+  TEST_ASSERT(vfs_mem_unlink(&vfs_mem.base,path_b)==-1,"nothing left behind under B's path");
+  runtime_gate_destroy(gate);
+  runtime_destroy(rt_a);
+  runtime_destroy(rt_b);
+  TEST_END();
+}
+
 int main(void){
-  TEST_PLAN(4);
+  TEST_PLAN(5);
   test_seam_transparent();
   test_injected_sync_failure();
   test_injected_write_failure();
   test_fault_during_open();
+  test_mem_backend_two_threads_one_bucket();
   TEST_SUMMARY();
   return TEST_EXIT_CODE();
 }
