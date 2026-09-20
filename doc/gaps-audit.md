@@ -1129,3 +1129,25 @@ the `//`-comment rule blinded by apostrophes in comments).
   所以"扫不到任何记录"在元数据存在时不会发生；这条残留只在元数据也被删除且历史远超 4 GiB 时才有观感。
 - 探针自身的两处失误已更正：把"单段库里移走最新段"当成 2.2（该段没有已确认记录 ⇒ 照常启动是**正确**行为，
   真正的 2.2 需要小段配置 ⇒ 做成单测）；以及 `GET` 取值时把客户端横幅当成返回值。
+
+## O. 成员可见性说真话（第三轮审视 3.3/3.4/3.5）—— 已修
+
+- **3.5 提交者身份是服务器级全局（已修）**。`membership_change_source` 被下一次提交直接覆盖，于是"谁提交的"
+  会串台；而跟随者只是复制到 ADDR，却被标成它自己发起的变更。现在**来源挂在每条待定项上**
+  （`pending_source[i]`：0 = 由复制来的 ADDR 学到、1 = 本节点 auto-replace、2 = 本节点的客户端请求），
+  新增项在唯一知道真相的地方（提交点与 ADDR 应用点）打标，毕业搬运时随条目一起搬。
+- **3.3 被拒绝的变更留下永久幽灵（已修）**。Raft 同步拒绝时，ADDR 应用已经往 `pending[]` 里放了目标，而没有任何
+  代码会清它——于是 `TOPOLOGY` 永远显示 `role=pending`、`STATS` 的年龄无界增长。现在提交点先记下
+  `pending_before=pending_count`，拒绝即回滚到该值并清计时；并且**只有本节点提交的待定项才会被报告**
+  （STATS 的 `membership_pending`、`TOPOLOGY` 的 `role=pending`、限速日志）——跟随者不再为一个自己无法判断
+  结局的变更背书。
+- **3.4 同步拒绝绕过退避（已修）**。auto-replace 的三处提交点（决策里的 REMOVE、决策里的 ADD、committed 里的
+  REMOVE）在 `k_server_submit_member` 返回非零时只把 `phase` 清零并打印，**不计入 `auto_replace_fail_streak`**
+  ——于是每次心跳轮都会重试一次（与之前修掉的异步重试风暴同类）。现在它们计入连续失败，打印也按实际情形说明
+  下一次尝试的时间。
+- **顺带修掉 note 的静默截断**（审视 3.5 提到的 note 文本）：缓冲 128 字节，原措辞需要 131 字节，`k_snprintf`
+  截断且无人知晓。改成实际长度 118 字节以内，并带上来源标签。
+- **回归守卫**：`test_membership_wait_reporting` 增加断言——"外来的待定项既不累计年龄也不被报告"、"同一条目
+  改由本节点提交后立刻开始累计并报告"、"等待结束后归零"。把过滤退回旧行为（任何待定项都报）即红：
+  `35/36`，失败断言 `a foreign pending entry never accumulates an age here`。
+- 真机（3 节点 + 打死一个选民）复跑：auto-replace 决策行与 `TOPOLOGY`/`STATS` 输出与修前一致，未见任何多余打印。

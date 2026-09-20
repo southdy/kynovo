@@ -1565,8 +1565,8 @@ static void test_membership_wait_reporting(void){
   TEST_ASSERT(k_server_open(&s)==0,"open");       /* advance() does nothing before the node is open */
   TEST_ASSERT(elect(&s)==0,"leader");
   s.pending[0]=2;                                 /* as the ADDR apply leaves it */
+  s.pending_source[0]=1;                          /* and this node is the one that submitted it */
   s.pending_count=1;
-  s.membership_change_source=1;
   for(i=0;i<30;i++) turn(&s,1000u);      /* 30s of waiting, driven one second at a time */
   TEST_ASSERT_I64_EQ((raft_i64)s.membership_pending_ms,30000,"30s of wait accumulated");
   TEST_ASSERT_I64_EQ((raft_i64)s.membership_notice_count,4,"opening line + one reminder per 10s");
@@ -1574,6 +1574,23 @@ static void test_membership_wait_reporting(void){
   s.pending_count=0;                     /* the CONFIG apply graduated the target */
   turn(&s,1000u);
   TEST_ASSERT_I64_EQ((raft_i64)s.membership_pending_ms,0,"age resets when the wait ends");
+  /* A pending entry this node did NOT submit (the replicated ADDR apply leaves source 0) is not reported and
+     does not start an age: a follower cannot know whether that change committed or was refused, and the old
+     server-wide source field made every later wait inherit whoever submitted last (review 3.3 / 3.5). */
+  TEST_ASSERT(s.membership_pending_ms==0,"a foreign pending entry does not start an age after reset");
+  s.pending[0]=3;
+  s.pending_source[0]=0;                 /* learned from the ADDR apply: submitted elsewhere */
+  s.pending_count=1;
+  for(i=0;i<30;i++) turn(&s,1000u);
+  TEST_ASSERT(s.membership_pending_ms==0,"a foreign pending entry never accumulates an age here");
+  TEST_ASSERT_I64_EQ((raft_i64)s.membership_notice_count,0,"a foreign pending entry is not reported");
+  s.pending_source[0]=1;                 /* the same entry, now submitted by this node */
+  turn(&s,1000u);
+  TEST_ASSERT_I64_EQ((raft_i64)s.membership_pending_ms,1000,"an own pending entry does accumulate");
+  TEST_ASSERT_I64_EQ((raft_i64)s.membership_notice_count,1,"and it is reported");
+  s.pending_count=0;
+  turn(&s,1000u);
+  TEST_ASSERT(s.membership_pending_ms==0,"and it resets again when the wait ends");
   TEST_ASSERT_I64_EQ((raft_i64)s.membership_notice_count,0,"the reminder budget resets with it");
   TEST_END();
 }

@@ -392,6 +392,12 @@ struct k_server{
   int learners[K_MAX_NODES];
   int learner_count;
   int pending[K_MAX_NODES];  /* in-flight catch-up targets, not yet in config */
+  /* WHO submitted the change this entry belongs to: 0 = learned from the replicated ADDR apply (another node
+     submitted it), 1 = this node's auto-replace, 2 = a client here.  It has to live on the ENTRY, not on the
+     server: as a server-wide field the next submission overwrote it and every later wait was attributed to
+     whoever submitted last (review 3.5), and a node that merely replicated an ADDR reported a change it never
+     asked for - which is how a refused change kept showing up as "still waiting" forever (review 3.3). */
+  int pending_source[K_MAX_NODES];
   int pending_count;
   const k_server_transport *transport;
   void *loop;                    /* opaque app event-loop handle (transport->dial only) */
@@ -565,7 +571,7 @@ struct k_server{
   k_u32 membership_change_started;    /* configuration changes handed to Raft (client or auto-replace) */
   k_u32 membership_change_completed;  /* changes that committed and graduated their catch-up target */
   k_u32 membership_notice_count;      /* reminders printed for the current/last wait (rate-limit proof) */
-  int membership_change_source;       /* 0 = submitted elsewhere, 1 = auto-replace, 2 = a client here */
+
   char membership_note[128];          /* one-shot note for the response of the change being submitted */
   k_u32 membership_note_len;          /* 0 = nothing to add (the ordinary case) */
   int snapshot_cleanup_busy;
@@ -1322,6 +1328,7 @@ static void k_membership_update(k_server *server,const int *old_ids,int old_coun
              server->pending[i],server->membership_pending_ms);
       server->membership_change_completed++;
       server->pending[i]=server->pending[server->pending_count-1];
+      server->pending_source[i]=server->pending_source[server->pending_count-1];
       server->pending_count--;
     }else i++;
   }
@@ -2753,7 +2760,10 @@ mbatch_fail:
          it pending keeps k_membership_contains true until the CONFIG apply
          graduates it into voters (and drops it from pending).  Nodes already in
          the member set are left alone. */
-      if(!k_membership_contains(server,id)&&server->pending_count<K_MAX_NODES) server->pending[server->pending_count++]=id;
+      if(!k_membership_contains(server,id)&&server->pending_count<K_MAX_NODES){
+        server->pending_source[server->pending_count]=0;   /* learned from the replicated ADDR: not ours */
+        server->pending[server->pending_count++]=id;
+      }
     }
     if(reader.err||reader.off!=reader.len) return -1;
     return 0;
@@ -3044,6 +3054,7 @@ static int k_server_topology_build(k_server *server,k_buf *body){
     k_buf_bytes(body,(const k_u8*)buf,(k_u32)len);
   }
   for(i=0;i<server->pending_count;i++){
+    if(server->pending_source[i]==0) continue;   /* reported by the node that submitted it, not by us */
     index=k_cluster_index(&server->cluster,server->pending[i]);
     if(index<0) continue;
     node=&server->cluster.nodes[index];
@@ -3316,7 +3327,21 @@ static int k_server_submit_addr(k_server *server,const int *ids,int id_count){
   k_buf_free(&cmd);
   return 0;
 }
+/* How many pending entries belong to a change THIS node submitted.  A node that merely replicated the ADDR
+   apply knows a change is coming but cannot know whether it committed or was refused, so it must not report
+   one: the count and the age that reach STATS/TOPOLOGY are about changes this node can speak for. */
+static int k_server_membership_own_pending(const k_server *server){
+  int i,own=0;
+  if(!server) return 0;
+  for(i=0;i<server->pending_count;i++) if(server->pending_source[i]!=0) own++;
+  return own;
+}
+static const char *k_server_membership_source_label(int source){
+  return source==1?"submitted by auto-replace":(source==2?"client request":"submitted elsewhere");
+}
 static int k_server_submit_member(k_server *server,k_conn *conn,k_u32 request_id,int subcmd,const int *ids,int id_count){
+  int source;
+  k_u32 pending_before;
   k_request *request;
   raft_client_message message;
   int final_ids[K_MAX_NODES];
@@ -3364,10 +3389,19 @@ static int k_server_submit_member(k_server *server,k_conn *conn,k_u32 request_id
   message.reconfig.ids=final_ids;
   message.reconfig.id_count=final_count;
   /* Who asked is known only HERE, on the node that accepted the request; a follower learns the pending
-     target from the replicated ADDR apply and must not claim it was a client.  0 = submitted elsewhere. */
-  server->membership_change_source=conn?(server->is_leader?2:0):1;
+     target from the replicated ADDR apply and must not claim it was a client.  The value is stamped onto the
+     entries this call creates, not onto the server (review 3.5). */
+  source=conn?(server->is_leader?2:0):1;
+  /* Everything this call adds to pending[] - including the entries the ADDR apply adds while Raft validates
+     the change - is recorded by this one number, so a refusal can be undone exactly (review 3.3: a refused
+     change used to leave its target "still catching up" forever, with the age growing without bound). */
+  pending_before=server->pending_count;
   if(raft_recvfrom_client(server->raft,&message)!=0){
     k_request_free(server,request);
+    server->pending_count=pending_before;
+    server->membership_pending_ms=0;
+    server->membership_pending_notice_ms=0;
+    server->membership_notice_count=0;
     return k_server_send_response(server,conn,request_id,K_STATUS_ERROR,0,"reconfig rejected",17u);
   }
   /* accepted: any voter not yet in the snapshot is catch-up material.  Mark it
@@ -3377,7 +3411,10 @@ static int k_server_submit_member(k_server *server,k_conn *conn,k_u32 request_id
      from pending); a failed catch-up clears pending via the result path. */
   for(i=0;i<final_count;i++){
     if(!k_membership_has(server->voters,server->voter_count,final_ids[i])&&!k_membership_has(server->learners,server->learner_count,final_ids[i])&&!k_membership_has(server->pending,server->pending_count,final_ids[i])){
-      if(server->pending_count<K_MAX_NODES) server->pending[server->pending_count++]=final_ids[i];
+      if(server->pending_count<K_MAX_NODES){
+        server->pending_source[server->pending_count]=source;     /* this node submitted it */
+        server->pending[server->pending_count++]=final_ids[i];
+      }
     }
   }
   server->membership_change_started++;
@@ -3386,14 +3423,18 @@ static int k_server_submit_member(k_server *server,k_conn *conn,k_u32 request_id
      channel is the response to this very command (the CLI prints it).  One shot, cleared when consumed. */
   server->membership_note_len=0;
   if(conn&&server->pending_count>0){
+    /* The text has to FIT: the buffer is 128 bytes, the old wording needed 131 and k_snprintf truncates
+       silently, so the operator got a cut-off sentence.  Measured worst case here: 11 + 4 + 23 + 6 + 2 + 14
+       + 58 = 118 bytes. */
     int n=k_snprintf(server->membership_note,sizeof(server->membership_note),
-                     "note: node %d is still catching up (%" K_U64_FMT "ms, link=%s); this change was applied"
-                     " on top of a config change that has not committed yet",
+                     "note: node %d is still catching up (%" K_U64_FMT "ms, %s); this change was layered on an"
+                     " uncommitted config change",
                      server->pending[0],server->membership_pending_ms,
-                     k_server_peer_link_state(server,server->pending[0]));
+                     k_server_membership_source_label(server->pending_source[0]));
     server->membership_note_len=(n>0)?(k_u32)n:0u;
     printf("membership: a client config change was submitted while node %d was still catching up"
-           " (%" K_U64_FMT "ms)\n",server->pending[0],server->membership_pending_ms);
+           " (%" K_U64_FMT "ms, %s)\n",server->pending[0],server->membership_pending_ms,
+           k_server_membership_source_label(server->pending_source[0]));
   }
   return 0;
 }
@@ -3405,9 +3446,10 @@ static int k_server_submit_member(k_server *server,k_conn *conn,k_u32 request_id
    so an operator could not tell "the replacement was never started" from "everything is fine" - and
    auto-replace's whole value is restoring redundancy.  Nothing here changes what the server DOES. */
 static void k_server_membership_tick(k_server *server,unsigned int elapsed_ms){
-  int i;
+  int i,own;
   if(!server) return;
-  if(server->pending_count<=0){
+  own=k_server_membership_own_pending(server);
+  if(own<=0){
     server->membership_pending_ms=0;
     server->membership_pending_notice_ms=0;
     server->membership_notice_count=0;      /* one wait = one budget of reminders */
@@ -3415,17 +3457,20 @@ static void k_server_membership_tick(k_server *server,unsigned int elapsed_ms){
   }
   server->membership_pending_ms+=(k_u64)elapsed_ms;
   if(server->membership_notice_count==0){
-    for(i=0;i<server->pending_count;i++)
+    for(i=0;i<server->pending_count;i++){
+      if(server->pending_source[i]==0) continue;
       printf("membership: waiting for node %d to catch up before the change commits (%s; voters=%d, link=%s)\n",
-             server->pending[i],server->membership_change_source==1?"submitted by auto-replace":
-                              (server->membership_change_source==2?"client request":"submitted on another node"),
+             server->pending[i],k_server_membership_source_label(server->pending_source[i]),
              server->voter_count,k_server_peer_link_state(server,server->pending[i]));
+    }
     server->membership_notice_count=1;      /* the opening line; the time budget starts from 0 */
   }else if(server->membership_pending_ms-server->membership_pending_notice_ms>=K_MEMBERSHIP_NOTICE_MS){
-    for(i=0;i<server->pending_count;i++)
+    for(i=0;i<server->pending_count;i++){
+      if(server->pending_source[i]==0) continue;
       printf("membership: still waiting for node %d after %" K_U64_FMT "s (link=%s; voters=%d)\n",
              server->pending[i],server->membership_pending_ms/1000u,
              k_server_peer_link_state(server,server->pending[i]),server->voter_count);
+    }
     server->membership_pending_notice_ms=server->membership_pending_ms;
     server->membership_notice_count++;
   }
@@ -3466,8 +3511,10 @@ static void k_server_auto_replace(k_server *server,const raft_ready *ready){
       server->auto_replace_phase=2;
       if(k_server_submit_member(server,0,0,K_MEMBER_REMOVE,failed_ids,1)!=0){
         server->auto_replace_phase=0;
-        printf("auto-replace: cannot submit the REMOVE of %d (node %d is already a voter); will retry\n",
-               failed_id,server->auto_replace_new_id);
+        server->auto_replace_fail_streak++;
+        printf("auto-replace: cannot submit the REMOVE of %d (node %d is already a voter); will retry"
+               " in %us\n",failed_id,server->auto_replace_new_id,
+               server->auto_replace_fail_streak>=2u?(unsigned)(K_AUTO_REPLACE_RETRY_MS/1000u):0u);
       }
     }else{
       k_server_add_address(server,server->auto_replace_new_id,server->auto_replace_new_host,(k_u32)strlen(server->auto_replace_new_host),server->auto_replace_new_client_port,server->auto_replace_new_peer_port);
@@ -3475,8 +3522,10 @@ static void k_server_auto_replace(k_server *server,const raft_ready *ready){
       server->auto_replace_phase=1;
       if(k_server_submit_member(server,0,0,K_MEMBER_ADD,new_ids,1)!=0){
         server->auto_replace_phase=0;
-        printf("auto-replace: cannot submit the ADD of node %d; no membership change was made, will retry\n",
-               server->auto_replace_new_id);
+        server->auto_replace_fail_streak++;   /* a refusal is a failure: without this the retry stormed */
+        printf("auto-replace: cannot submit the ADD of node %d; no membership change was made, will retry"
+               " in %us\n",server->auto_replace_new_id,
+               server->auto_replace_fail_streak>=2u?(unsigned)(K_AUTO_REPLACE_RETRY_MS/1000u):0u);
       }
     }
   }
@@ -3492,6 +3541,7 @@ static void k_server_auto_replace_committed(k_server *server){
            server->auto_replace_new_id,failed_ids[0]);
     if(k_server_submit_member(server,0,0,K_MEMBER_REMOVE,failed_ids,1)!=0){
       server->auto_replace_phase=0;
+      server->auto_replace_fail_streak++;
       printf("auto-replace: cannot submit the REMOVE of %d; will retry\n",failed_ids[0]);
     }
   }else if(server->auto_replace_phase==2){
@@ -3712,7 +3762,7 @@ static int k_server_client_frame(void *ud,k_u8 type,const k_u8 *payload,k_u32 si
       server->wal_inflight_count,(unsigned)server->client_connection_count,(unsigned)K_CLIENT_CONNECTION_MAX,(unsigned)server->request_count,(unsigned)K_REQUEST_INFLIGHT_MAX,server->request_bytes,(k_u64)K_REQUEST_BYTES_MAX);
     k_text_append(text,sizeof(text),&len,&over,
       " membership_pending=%d membership_pending_ms=%" K_U64_FMT " membership_change_started=%u membership_change_completed=%u membership_notices=%u",
-      server->pending_count,server->membership_pending_ms,
+      k_server_membership_own_pending(server),server->membership_pending_ms,
       (unsigned)server->membership_change_started,(unsigned)server->membership_change_completed,
       (unsigned)server->membership_notice_count);
     k_text_append(text,sizeof(text),&len,&over," rx_buffer_bytes=%" K_U64_FMT " rx_buffer_bytes_limit=%" K_U64_FMT " stats_truncated=%" K_U64_FMT,server->rx_buffer_bytes,(k_u64)K_RX_BYTES_MAX,server->stats_truncated);
