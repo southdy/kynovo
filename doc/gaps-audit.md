@@ -1169,3 +1169,19 @@ the `//`-comment rule blinded by apostrophes in comments).
   现在预算与消息都来自同一个常量 `BUDGET_SPRINTF`（取实测 10），并且 **ok 行也打印实测值**，这样"预算与树
   不再匹配"会在绿行里就看得见，而不是等到某天有人注入一个测试才暴露。
 - 规则总数 18 → **19**（新增"git 派生清单非空"这一条），`doc/principles.md` 与门判定行同步。
+
+## Q. 文档漂移：崩溃契约的四处代码引用（第三轮审视 7）—— 已修
+
+`doc/crash-contract.md` 的表格是"崩溃在某一步会丢什么"的依据，它引用的**四个行号全部指错**：例如
+`code/kserver.h:1914` 落在载荷编码里，而记录写入实际在 `k_wal_append_bundle`。逐条重新核对后的真位置：
+
+| 表中所述 | 现在引用 | 真实语句 |
+|---|---|---|
+| 记录写入 + sync | `k_wal_append_bundle`（`code/kserver.h:2061`） | `vfs_write(header)` + `vfs_write(payload)` + `vfs_sync(file)` 同一个 `if` |
+| 元数据槽写入 + sync | `k_wal_meta_store`（`code/kserver.h:2014`） | `vfs_write(next_slot*GAP,slot)` + `vfs_sync(file)` |
+| 快照数据块（接收侧） | `k_server_write_inbound_snapshot`（`code/kserver.h:2432`） | 流式写块；仅 `snapshot_done` 时才 `vfs_sync` |
+| 快照尾部 + 回读校验 | `k_snapshot_worker_save`（`code/kserver.h:4571-4581`） | 写 4 字节 CRC 尾 → `vfs_sync` → **回读**尾部比对 → 再探尾部之后是否还有字节 |
+
+**顺带把这类缺陷按"类"处理**：引用一律改成 **`函数名` + `code/<file>:<line>`**，并在文档里写明"裸行号无法在
+不读代码的情况下核对，且会随文件增删腐烂"；同时确认 `doc/testing.md` 里那条被门废除的 L0 规则描述已在更早的
+提交里改对（现在描述的是 build 层的真实判据与日志路径 `build/regress/build.log`，与 `build.sh` 一致，已核对）。

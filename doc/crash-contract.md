@@ -11,11 +11,16 @@ in the same call that performs the write.
 
 | point in the sequence | crash here loses | established by |
 |---|---|---|
-| bytes written, `vfs_sync` not yet returned | that record | `k_server_flush_writes` → `k_wal_write_record`: `vfs_write(header)` + `vfs_write(payload)` + `vfs_sync(file)` in one `if` (`code/kserver.h:1914`) |
-| WAL metadata slot write | nothing acked after it; the slot is written only together with its own `vfs_sync` (`code/kserver.h:1867`) | two slots 4 KiB apart, newest-generation wins (`k_wal_meta_load`) |
-| snapshot chunk written | the snapshot, which is then simply not there | chunks are written as they stream; the final `vfs_sync` happens only when `snapshot_done` (`code/kserver.h:2269`) |
-| snapshot complete: `vfs_sync` returned, read-back verification passed | nothing — the file is trusted from here | trailer written, `vfs_sync`, then the trailer is **read back** and the file is probed for bytes past the end (`code/kserver.h:4179-4194`) |
+| bytes written, `vfs_sync` not yet returned | that record | `k_wal_append_bundle`: `vfs_write(header)` + `vfs_write(payload)` + `vfs_sync(file)` in one `if` (`code/kserver.h:2061`) |
+| WAL metadata slot write | nothing acked after it; the slot is written only together with its own `vfs_sync` (`k_wal_meta_store`, `code/kserver.h:2014`) | two slots 4 KiB apart, newest-generation wins (`k_wal_meta_load`) |
+| snapshot chunk written | the snapshot, which is then simply not there | chunks are written as they stream; the final `vfs_sync` happens only when `snapshot_done` (`k_server_write_inbound_snapshot`, `code/kserver.h:2432`) |
+| snapshot complete: `vfs_sync` returned, read-back verification passed | nothing — the file is trusted from here | trailer written, `vfs_sync`, then the trailer is **read back** and the file is probed for bytes past the end (`k_snapshot_worker_save`, `code/kserver.h:4571-4581`) |
 | `vfs_close` | nothing | everything durable was already synced; see the platform note below |
+
+Each code reference above names the enclosing function as well as the line: the four line numbers this table
+carried before were all wrong (they pointed at unrelated code, e.g. `kserver.h:1914` sits in the payload
+encoder while the record write is `k_wal_append_bundle`), and a bare line number cannot be checked without
+reading the file anyway.  Every one was re-verified against the tree when this was corrected.
 
 **The claim that matters, measured rather than argued**: on the CentOS 7.9 guest, 2000 writes were
 acknowledged (`pipe mode=SET k=64 n=2000 ... ok=2000 not_found=0 end=complete`), the server was killed
