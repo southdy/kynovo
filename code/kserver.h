@@ -4241,6 +4241,10 @@ static void k_snapshot_worker_entry(runtime_ctx *runtime,void *arg){
 /* ================= Server: stop & snapshot poll ================= */
 static void k_server_maybe_finish_stop(k_server *server){
   if(!server||!server->raft_stopped||server->wal_inflight_count>0||server->snapshot_task||server->snapshot_inflight||server->snapshot_cleanup_busy) return;
+  /* Latch: this is reached from the snapshot poll, the WAL poll AND the no-work path of one advance, so
+     without the test the host's on_stop - documented as fired once - could run up to three times in a
+     single step. */
+  if(server->stopped) return;
   server->stopped=1;
   if(server->on_stop) server->on_stop(server->loop);
 }
@@ -4803,7 +4807,13 @@ static void k_server_advance_at(k_server *server,unsigned int elapsed_ms,unsigne
       k_server_begin_stop(server);
     }
   }
-  if(k_server_drive(server,elapsed_ms)!=0) k_server_begin_stop(server);
+  if(k_server_drive(server,elapsed_ms)!=0){
+    /* Fail-stop paths inside drive print their own reason when they have one; the stop itself must never
+       be silent, or the process exits with "fatal=0" and the failure class is lost. */
+    fprintf(stderr,"fatal: server drive failed; stopping (admission closed, clients see \"server stopping\")\n");
+    server->fatal=1;
+    k_server_begin_stop(server);
+  }
   if(!server->stopping&&k_server_maybe_snapshot(server)!=0){
     printf("fatal: snapshot failed\n");
     server->fatal=1;
@@ -4857,6 +4867,17 @@ static void k_server_release(k_server *server){
   }
   k_snapshot_task_free(server->snapshot_retry);
   server->snapshot_retry=0;
+  /* Requests FIRST: k_request_free -> k_request_unlink dereferences request->conn (and writes through
+     it), so freeing the connections before the requests that point at them is a use-after-free on every
+     shutdown.  Freeing the requests also drains the FCALL write gate, which walks its own list. */
+  for(request=server->requests;request;request=next_request){
+    next_request=request->next;
+    k_request_free(server,request);
+  }
+  server->requests=0;
+  memset(server->request_hash,0,sizeof(server->request_hash));
+  server->request_count=0;
+  server->request_bytes=0;
   for(conn=server->connections;conn;conn=next_conn){
     next_conn=conn->next;
     k_rx_free(&conn->rx);
@@ -4870,17 +4891,15 @@ static void k_server_release(k_server *server){
      reconnect's `peer_socks[i]` guard skips re-dialing -- stranding the node. */
   memset(server->peer_socks,0,sizeof(server->peer_socks));
   memset(server->peer_conns,0,sizeof(server->peer_conns));
-  for(request=server->requests;request;request=next_request){
-    next_request=request->next;
-    k_request_free(server,request);
-  }
-  server->requests=0;
-  memset(server->request_hash,0,sizeof(server->request_hash));
-  server->request_count=0;
-  server->request_bytes=0;
   server->write_head=0;
   server->write_tail=0;
   server->write_count=0;
+  /* The FCALL gate is server state too: a dangling gate_head means a later k_request_free of an FCALL
+     walks a chain whose members were already freed - a double free if the shutdown lands inside the
+     gate's fork->commit window. */
+  server->gate_head=0;
+  server->gate_tail=0;
+  server->gate_closed=0;
   k_snapshot_chunks_free(server->provided_chunks);
   server->provided_chunks=0;
   if(server->raft){
