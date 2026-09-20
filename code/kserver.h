@@ -102,6 +102,13 @@
 /* timing (ms) */
 #define K_RECONNECT_MS 100u
 #define K_HEARTBEAT_MS 50u
+/* How often a still-waiting membership change repeats itself in the log.  Loud once is not enough (the
+   wait can last for days); every 10s is readable and cannot flood. */
+#define K_MEMBERSHIP_NOTICE_MS 10000u
+/* How long auto-replace waits before it tries the same replacement again after Raft rejected it (the
+   target did not catch up).  Without this it re-submitted every round: 16 attempts in 36s, each one
+   writing an ADDR + CONFIG entry, all of it invisible until the membership report above existed. */
+#define K_AUTO_REPLACE_RETRY_MS 30000u
 #define K_ELECTION_MIN_MS 250u
 #define K_ELECTION_MAX_MS 500u
 /* snapshot task kinds */
@@ -527,6 +534,22 @@ struct k_server{
   unsigned int auto_replace_threshold; /* missed_rounds >= this -> replace */
   int auto_replace_phase;           /* 0=idle 1=adding 2=removing */
   int auto_replace_failed_id;       /* the failed voter being replaced */
+  /* Membership-change visibility.  A configuration change is in flight while pending[] is non-empty; this
+     turns that state into something an operator and a monitor can see.  All of it is DERIVED - no new state
+     machine - and the age comes from elapsed_ms, so a deterministic harness can drive it. */
+  k_u64 auto_replace_last_attempt_ms; /* when the last replacement was attempted (retry backoff) */
+  unsigned int auto_replace_fail_streak; /* consecutive rejected replacements.  The backoff applies from the
+                                            SECOND failure on: a first attempt that loses a race with the
+                                            replacement's own startup must be retried promptly, while a target
+                                            that is simply not there must not be re-submitted every cycle. */
+  k_u64 membership_pending_ms;        /* how long the current catch-up wait has lasted (0 = none) */
+  k_u64 membership_pending_notice_ms; /* when the last reminder was printed (rate limiting) */
+  k_u32 membership_change_started;    /* configuration changes handed to Raft (client or auto-replace) */
+  k_u32 membership_change_completed;  /* changes that committed and graduated their catch-up target */
+  k_u32 membership_notice_count;      /* reminders printed for the current/last wait (rate-limit proof) */
+  int membership_change_source;       /* 0 = submitted elsewhere, 1 = auto-replace, 2 = a client here */
+  char membership_note[128];          /* one-shot note for the response of the change being submitted */
+  k_u32 membership_note_len;          /* 0 = nothing to add (the ordinary case) */
   int snapshot_cleanup_busy;
   int snapshot_failed;
   int snapshot_cleanup_failed;
@@ -1277,6 +1300,9 @@ static void k_membership_update(k_server *server,const int *old_ids,int old_coun
   /* drop any pending catch-up node that has graduated into the config */
   for(i=0;i<server->pending_count;){
     if(k_membership_has(voters,count,server->pending[i])||k_membership_has(learner_ids,learner_count,server->pending[i])){
+      printf("membership: node %d graduated into the config after %" K_U64_FMT "ms; the catch-up wait is over\n",
+             server->pending[i],server->membership_pending_ms);
+      server->membership_change_completed++;
       server->pending[i]=server->pending[server->pending_count-1];
       server->pending_count--;
     }else i++;
@@ -2865,6 +2891,34 @@ static int k_server_members_build(k_server *server,k_buf *body){
   }
   return body->err?-1:0;
 }
+/* Peer link state for the operator channels: whether this node currently holds a peer connection to `id`.
+   Derived from the connection table, so it deliberately says nothing about replication progress - that is
+   Raft's own business and is not read here. */
+static const char *k_server_peer_link_state(k_server *server,int id){
+  k_conn *conn;
+  int index;
+  if(!server) return "unknown";
+  index=k_cluster_index(&server->cluster,id);
+  if(index<0||index>=K_MAX_NODES) return "unknown";
+  conn=server->peer_conns[index];
+  if(!conn) return "no-connection";
+  /* `connected` must mean the peer handshake completed, not "a socket object exists": the leader opens an
+     outbound connection to every pending catch-up target, so a target that was never started still leaves
+     a connection object behind.  peer_id is set when the peer frame was accepted. */
+  return conn->peer_id?"connected":"dialing";
+}
+/* Raft's client-result status, named.  A raw number in an operator line sends everyone to the header. */
+static const char *k_raft_client_status_name(int status){
+  switch(status){
+  case RAFT_CLIENT_REDIRECT: return "leader changed";
+  case RAFT_CLIENT_COMMITTED: return "committed";
+  case RAFT_CLIENT_READY: return "ready";
+  case RAFT_CLIENT_FAILED: return "raft request failed";
+  case RAFT_CLIENT_CATCHUP_READY: return "catching up";
+  case RAFT_CLIENT_CATCHUP_FAILED: return "target did not catch up";
+  default: return "unknown";
+  }
+}
 /* Serialize the current Raft membership (voters / learners / pending catch-up
    targets) with roles and addresses, for operator visibility.  Unlike
    k_server_members_build (the Sec 6.1 address book for client discovery), this
@@ -2879,7 +2933,7 @@ static int k_server_topology_build(k_server *server,k_buf *body){
     if(index<0) continue;
     node=&server->cluster.nodes[index];
     if(body->len) k_buf_u8(body,(k_u8)',');
-    len=sprintf(buf,"%d@%s:%u:%u role=voter",node->id,node->host,(unsigned)node->client_port,(unsigned)node->peer_port);
+    len=k_snprintf(buf,sizeof(buf),"%d@%s:%u:%u role=voter",node->id,node->host,(unsigned)node->client_port,(unsigned)node->peer_port);
     k_buf_bytes(body,(const k_u8*)buf,(k_u32)len);
   }
   for(i=0;i<server->learner_count;i++){
@@ -2887,7 +2941,7 @@ static int k_server_topology_build(k_server *server,k_buf *body){
     if(index<0) continue;
     node=&server->cluster.nodes[index];
     if(body->len) k_buf_u8(body,(k_u8)',');
-    len=sprintf(buf,"%d@%s:%u:%u role=learner",node->id,node->host,(unsigned)node->client_port,(unsigned)node->peer_port);
+    len=k_snprintf(buf,sizeof(buf),"%d@%s:%u:%u role=learner",node->id,node->host,(unsigned)node->client_port,(unsigned)node->peer_port);
     k_buf_bytes(body,(const k_u8*)buf,(k_u32)len);
   }
   for(i=0;i<server->pending_count;i++){
@@ -2895,7 +2949,12 @@ static int k_server_topology_build(k_server *server,k_buf *body){
     if(index<0) continue;
     node=&server->cluster.nodes[index];
     if(body->len) k_buf_u8(body,(k_u8)',');
-    len=sprintf(buf,"%d@%s:%u:%u role=pending",node->id,node->host,(unsigned)node->client_port,(unsigned)node->peer_port);
+    /* A pending target is the one an operator has to ACT on ("start this node"), so it carries the age of
+       the wait and whether this node currently holds a peer connection to it.  Both are facts the app has;
+       replication progress is deliberately not read here. */
+    len=k_snprintf(buf,sizeof(buf),"%d@%s:%u:%u role=pending age_ms=%" K_U64_FMT " state=%s",
+                   node->id,node->host,(unsigned)node->client_port,(unsigned)node->peer_port,
+                   server->membership_pending_ms,k_server_peer_link_state(server,node->id));
     k_buf_bytes(body,(const k_u8*)buf,(k_u32)len);
   }
   return body->err?-1:0;
@@ -3205,6 +3264,9 @@ static int k_server_submit_member(k_server *server,k_conn *conn,k_u32 request_id
   message.cookie=request;
   message.reconfig.ids=final_ids;
   message.reconfig.id_count=final_count;
+  /* Who asked is known only HERE, on the node that accepted the request; a follower learns the pending
+     target from the replicated ADDR apply and must not claim it was a client.  0 = submitted elsewhere. */
+  server->membership_change_source=conn?(server->is_leader?2:0):1;
   if(raft_recvfrom_client(server->raft,&message)!=0){
     k_request_free(server,request);
     return k_server_send_response(server,conn,request_id,K_STATUS_ERROR,0,"reconfig rejected",17u);
@@ -3219,7 +3281,55 @@ static int k_server_submit_member(k_server *server,k_conn *conn,k_u32 request_id
       if(server->pending_count<K_MAX_NODES) server->pending[server->pending_count++]=final_ids[i];
     }
   }
+  server->membership_change_started++;
+  /* A configuration change that arrives while another is still waiting does not cancel the wait by itself -
+     but the operator has to know they are touching a cluster with a change in flight, and today their only
+     channel is the response to this very command (the CLI prints it).  One shot, cleared when consumed. */
+  server->membership_note_len=0;
+  if(conn&&server->pending_count>0){
+    int n=k_snprintf(server->membership_note,sizeof(server->membership_note),
+                     "note: node %d is still catching up (%" K_U64_FMT "ms, link=%s); this change was applied"
+                     " on top of a config change that has not committed yet",
+                     server->pending[0],server->membership_pending_ms,
+                     k_server_peer_link_state(server,server->pending[0]));
+    server->membership_note_len=(n>0)?(k_u32)n:0u;
+    printf("membership: a client config change was submitted while node %d was still catching up"
+           " (%" K_U64_FMT "ms)\n",server->pending[0],server->membership_pending_ms);
+  }
   return 0;
+}
+/* Sec 4.4 auto-replacement: when a voter is unreachable for auto_replace_threshold
+   heartbeat rounds, replace it add-before-remove with the configured node.
+   Leader-only, driven by ready.peer_health. */
+/* Membership-change visibility.  A configuration change is in flight while pending[] is non-empty: the ADDR
+   apply fills it, the CONFIG apply drains it.  Before this rule the state existed only inside the process,
+   so an operator could not tell "the replacement was never started" from "everything is fine" - and
+   auto-replace's whole value is restoring redundancy.  Nothing here changes what the server DOES. */
+static void k_server_membership_tick(k_server *server,unsigned int elapsed_ms){
+  int i;
+  if(!server) return;
+  if(server->pending_count<=0){
+    server->membership_pending_ms=0;
+    server->membership_pending_notice_ms=0;
+    server->membership_notice_count=0;      /* one wait = one budget of reminders */
+    return;
+  }
+  server->membership_pending_ms+=(k_u64)elapsed_ms;
+  if(server->membership_notice_count==0){
+    for(i=0;i<server->pending_count;i++)
+      printf("membership: waiting for node %d to catch up before the change commits (%s; voters=%d, link=%s)\n",
+             server->pending[i],server->membership_change_source==1?"submitted by auto-replace":
+                              (server->membership_change_source==2?"client request":"submitted on another node"),
+             server->voter_count,k_server_peer_link_state(server,server->pending[i]));
+    server->membership_notice_count=1;      /* the opening line; the time budget starts from 0 */
+  }else if(server->membership_pending_ms-server->membership_pending_notice_ms>=K_MEMBERSHIP_NOTICE_MS){
+    for(i=0;i<server->pending_count;i++)
+      printf("membership: still waiting for node %d after %" K_U64_FMT "s (link=%s; voters=%d)\n",
+             server->pending[i],server->membership_pending_ms/1000u,
+             k_server_peer_link_state(server,server->pending[i]),server->voter_count);
+    server->membership_pending_notice_ms=server->membership_pending_ms;
+    server->membership_notice_count++;
+  }
 }
 /* Sec 4.4 auto-replacement: when a voter is unreachable for auto_replace_threshold
    heartbeat rounds, replace it add-before-remove with the configured node.
@@ -3229,6 +3339,15 @@ static void k_server_auto_replace(k_server *server,const raft_ready *ready){
   int new_ids[1];
   int failed_ids[1];
   if(!server||!ready||!server->is_leader||!server->auto_replace||server->auto_replace_phase!=0) return;
+  /* Backoff: a replacement that Raft just rejected stays rejected until the operator starts the node, so
+     retrying every heartbeat round only multiplies log and WAL traffic (measured: 16 attempts in 36s). */
+  /* Back off only from the SECOND consecutive failure on.  A measured storm (16 attempts in 36s, each
+     writing an ADDR + CONFIG entry) is why a backoff exists at all, but a first attempt routinely loses a
+     race with the replacement's own startup - and waiting 30s there stopped a deterministic scenario from
+     ever reaching its REMOVE phase, i.e. it delayed real healing by the whole backoff. */
+  if(server->auto_replace_last_attempt_ms!=0&&server->auto_replace_fail_streak>=2u&&
+     server->elapsed_total_ms-server->auto_replace_last_attempt_ms<K_AUTO_REPLACE_RETRY_MS) return;
+  server->auto_replace_last_attempt_ms=server->elapsed_total_ms;
   for(i=0;i<ready->peer_health_count;i++){
     if(ready->peer_health[i].missed_rounds>=server->auto_replace_threshold){
       pid=ready->peer_health[i].id;
@@ -3266,6 +3385,7 @@ static void k_server_auto_replace(k_server *server,const raft_ready *ready){
 static void k_server_auto_replace_committed(k_server *server){
   int failed_ids[1];
   if(!server||!server->auto_replace) return;
+  server->auto_replace_fail_streak=0;   /* the replacement went through: the next one starts clean */
   if(server->auto_replace_phase==1){
     failed_ids[0]=server->auto_replace_failed_id;
     server->auto_replace_phase=2;
@@ -3491,6 +3611,11 @@ static int k_server_client_frame(void *ud,k_u8 type,const k_u8 *payload,k_u32 si
       info.id,info.state,info.leader_id,(k_i64)info.term,(k_i64)info.commit_index,(k_i64)info.last_applied,(k_i64)info.last_included_index,(k_i64)info.log_entry_count,(k_u64)tree_info.count,tree_info.height,(k_u64)tree_info.tree_bytes,(k_u64)tree_info.pending_free_count,(k_u64)tree_info.pending_free_bytes,server->persist_generation,server->wal_meta.record.segment,server->wal_meta.record.offset,server->wal_meta.record_size,server->wal_meta.next.segment,server->wal_meta.next.offset,server->wal_pending_items,server->wal_accumulated_events,server->wal_records,server->wal_worker.open_files,server->wal_post_failed,server->wal_worker.sync_us_ewma,server->wal_worker.sync_us_max,server->wal_worker.slow_syncs,(k_u64)server->cfg.flush_timeout_ms,server->flush_by_target,server->flush_by_drain,server->flush_by_window,server->flush_by_bytes,server->flush_by_barrier,server->flush_by_stop,server->write_bytes,(unsigned)server->cfg.flush_bytes_limit,(unsigned)server->wal_inflight_max,(unsigned)server->latency_budget_us,server->rounds,server->client_requests,server->snapshot_inflight,server->snapshot_failed,server->snapshot_cleanup_busy,server->snapshot_cleanup_failed,server->flush_batches,server->flush_writes_total,server->peer_send_drops,server->round_us_last,server->round_us_max,server->round_us_ewma,server->slow_rounds,server->req_age_ms_last,server->req_age_ms_max,server->slow_acks,server->req_wait_ms_last,server->req_wait_ms_max,server->req_svc_ms_last,server->req_svc_ms_max,server->wake_us_last,server->wake_us_max,server->slow_wakes,server->handoff_us_last,server->handoff_us_max,server->slow_handoffs,server->handoff_samples,server->wake_samples,server->wake_pre_us_last,server->wake_pre_us_max,server->slow_wake_pres,server->wake_pre_samples,server->poll_us_last,server->poll_us_max,server->poll_us_ewma,server->frames_last,server->frames_max,server->poll_samples);
     k_text_append(text,sizeof(text),&len,&over,"wal_inflight=%d client_connections=%u client_connection_limit=%u pending_requests=%u pending_request_limit=%u pending_request_bytes=%" K_U64_FMT " pending_request_bytes_limit=%" K_U64_FMT,
       server->wal_inflight_count,(unsigned)server->client_connection_count,(unsigned)K_CLIENT_CONNECTION_MAX,(unsigned)server->request_count,(unsigned)K_REQUEST_INFLIGHT_MAX,server->request_bytes,(k_u64)K_REQUEST_BYTES_MAX);
+    k_text_append(text,sizeof(text),&len,&over,
+      " membership_pending=%d membership_pending_ms=%" K_U64_FMT " membership_change_started=%u membership_change_completed=%u membership_notices=%u",
+      server->pending_count,server->membership_pending_ms,
+      (unsigned)server->membership_change_started,(unsigned)server->membership_change_completed,
+      (unsigned)server->membership_notice_count);
     k_text_append(text,sizeof(text),&len,&over," rx_buffer_bytes=%" K_U64_FMT " rx_buffer_bytes_limit=%" K_U64_FMT " stats_truncated=%" K_U64_FMT,server->rx_buffer_bytes,(k_u64)K_RX_BYTES_MAX,server->stats_truncated);
     if(over){
       server->stats_truncated++;
@@ -3827,7 +3952,30 @@ static int k_server_handle_client_result(k_server *server,const raft_client_resu
       if(request->internal&&request->type==K_REQ_MEMBER&&server->auto_replace){
         if(result->status==RAFT_CLIENT_COMMITTED) k_server_auto_replace_committed(server);
         else if(result->status==RAFT_CLIENT_FAILED||result->status==RAFT_CLIENT_CATCHUP_FAILED||
-                result->status==RAFT_CLIENT_REDIRECT) server->auto_replace_phase=0;
+                result->status==RAFT_CLIENT_REDIRECT){
+          /* Used to be silent: the replacement simply stopped being attempted and the operator had no way
+             to know the plan was gone.  The Raft status names the cause.
+             The backoff belongs ONLY to the case it was measured for - Raft rejecting the change because
+             the target did not catch up (that re-submitted every round: 16 attempts in 36s, each writing
+             an ADDR + CONFIG entry).  A leadership change is not the target's fault: backing off there made
+             a 3-node scenario with one leader flap sit idle for 30s and its REMOVE phase never ran, and the
+             same node regaining leadership would have stayed idle in production too. */
+          server->auto_replace_fail_streak++;
+          if(result->status==RAFT_CLIENT_REDIRECT){
+            server->auto_replace_last_attempt_ms=0;
+            server->auto_replace_fail_streak=0;   /* a leadership change is not this target's fault: start over */
+            printf("auto-replace: abandoning the replacement of node %d (%s); the voter set is unchanged,"
+                   " retrying on the next round\n",server->auto_replace_failed_id,
+                   k_raft_client_status_name((int)result->status));
+          }else{
+            printf("auto-replace: abandoning the replacement of node %d (%s); the voter set is unchanged,"
+                   "%s\n",server->auto_replace_failed_id,
+                   k_raft_client_status_name((int)result->status),
+                   (server->auto_replace_fail_streak>=2u)?" next attempt after the backoff"
+                                                         :" retrying promptly (first failure)");
+          }
+          server->auto_replace_phase=0;
+        }
       }
       k_request_free(server,request);
     }
@@ -3845,6 +3993,9 @@ static int k_server_handle_client_result(k_server *server,const raft_client_resu
     /* reconfigs are serialized, so the in-flight catch-up is the only pending
        set: clear it so the failed node stops being dialed (its connection is
        dropped by the next reconnect as "not a member") */
+    if(server->pending_count>0)
+      printf("membership: catch-up failed after %" K_U64_FMT "ms; node %d was dropped and the config is unchanged\n",
+             server->membership_pending_ms,server->pending[0]);
     server->pending_count=0;
     k_server_send_response(server,request->conn,request->id,K_STATUS_ERROR,result->leader_id,"catch-up failed",16u);
   }
@@ -3865,7 +4016,13 @@ static int k_server_handle_client_result(k_server *server,const raft_client_resu
       k_request_free(server,request);
       return 0;
     }
-    k_server_send_response(server,request->conn,request->id,K_STATUS_OK,result->leader_id,0,0);
+    if(request->type==K_REQ_MEMBER&&request->conn&&server->membership_note_len>0){
+      k_server_send_response(server,request->conn,request->id,K_STATUS_OK,result->leader_id,
+                             server->membership_note,server->membership_note_len);
+      server->membership_note_len=0;
+    }else{
+      k_server_send_response(server,request->conn,request->id,K_STATUS_OK,result->leader_id,0,0);
+    }
   }
   else if(result->status==RAFT_CLIENT_READY&&k_request_is_read(request->type)){
     if(request->type==K_REQ_GET){
@@ -4664,7 +4821,13 @@ static int k_server_drive(k_server *server,unsigned int elapsed_ms){
        not stranded; the FCALL itself gets its REDIRECT via the normal result path.
        An in-flight catch-up is likewise abandoned: clear pending so the failed
        node stops being dialed. */
-    if(lost){ k_server_clear_gate(server); server->pending_count=0; }
+    if(lost){
+      k_server_clear_gate(server);
+      if(server->pending_count>0)
+        printf("membership: the catch-up wait was abandoned after %" K_U64_FMT "ms: this node is no longer the leader\n",
+               server->membership_pending_ms);
+      server->pending_count=0;
+    }
   }
   if(server->is_leader&&server->auto_replace) k_server_auto_replace(server,&ready);
   bundle=k_ready_bundle_copy(server,&ready);
@@ -4874,6 +5037,10 @@ static void k_server_advance_at(k_server *server,unsigned int elapsed_ms,unsigne
   if(!server) return;
   if(server->elapsed_total_ms<=~(k_u64)0-(k_u64)elapsed_ms) server->elapsed_total_ms+=(k_u64)elapsed_ms;
   else server->elapsed_total_ms=~(k_u64)0;
+  /* The membership report runs here, on EVERY advance: it first lived in the WAL poll, which only runs
+     when the WAL has work, so the wait age lagged reality (8.6s reported after 36s of waiting) and the
+     unit test never accumulated at all.  This is the one place every advance passes through. */
+  k_server_membership_tick(server,elapsed_ms);
   if(server->runtime&&runtime_should_stop(server->runtime)) k_server_begin_stop(server);
   write_ms=batch_ms;
   if(server->write_count){

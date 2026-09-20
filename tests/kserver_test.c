@@ -1449,9 +1449,35 @@ static int apply_stress(test_u64 ops,test_u64 keyspace,int threaded,int nosnap){
   return 0;
 }
 
+/* The membership-wait report (review: auto_replace's silent wait).  A catch-up wait is the one state an
+   operator must ACT on - "start the replacement node" - and it used to be invisible outside TOPOLOGY.  The
+   wait needs a cluster to stage, so the state is injected exactly as the ADDR apply would leave it and the
+   deterministic clock is driven: the age must accumulate, the reminder must not flood, and both must reset
+   when the CONFIG apply drains the wait. */
+static void test_membership_wait_reporting(void){
+  k_server s;
+  int i;
+  TEST_BEGIN("membership wait: age accumulates, reminders are rate limited to one per 10s, both reset");
+  setup(&s,1,"mem://kstest-mwait-1");
+  TEST_ASSERT(k_server_open(&s)==0,"open");       /* advance() does nothing before the node is open */
+  TEST_ASSERT(elect(&s)==0,"leader");
+  s.pending[0]=2;                                 /* as the ADDR apply leaves it */
+  s.pending_count=1;
+  s.membership_change_source=1;
+  for(i=0;i<30;i++) turn(&s,1000u);      /* 30s of waiting, driven one second at a time */
+  TEST_ASSERT_I64_EQ((raft_i64)s.membership_pending_ms,30000,"30s of wait accumulated");
+  TEST_ASSERT_I64_EQ((raft_i64)s.membership_notice_count,4,"opening line + one reminder per 10s");
+  TEST_ASSERT(s.voter_count==1,"the report changes nothing about the config");
+  s.pending_count=0;                     /* the CONFIG apply graduated the target */
+  turn(&s,1000u);
+  TEST_ASSERT_I64_EQ((raft_i64)s.membership_pending_ms,0,"age resets when the wait ends");
+  TEST_ASSERT_I64_EQ((raft_i64)s.membership_notice_count,0,"the reminder budget resets with it");
+  TEST_END();
+}
+
 int main(int argc,char **argv){
   if(argc>=3&&strcmp(argv[1],"--apply-stress")==0) return apply_stress(test_strtoull(argv[2]),argc>=4?test_strtoull(argv[3]):TEST_U64_C(4096),argc>=5&&strcmp(argv[4],"thread")==0,argc>=6&&strcmp(argv[5],"nosnap")==0);
-  TEST_PLAN(33);
+  TEST_PLAN(34);
   g_run_tag=0;
   if(k_monotonic_us(&g_run_tag)!=0) g_run_tag=(k_u64)time(0);
   test_fcall_gate_reopens_when_its_request_dies();
@@ -1487,6 +1513,7 @@ int main(int argc,char **argv){
   test_raft_command_size_limit();
   test_snapshot_wal_byte_accounting();
   test_rx_buffer_admission_accounting();
+  test_membership_wait_reporting();
   TEST_SUMMARY();
   return TEST_EXIT_CODE();
 }
