@@ -31,6 +31,18 @@ def find_git():
     return None
 
 GIT = find_git()
+GIT_LIST_PROBLEMS = []
+
+def git_files(*args):
+    """A file list derived from git.  An EMPTY list is not a passing state: every rule that consumes one of
+    these silently becomes green when git is unavailable or when the pattern matches nothing (the review
+    found that an empty list also made scan() fall back to the whole library, so the rule then inspected
+    files it was never written for).  Record the emptiness so a rule can report it."""
+    listing = (git_out('ls-files', *args) or '').split()
+    if not listing:
+        GIT_LIST_PROBLEMS.append('git ls-files %s matched no file' % ' '.join(args))
+    return listing
+
 def git_out(*args):
     if not GIT: return None
     return subprocess.run([GIT] + list(args), stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True).stdout
@@ -69,6 +81,22 @@ def strip_comments(text):
         out.append(c); i += 1
     return ''.join(out)
 
+def is_char_literal(text, i):
+    """True when the quote at text[i] opens a C CHARACTER literal.  A comment full of prose ("don't",
+    "node's") used to be treated as the start of a literal that ran on until the next apostrophe - possibly
+    lines later - and everything in between, including real // comments, disappeared from the rule's view
+    (review 6.3: raft.h alone had 111 // occurrences invisible that way).  A char literal is a quote, then
+    one character or an escape, then a closing quote (a wide/multi-char literal still starts that way)."""
+    if i + 1 >= len(text):
+        return False
+    if text[i+1] == '\\':                       # '\n', '\x41', '\'' ...
+        j = i + 2
+        if j < len(text) and text[j] == '\\':
+            j += 1
+        return j < len(text) and text[j] == "'"
+    return i + 2 < len(text) and text[i+2] == "'"
+
+
 def strip_literals(text):
     """Blank out string and char literal CONTENTS (keeping length and newlines) without touching
     comments.  Used by the \"// comments\" rule: scanning comment-stripped text can never find a // comment,
@@ -79,7 +107,7 @@ def strip_literals(text):
     n = len(text)
     while i < n:
         c = text[i]
-        if c == '"' or c == "'":
+        if c == '"' or (c == "'" and is_char_literal(text, i)):
             quote = c
             out.append(' ')
             i += 1
@@ -106,7 +134,7 @@ def scan_raw(pattern, files=None):
     """Like scan(), but strips literals instead of comments - for rules that are ABOUT comments."""
     rx = re.compile(pattern)
     hits = []
-    for path in (files or SRC):
+    for path in (SRC if files is None else files):
         with open(path, 'r', encoding='utf-8', errors='replace', newline='') as fh:
             txt = strip_literals(fh.read())
         for ln, line in enumerate(txt.split('\n'), 1):
@@ -118,14 +146,14 @@ def scan_raw(pattern, files=None):
 def scan(pattern, files=None, label=None):
     rx = re.compile(pattern)
     hits = []
-    for path in (files or SRC):
+    for path in (SRC if files is None else files):
         for ln, line in enumerate(code_text(path).split('\n'), 1):
             if rx.search(line):
                 hits.append('%s:%d: %s' % (path, ln, line.strip()[:110]))
     return hits
 
 def sh_files():
-    return (git_out('ls-files', '*.sh') or '').split()
+    return git_files('*.sh')
 
 fails = 0; rules = 0
 def report(name, hits, detail=None):
@@ -151,7 +179,7 @@ report('repository stores LF (index CRLF = 0; doc/measurements/ excepted as capt
 report('no CRLF in shell scripts', [l for l in eol if 'w/crlf' in l and l.split()[-1].endswith(('.sh', '.bash'))])
 
 # 2. build/ purity
-tracked = (git_out('ls-files', 'build/') or '').split()
+tracked = (git_out('ls-files', 'build/') or '').split()   # emptiness here is the GOOD state
 report('build/ holds no tracked file (pure output)', tracked)
 
 # 3. no machine-specific paths in tracked scripts (URI prefixes like disk:// excluded by the boundary)
@@ -171,6 +199,8 @@ report('no ULL literals in the shipped library (code/)', scan(r'[0-9]+ULL', LIB)
 # Scans text with LITERALS stripped (not comments stripped): a real // comment is a violation, a
 # "disk://x" URI inside a string is not.  Previously this rule ran on comment-stripped text and therefore
 # could never match anything - a permanently green rule.
+report('git-derived file lists are non-empty (a rule with no file to look at is not a pass)', GIT_LIST_PROBLEMS)
+
 report('no // comments in C sources', [h for h in scan_raw(r'(^|[^:])//[^/]')])
 
 # 5. Windows XP+ only
@@ -209,7 +239,9 @@ report('raft_inspect only in the diagnostics path (budget 1)', sites[1:] or [])
 # rule stops new bare sprintf calls into fixed buffers from creeping back in.  The budget is the site
 # count measured when the INFO/STATS line was converted; it may shrink, never grow.
 sites = scan(r'[^_a-zA-Z]sprintf\s*\(', LIB + ['code/kdbctl.c', 'code/kdbsvr.c'])
-report('no new bare sprintf in code/ (budget 13, use k_text_append/k_snprintf)', sites[13:] or [])
+BUDGET_SPRINTF = 10   # measured with THIS checker on the tree that added the rule: 10 sites in code/
+report('no new bare sprintf in code/ (measured %d, budget %d, use k_text_append/k_snprintf)'
+       % (len(sites), BUDGET_SPRINTF), sites[BUDGET_SPRINTF:] or [])
 
 # 9. C99 64-bit spellings in the test tree.  MSVC 6.0 - the declared toolchain - has no `long long`,
 # no LL/ULL literals, no %llu and neither strtoull nor _strtoui64; MinGW-w64 accepts all of them, which
@@ -220,7 +252,7 @@ report('no new bare sprintf in code/ (budget 13, use k_text_append/k_snprintf)',
 # are converted, never grow.
 # 157 sites measured with THIS checker's own comment-stripping (a raw grep says 236 - it counts
 # comments, and a budget taken from that number would leave ~80 sites of slack for new violations).
-TESTS_C = (git_out('ls-files', 'tests/*.c', 'tests/*.h') or '').split()
+TESTS_C = git_files('tests/*.c', 'tests/*.h')
 # The budget lives in ONE place and the message is derived from it: the old form kept the number in the
 # message text and a different number in the slice, so the message walked 161->7 while the threshold stayed
 # 162 and ~155 new violations passed silently.  The measured count is printed too, so a budget that no
