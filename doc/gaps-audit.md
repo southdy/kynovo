@@ -703,11 +703,15 @@ a header: `tests/test.h` carries the unit-test layer (`test_i64`/`test_u64`, `TE
 `FUZZ_I64_FMT`/`FUZZ_U64_C`.  A shared `tests/t64.h` was tried and removed by review: a fuzz driver
 that includes `test.h` only for the types gets five `-Wunused-variable` diagnostics for the harness
 state (measured, not assumed), and a `TEST_TYPES_ONLY` switch inside the header was more machinery
-than the problem deserves.  Still carrying the raw spellings, with the count
-measured by the new ratchet's own comment-stripping pass: `raft_cluster_fuzz.c` 64,
-`kserver_cluster_fuzz.c` 47, `lincheck.h` 35, `bench_persist.c` 6, `cemon_stress.c` 5 - 157 sites,
-so the fuzz and linearizability tier cannot be built with MSVC 6 yet and the XP run covers the four
-unit suites only.  The gate's rule 9 (`no new C99 64-bit spellings in tests/`) is a ratchet at that
+than the problem deserves.  **Conversion complete:** the raw spellings no longer
+appear anywhere under `tests/` outside the four sanctioned definition blocks, and the ratchet sits at
+7 for exactly those (`tests/test.h` 2, `tests/raft_fuzz.c` 2, `tests/raft_cluster_fuzz.c` 2,
+`tests/lincheck.h` 1).  Files that already include `code/kbase.h` use the project's own
+`k_u64`/`K_U64_FMT`/`K_U64_C` (`kserver_cluster_fuzz.c`, `cemon_stress.c`, `bench_persist.c`); the two
+that include only `code/raft.h` or stdio carry their own four-line layer.  What is still NOT true: the
+fuzz tier has never been BUILT on the guest, so the XP verification continues to cover the four unit
+suites only, and `bench_persist.c` additionally includes `<pthread.h>` and remains unbuildable there
+(porting, not a rename - and it is a benchmark, not part of the gate chain).  The gate's rule 9 (`no new C99 64-bit spellings in tests/`) is a ratchet at that
 budget: it may shrink as files are converted, never grow.  It was self-certified in the repository's
 established way - inject a violation, watch `PRINCIPLES|FAIL|rules=17 fail=1`, revert exactly, watch
 it pass again.  Note a trap for whoever lowers the budget: a raw `grep` counts 236, because it also

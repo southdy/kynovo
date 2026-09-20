@@ -286,10 +286,11 @@ against the repository before transfer:
 - unit suites: `cemon_test 5/5`, `kclient_test 16/16`, `raft_test 221/221`, `kserver_test 33/33`,
   identical to the local gate.
 
-Scope at the time of writing: the fuzz / linearizability tier does not build with MSVC 6 yet (raw
-`long long` and `LL`/`ULL` literals across those files, 157 sites by the gate's own count); see P2 for
-the per-file breakdown.  Gate rule 9 ratchets that count down - new spellings fail the principles layer,
-which is what stops the class from returning while the conversion proceeds.
+Scope at the time of writing: the fuzz / linearizability tier has not been built on the guest, so the
+XP verification covers the four unit suites only.  The C99-spelling obstacle is gone - gate rule 9 now
+sits at its floor of 7 (the sanctioned per-compiler blocks), because the raw `long long`/`LL`/`ULL`/
+`%llu` spellings were converted out of every file under `tests/` - but building those drivers there is
+a separate step that has not been taken; `bench_persist.c` also needs a `<pthread.h>` port.
 
 ### Harness rule learned here: the SDK include path AND the target version
 
