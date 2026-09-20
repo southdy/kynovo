@@ -708,10 +708,15 @@ appear anywhere under `tests/` outside the four sanctioned definition blocks, an
 7 for exactly those (`tests/test.h` 2, `tests/raft_fuzz.c` 2, `tests/raft_cluster_fuzz.c` 2,
 `tests/lincheck.h` 1).  Files that already include `code/kbase.h` use the project's own
 `k_u64`/`K_U64_FMT`/`K_U64_C` (`kserver_cluster_fuzz.c`, `cemon_stress.c`, `bench_persist.c`); the two
-that include only `code/raft.h` or stdio carry their own four-line layer.  What is still NOT true: the
-fuzz tier has never been BUILT on the guest, so the XP verification continues to cover the four unit
-suites only, and `bench_persist.c` additionally includes `<pthread.h>` and remains unbuildable there
-(porting, not a rename - and it is a benchmark, not part of the gate chain).  The gate's rule 9 (`no new C99 64-bit spellings in tests/`) is a ratchet at that
+that include only `code/raft.h` or stdio carry their own four-line layer.  The fuzz tier then went further than planned: on the
+guest all three drivers now compile, link and run with every rc zero - `raft_fuzz 0 200` -> `done: 200
+iterations`, `raft_cluster_fuzz 1 2` -> `done: 2 iterations`, `kserver_cluster_fuzz 1 1` -> `done: 1/1
+clusters consistent` plus `linearizability: 4 histories / 253 ops decided by the checker, 0
+inconclusive`.  That took one more link defect (`LNK2001: unresolved external symbol _strtoull` in
+kserver_cluster_fuzz.c - MSVC 6 has neither strtoull nor _strtoui64, so its seed parse is hand-written
+now), which is the same class the unit tier had already paid for.  `bench_persist.c` remains the one
+test program outside the set: it includes `<pthread.h>` and needs a port, not a rename, and it is a
+benchmark rather than part of the gate chain.  The gate's rule 9 (`no new C99 64-bit spellings in tests/`) is a ratchet at that
 budget: it may shrink as files are converted, never grow.  It was self-certified in the repository's
 established way - inject a violation, watch `PRINCIPLES|FAIL|rules=17 fail=1`, revert exactly, watch
 it pass again.  Note a trap for whoever lowers the budget: a raw `grep` counts 236, because it also

@@ -286,11 +286,19 @@ against the repository before transfer:
 - unit suites: `cemon_test 5/5`, `kclient_test 16/16`, `raft_test 221/221`, `kserver_test 33/33`,
   identical to the local gate.
 
-Scope at the time of writing: the fuzz / linearizability tier has not been built on the guest, so the
-XP verification covers the four unit suites only.  The C99-spelling obstacle is gone - gate rule 9 now
-sits at its floor of 7 (the sanctioned per-compiler blocks), because the raw `long long`/`LL`/`ULL`/
-`%llu` spellings were converted out of every file under `tests/` - but building those drivers there is
-a separate step that has not been taken; `bench_persist.c` also needs a `<pthread.h>` port.
+Measured on the guest, all fourteen compile/link/run exit codes zero and every verdict matching the
+host baseline:
+
+- unit suites: `cemon_test 5/5`, `kclient_test 16/16`, `raft_test 221/221`, `kserver_test 33/33`;
+- fuzz drivers: `raft_fuzz 0 200` -> `done: 200 iterations`, `raft_cluster_fuzz 1 2` -> `done: 2
+  iterations`, and `kserver_cluster_fuzz 1 1` -> `done: 1/1 clusters consistent` with
+  `linearizability: 4 histories / 253 ops decided by the checker, 0 inconclusive` (non-zero, so the
+  checker can be seen to have decided something - its own `lincheck_selftest` runs inside that binary).
+
+So the XP verification now covers build (seven test programs plus the two applications), the end-to-end
+run, the crash contract, the four unit suites and the deterministic fuzz drivers including the
+linearizability oracle.  `bench_persist.c` is the one test program still outside that set: it includes
+`<pthread.h>` and needs a port rather than a rename, and it is a benchmark, not part of the gate chain.
 
 ### Harness rule learned here: the SDK include path AND the target version
 
