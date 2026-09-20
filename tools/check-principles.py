@@ -267,7 +267,7 @@ REQ_PLACES = {
     'K_REQ_SHUTDOWN': ['kproto.h', 'kserver.h', 'kclient.h', 'kdbctl.c'],
     'K_REQ_TOPOLOGY': ['kproto.h', 'kserver.h', 'kclient.h', 'kdbctl.c'],
     'K_REQ_RGET':     ['kproto.h', 'kserver.h', 'kclient.h'],   # reached through a kclient helper
-    'K_REQ_MEMBER':   ['kproto.h', 'kserver.h', 'kclient.h'],   # the discovery handshake, not the CLI
+    'K_REQ_MEMBER':   ['kproto.h', 'kserver.h', 'kclient.h'],   # the CLI issues it via k_client_queue_member, and its
     'K_REQ_SET':      ['kproto.h', 'kserver.h', 'kdbctl.c'],    # response body is a bare status: no print branch
     'K_REQ_DEL':      ['kproto.h', 'kserver.h', 'kdbctl.c'],
 }

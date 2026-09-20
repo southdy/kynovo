@@ -111,6 +111,33 @@ static void test_shutdown_body_printed(void){
   TEST_END();
 }
 
+/* The same class as the SHUTDOWN case above, and it bit the membership work: the server attaches a note to
+   a committed MEMBER response ("node 4 is still catching up ... this change was applied on top of a config
+   change that has not committed yet"), and the print whitelist did not list K_REQ_MEMBER, so the operator saw
+   a bare "ok" and the note was thrown away. */
+static void test_member_body_printed(void){
+  k_client_app app;
+  k_buf b;
+  int ids[1];
+  char hosts[1][K_HOST_MAX];
+  unsigned short cp[1],pp[1];
+  TEST_BEGIN("client prints the MEMBER response body (visibility)");
+  setup(&app);
+  k_client_seed_parse(&app,"h1:7000");
+  ids[0]=4;
+  strcpy(hosts[0],"127.0.0.1");
+  cp[0]=7101;
+  pp[0]=7102;
+  TEST_ASSERT(k_client_queue_member(&app,K_MEMBER_ADD,ids,1,(const char (*)[K_HOST_MAX])hosts,cp,pp)==0,"queue MEMBER ADD");
+  TEST_ASSERT(app.pending!=0,"pending armed");
+  make_response(&b,app.pending->id,K_STATUS_OK,1,0,0,"note: node 4 is still catching up");
+  TEST_ASSERT(k_client_response_frame(&app,K_RESPONSE,b.data,b.len)==0,"feed OK note");
+  TEST_ASSERT_STR_EQ(g.out,"note: node 4 is still catching up","the MEMBER body is printed, not swallowed as ok");
+  k_buf_free(&b);
+  k_pending_free(app.pending);
+  TEST_END();
+}
+
 static void test_seed_parse_basic(void){
   k_client_app app;
   TEST_BEGIN("client seed parse basic");
@@ -394,8 +421,9 @@ static void test_pipeline_keeps_k_in_flight(void){
 }
 
 int main(void){
-  TEST_PLAN(16);
+  TEST_PLAN(17);
   test_shutdown_body_printed();
+  test_member_body_printed();
   test_seed_parse_basic();
   test_find_endpoint();
   test_apply_members_dedup();
