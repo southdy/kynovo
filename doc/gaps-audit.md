@@ -1288,5 +1288,6 @@ the `//`-comment rule blinded by apostrophes in comments).
   ⇒ **真线程的并发用例与新的客户端用例都已在 MSVC 6 + XP 上编译、链接、运行、通过**（203 ms 对主机上的 93 ms，
   同量级）。fuzz：`done: 200 iterations`、`done: 2 iterations`、`1/1 clusters consistent`、
   `linearizability: 4 histories / 253 ops decided, 0 inconclusive`；崩溃契约 `survive-me` 复现。
-  **仍未在 XP 上跑过**：管道输入的 CLI 修复（5.1）——客人机脚本不含 CLI smoke；已放入 `piped.bat`（只跑这一件事，
-  无需编译器），等下一次客人机执行。
+  **管道输入的 CLI 修复（5.1）也已在 XP 上验证**：`piped.bat`（ver=B，二进制目录依次试探并写入日志）
+  在客人机上 `piped_init_rc=0`、**`piped_rc=0`**（修复前是 rc=124 + 挂死，且一条命令都不执行），输出为
+  `connected to 127.0.0.1:9601` / **`ok`** / **`v1`** ⇒ 管道里的 `SET` 真的执行了、`GET` 读回了值。
