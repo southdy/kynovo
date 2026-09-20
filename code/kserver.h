@@ -1839,7 +1839,12 @@ static int k_wal_state_load(const char *base,k_restore *restore,k_wal_meta_state
   base_of_use=n_base;
   pick_base=1;
   if(k_snapshot_verify_file(base,n_base)!=1){
-    if(n_base>0&&k_snapshot_verify_file(base,prev_base)==1){
+    /* prev_base>0 is not cosmetic: k_snapshot_verify_file answers 1 for any index <= 0 ("a zero base needs no
+       snapshot file"), so without it this branch treats an INVENTED base 0 as a verified snapshot, reports a
+       rollback that did not happen, and replays the log from an empty tree - silently whenever the retained
+       entries happen to start at index 1 (fourth-round review A5).  With the guard, an unusable snapshot and no
+       earlier base falls into the refuse branch below, which is the honest answer. */
+    if(n_base>0&&prev_base>0&&k_snapshot_verify_file(base,prev_base)==1){
       printf("wal: snapshot for base %" K_I64_FMT " is not usable: rolling back to base %"
              K_I64_FMT "\n",(k_i64)n_base,(k_i64)prev_base);
       base_of_use=prev_base;
@@ -2463,11 +2468,28 @@ static int k_server_write_inbound_snapshot(k_server *server,const raft_install_s
   vfs_file *file;
   if(!server||!snapshot||snapshot->snapshot_last_index<0||snapshot->snapshot_offset<0||snapshot->snapshot_chunk_size<0) return -1;
   if((k_u64)snapshot->snapshot_chunk_size>(k_u64)K_FRAME_MAX||k_path_snapshot(path,server->base,snapshot->snapshot_last_index)!=0) return -1;
+  /* The install writes straight to the versioned file (no temp file + rename, by design), so a previous, LONGER
+     incarnation of the same index would survive as a tail and be loaded later as part of the new snapshot: the
+     save path guards against exactly that with an end probe and this path did not (fourth-round review A6).
+     The guard has to sit at the END, not at the start: deleting the target when the first chunk arrives looks
+     tidier, but a duplicated first chunk (the cluster fuzz injects duplicates) then truncates a file whose later
+     chunks are already in place - measured: seed 1 of kserver_cluster_fuzz diverged 5/5 with that delete, and
+     3/3 green without it. */
   file=vfs_open(path);
   if(!file) return -1;
   if(vfs_write(file,(k_u64)snapshot->snapshot_offset,snapshot->snapshot_data,(k_u32)snapshot->snapshot_chunk_size)!=0||(snapshot->snapshot_done&&vfs_sync(file)!=0)){
     vfs_close(file);
     return -1;
+  }
+  if(snapshot->snapshot_done){
+    k_u8 probe;
+    if(vfs_read(file,(k_u64)snapshot->snapshot_offset+(k_u64)snapshot->snapshot_chunk_size,&probe,1u)==0){
+      vfs_close(file);
+      vfs_unlink(path);                  /* never leave a mixed file behind for a later start to pick up */
+      printf("snapshot: the install of index %" K_I64_FMT " left bytes past its end (stale longer incarnation"
+             " or a torn write): the file was discarded\n",(k_i64)snapshot->snapshot_last_index);
+      return -1;
+    }
   }
   vfs_close(file);
   return 0;

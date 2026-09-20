@@ -103,13 +103,21 @@ after any fix - it is a regression guard for a property, not evidence for a chan
 segment following a torn tail is accepted with no relation to the previous generation; `:1757` adopts term/vote from
 the *last record read* (segment order), not the highest generation.
 
-### A5 `[me]` MEDIUM: base 0 is accepted as a "verified snapshot"
+### A5 `[me]` **[FIXED]** MEDIUM: base 0 was accepted as a "verified snapshot"
 
 `:1545` `if(index<=0) return 1;   /* a zero base needs no snapshot file */` makes `:1806`
 `if(n_base>0&&k_snapshot_verify_file(base,prev_base)==1){` accept `prev_base==0`, so recovery can "roll back to
 base 0" - printing it as if genuine - and start from an empty tree with a full-log replay.
 
-### A6 `[me]` MEDIUM: InstallSnapshot writes its target in place, with no truncate and no end probe
+
+**Fix.** The rollback branch now requires `prev_base>0` as well (`k_snapshot_verify_file` answers 1 for any
+`index<=0` by construction, so without it an INVENTED base 0 passed as verified and the log was replayed from an
+empty tree, silently whenever the retained entries happened to start at index 1).  With the guard, an unusable
+snapshot and no earlier base falls into the existing refuse branch - the honest answer.  No test covers this yet:
+constructing the case needs a store with a snapshot base, and this suite does not drive snapshots (the same gap
+recorded under A1's residual).
+
+### A6 `[me]` **[FIXED]** MEDIUM: InstallSnapshot wrote its target in place, with no truncate and no end probe
 
 `:2430-2435` `file=vfs_open(path);` … `vfs_write(file,snapshot->snapshot_offset,…)` …
 `(snapshot->snapshot_done&&vfs_sync(file)!=0)`.  The save path guards against a stale longer incarnation
@@ -117,6 +125,19 @@ base 0" - printing it as if genuine - and start from an empty tree with a full-l
 can be a mix of two writings; the app then *loads* it (`:1291` `treap_load` mutates the live tree before the CRC
 verdict at `:1297`) and turns a torn install into `fatal: snapshot load failed` (node exit) rather than a failed
 install.
+
+
+**Fix, and how the first version of it was refuted by the fuzz.** A stale, longer incarnation of the same index must
+not survive past the new end.  The first attempt deleted the target when the install's first chunk arrived, plus an
+end probe at `done` - and `kserver_cluster_fuzz` seed 1 diverged **5/5** with it: the fuzz injects duplicated and
+dropped frames, and a duplicated first chunk truncated a file whose later chunks were already in place, leaving a
+torn snapshot that the node then could not load.  Same-build A/B, both directions: reverting only A5 still failed
+5/5 (A5 innocent), reverting A5+A6 was green 3/3 (A6 the cause).  The guard therefore lives **at the end only**: the
+install probes past the last byte once the leader says the file is complete, and if anything is there it discards
+the file and returns an error.  Measured after that change: `kserver_test` 40/40, `kserver_cluster_fuzz` seed 1 green
+5/5, `REGRESS|quick|pass=10 fail=0`, `REGRESS|fuzz|pass=13 fail=0`.  The unit case
+`test_install_snapshot_discards_a_stale_longer_file` asserts the honest behaviour (refused and the old bytes gone)
+rather than a silent trim; with the guard neutered it fails.
 
 ### A7 `[audit]` MEDIUM/LOW: the forced-high base decodes the wrong record (that fallback can never work); the verify helper creates the file it verifies; `skipped_prefix` is dead state
 

@@ -779,6 +779,50 @@ static unsigned int g_walceil_seq;
    always sits in the newest segment and any cut before that is caught.  Unlink one middle segment here (both sides
    keep their records) and the store must refuse, naming both positions - a silent truncation would drop every
    record after the cut.  The property, not a fix: this case is green before and after any change. */
+/* ---- an install must replace a stale longer file, not inherit its tail (fourth-round review A6)
+   The install writes straight to the versioned file, so a previous, longer incarnation of the same index would
+   otherwise survive past the new end and be loaded later as part of the new snapshot - the save path already
+   probes for exactly that.  Here a 128-byte stale file is created first, a 20-byte install runs over it, and
+   nothing may be readable at offset 20 afterwards. */
+static void test_install_snapshot_discards_a_stale_longer_file(void){
+  k_server s;
+  char base[64],path[K_URI_MAX];
+  char filler[128];
+  k_u8 payload[20],probe;
+  int rc;
+  raft_install_snapshot ins;
+  vfs_file *f;
+  TEST_BEGIN("server InstallSnapshot replaces a stale longer file instead of keeping its tail");
+  sprintf(base,"mem://kstest-snapinst-%u",g_walceil_seq++);
+  setup(&s,1,base);
+  TEST_ASSERT(k_server_open(&s)==0,"open");
+  memset(filler,'x',sizeof(filler));
+  TEST_ASSERT(k_path_snapshot(path,base,7)==0,"snapshot path");
+  f=vfs_open(path);
+  TEST_ASSERT(f!=0,"create the stale file");
+  TEST_ASSERT(vfs_write(f,0,filler,sizeof(filler))==0,"write 128 stale bytes");
+  vfs_sync(f);
+  vfs_close(f);
+  memset(&ins,0,sizeof(ins));
+  memset(payload,'y',sizeof(payload));
+  ins.snapshot_last_index=7;
+  ins.snapshot_offset=0;
+  ins.snapshot_data=payload;
+  ins.snapshot_chunk_size=(k_u32)sizeof(payload);
+  ins.snapshot_done=1;
+  /* The stale file is LONGER than the install, so the install must not adopt its tail: it refuses and discards
+     the file (a mixed file may never survive to be loaded later).  Either way, no byte of the old incarnation
+     may remain. */
+  rc=k_server_write_inbound_snapshot(&s,&ins);
+  TEST_ASSERT(rc!=0,"an install shorter than the file already there is refused, not silently trimmed");
+  f=vfs_open(path);
+  TEST_ASSERT(f!=0,"reopen the path");
+  TEST_ASSERT(vfs_read(f,0,&probe,1u)!=0,"the stale incarnation is gone, not left behind as a tail");
+  vfs_close(f);
+  k_server_release(&s);
+  TEST_END();
+}
+
 static void test_wal_recovery_refuses_a_middle_segment_cut(void){
   k_server s;
   char base[64],path[K_URI_MAX],key[16];
@@ -1721,7 +1765,7 @@ static void test_membership_wait_reporting(void){
 
 int main(int argc,char **argv){
   if(argc>=3&&strcmp(argv[1],"--apply-stress")==0) return apply_stress(test_strtoull(argv[2]),argc>=4?test_strtoull(argv[3]):TEST_U64_C(4096),argc>=5&&strcmp(argv[4],"thread")==0,argc>=6&&strcmp(argv[5],"nosnap")==0);
-  TEST_PLAN(39);
+  TEST_PLAN(40);
   g_run_tag=0;
   if(k_monotonic_us(&g_run_tag)!=0) g_run_tag=(k_u64)time(0);
   test_fcall_gate_reopens_when_its_request_dies();
@@ -1739,6 +1783,7 @@ int main(int argc,char **argv){
   test_wal_recovery_rejects_missing_generation();
   test_wal_recovery_across_segment_rotation();
   test_wal_recovery_refuses_missing_newest_segment();
+  test_install_snapshot_discards_a_stale_longer_file();
   test_wal_recovery_refuses_a_middle_segment_cut();
   test_wal_recovery_refuses_a_prefix_past_the_scan_ceiling();
   test_wal_meta_slot_only_written_when_durable();
