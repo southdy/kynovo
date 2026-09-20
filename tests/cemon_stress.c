@@ -142,8 +142,8 @@ int main(void){
     ctx.n=0;
     while(stress_now()<seg_end) cemon_poll(loop,10);
     med=stress_median(ctx.samples,ctx.n);
-    printf("%-6d %-14llu %-10d %-12llu\n",seg,(unsigned long long)med,ctx.n,
-           (unsigned long long)(stress_rss()/1024u));
+    printf("%-6d %-14" K_U64_FMT " %-10d %-12" K_U64_FMT "\n",seg,(k_u64)med,ctx.n,
+           (k_u64)(stress_rss()/1024u));
   }
   ctx.stop=1;
   runtime_stop(rt);
@@ -157,9 +157,9 @@ int main(void){
     w0=stress_now(); c0=stress_cpu_us();
     while(stress_now()-w0<(k_u64)IDLE_SECONDS*1000000u) cemon_poll(loop,10);
     w1=stress_now(); c1=stress_cpu_us();
-    printf("idle poll(10) %ds: wall=%llu us  cpu=%llu us  cpu%%=%llu\n",
-           IDLE_SECONDS,(unsigned long long)(w1-w0),(unsigned long long)(c1-c0),
-           (w1>w0)?(unsigned long long)((c1-c0)*100u/(w1-w0)):0u);
+    printf("idle poll(10) %ds: wall=%" K_U64_FMT " us  cpu=%" K_U64_FMT " us  cpu%%=%" K_U64_FMT "\n",
+           IDLE_SECONDS,(k_u64)(w1-w0),(k_u64)(c1-c0),
+           (w1>w0)?(k_u64)((c1-c0)*100u/(w1-w0)):0u);
   }
 
   cemon_destroy(loop);
