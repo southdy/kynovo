@@ -46,12 +46,12 @@ and their `run-*` versions, `selftest`, `kdbsvr`, `kdbctl`, `bench*`, `cemon-ben
 |---|---|---|---|---|
 | L0 | compile gate | `./build.sh` | rc=0 and 0 warnings in `build.log` | ~90s |
 | L1a | raft unit | `./build/raft_test.exe` | `SUMMARY: 221/221 passed` | ~1s |
-| L1b | server unit (with stress mode) | `./build/kserver_test.exe` | `SUMMARY: 34/34 passed` | ~30s |
-| L1c | client unit | `./build/kclient_test.exe` | `SUMMARY: 16/16 passed` | ~0.1s |
+| L1b | server unit (with stress mode) | `./build/kserver_test.exe` | `SUMMARY: 37/37 passed` | ~30s |
+| L1c | client unit | `./build/kclient_test.exe` | `SUMMARY: 18/18 passed` | ~0.1s |
 | L1d | cemon event-loop unit | `./build/cemon_test.exe` | `SUMMARY: 5/5 passed` | ~2s (includes a 2s long wait) |
 | L1e | end-to-end self-test (single process, with membership change/bootstrap/election) | `./build/selftest.exe` | `selftest: PASS` | ~1–3s |
 | L1f | harness cleanliness: the self-test's store artifacts are gone | (gate layer `selftest_cleanup`) | `selftest-cleanup: 0 leftover file(s)` | ~0s |
-| L1g | vfs fault injection (the storage seam, exercised not assumed) | `./build/vfs_fault_test.exe` | `SUMMARY: 4/4 passed` | ~1s |
+| L1g | vfs fault injection (the storage seam, exercised not assumed, plus two threads on one mem hash bucket) | `./build/vfs_fault_test.exe` | `SUMMARY: 5/5 passed` | ~1s |
 | L2 | CLI semantics smoke (real process + real socket) | `bash tests/cli_smoke.sh` | `cli_smoke: PASS` | ~10s |
 | L3a | single-node randomised fuzzing (API/OOM rollback) | `./build/raft_fuzz.exe <seed> <n>` | `done: <n> iterations` / `FAIL: …` | n=2000 ~10s |
 | L3b | **multi-node cluster fuzzing** (real pull-mode wire messages: drop/reorder/duplicate/partition/crash-restart/membership change/OOM injection) | `./build/raft_cluster_fuzz.exe <seed> <n> [persist_delay]` | `done: <n> iterations` / `FAIL: …` | n=2000 ~30s |
@@ -294,10 +294,11 @@ against the repository before transfer:
 - crash contract: after an abrupt `taskkill` and a restart on the same store, the key written before
   the kill reads back, and a key that was never written reads `(not found)` - the negative control
   that keeps the check from being unable to fail;
-- unit suites: `cemon_test 5/5`, `kclient_test 16/16`, `raft_test 221/221`, `kserver_test 34/34`,
-  `vfs_fault_test 4/4` - identical to the local gate, including the storage injection seam, whose four
-  cases (transparent wrapper / fsync failure / write failure / failure during open) build and pass under
-  cl 12.00.8804 with the Platform SDK;
+- unit suites: `cemon_test 5/5`, `kclient_test 18/18`, `raft_test 221/221`, `kserver_test 37/37`,
+  `vfs_fault_test 5/5` - identical to the local gate, including the storage injection seam, whose five
+  cases (transparent wrapper / fsync failure / write failure / failure during open / two threads on two
+  paths that share one mem hash bucket, which needs real worker threads and therefore real linking) build
+  and pass under cl 12.00.8804 with the Platform SDK;
 
 The fuzz drivers were added to that evidence afterwards.  With the seam test included, every one of the
 twenty-four compile/link/run exit codes is zero as well (`cl` and `link` for eight drivers, then eight runs):

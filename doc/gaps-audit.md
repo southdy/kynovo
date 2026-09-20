@@ -1278,6 +1278,15 @@ the `//`-comment rule blinded by apostrophes in comments).
 - **顺带量了一条基线**：干净服务端上，**第一条**一次性请求约 **1.0 s**（其后约 0.68 s）⇒ 不是 5 s 超时；先前两次
   探针里出现的首条超时在干净服务端上**不可复现**（那两次打的是被反复 kill/重启的服务端），记在此处以免被当成
   缺陷复现步骤。
-- **XP 客人机验证**：暂存已刷新（23 个源文件、清单重建、脚本版本 `kynovo_step.bat` G→H、`xp_tests.bat` F→G，
-  线缆逐字节自证 23/23），**等待客人机执行**（XP 无 SSH，只能由客人机侧发起）。两个新测试是否能在 MSVC 6 下
-  编译运行，**在客人机跑完之前不作任何声明**。
+- **XP 客人机验证（已跑完）**：暂存刷新后由客人机执行 `go.bat`（`kynovo_step.bat` ver=**H**、
+  `xp_tests.bat` ver=**G**，脚本自身打印尺寸+版本 ⇒ 可证明跑的是新脚本），`build_exit=0 / run_exit=0 /
+  tests_exit=0`，编译 **0 个 error**（MSVC 6 的既有 C4244/C4133 警告是 IOCP 的那几条，与本次改动无关）。逐条：
+  `cemon 5/5`、**`kclient 18/18`**、`raft 221/221`、**`kserver 37/37`**、**`vfs_fault 5/5`**，
+  其中两个新用例逐字打印：
+  `PASS  client: a request queued before the connection is sent once it comes up  21 us`、
+  `PASS  vfs mem backend: two threads, two paths in one hash bucket  203641 us`
+  ⇒ **真线程的并发用例与新的客户端用例都已在 MSVC 6 + XP 上编译、链接、运行、通过**（203 ms 对主机上的 93 ms，
+  同量级）。fuzz：`done: 200 iterations`、`done: 2 iterations`、`1/1 clusters consistent`、
+  `linearizability: 4 histories / 253 ops decided, 0 inconclusive`；崩溃契约 `survive-me` 复现。
+  **仍未在 XP 上跑过**：管道输入的 CLI 修复（5.1）——客人机脚本不含 CLI smoke；已放入 `piped.bat`（只跑这一件事，
+  无需编译器），等下一次客人机执行。
