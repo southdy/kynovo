@@ -1076,7 +1076,7 @@ REPORTED.  Baseline: `REGRESS|full|pass=14 fail=0 duration=330s` on this machine
 
 Status corrections this review forces (they were fixed, and the ledger still listed them as open):
 - **D13-D19, F2** - fixed in `152786a`; **A9/A10** - fixed in `1b3f813`; **C4** (a `k_server_open` failure
-  printing its cause) - fixed in `9962d09` (`k_open_fail`, `code/kserver.h:5163`).  `doc/principles.md:47` still
+  printing its cause) - fixed in `9962d09` (`k_open_fail`, `code/kserver.h:5395`).  `doc/principles.md:47` still
   cited C4 as the open justification and has been corrected.
 - The stale counts the review found (fuzz `pass=12`, `quick pass=9`, 4 unit suites, `kserver_test 33/33`,
   "22 sources") are corrected in the documents that state them.
@@ -1198,8 +1198,8 @@ the `//`-comment rule blinded by apostrophes in comments).
    同一个 inode。
 
 **核实后成立的（这条才是现在写进代码与拒绝信息里的理由）：**
-`vfs_mem_open` 的插入（`vfs.h:308`）与 `vfs_mem_unlink` 的摘链（`:324`）都是对**共享桶头**的读-改-写；
-`n->refcount`（`:310` / `:326`）同理。两个线程**同时**进入 `vfs_open`/`vfs_unlink`、且两个路径**撞进同一个桶**时
+`vfs_mem_open` 的插入（`vfs.h:339-362`，函数在 `:339`）与 `vfs_mem_unlink` 的摘链（`vfs.h:371-377`）都是对**共享桶头**的读-改-写；
+`n->refcount`（`vfs.h:364` 的递增 / `:382` 的判定）同理。两个线程**同时**进入 `vfs_open`/`vfs_unlink`、且两个路径**撞进同一个桶**时
 （`vfs_hash` 是 FNV-1a + 混洗的强哈希，`VFS_MEM_HASH_BUCKETS=1024` ⇒ 约 1/1024）会丢一次更新 ⇒ 某个文件"凭空
 不在"。它需要 1/1024 **并且**微秒级同时，而 `mem://`+线程不是产品配置（手工压力工具已改走 `disk://`）⇒ 量级约
 1e-9/次快照。**本机无 TSan/ASan**（MinGW 无运行时库），所以这条无法在此自动抓取——属"低概率缺陷"，按纪律不被
@@ -1227,7 +1227,7 @@ the `//`-comment rule blinded by apostrophes in comments).
 ## S. 客户端与 CLI（第三轮审视 5.x）—— 已修五项，一项转为开放
 
 - **5.1 管道输入被完全忽略、且进程永不退出（已修）**。根因：`cli.h` 的 `cli_poll` 把输入循环写成
-  `while(cli->tty && ...)`（`cli.h:736`）——脚本模式（`tty=0`，即管道/重定向）**根本不读**，命令不执行，
+  `while(cli->tty && ...)`（`cli.h:731`）——脚本模式（`tty=0`，即管道/重定向）**根本不读**，命令不执行，
   EOF 也看不到。修复前实测：`printf 'SET pk1 v1\nGET pk1\n' | kdbctl 127.0.0.1:9601` ⇒ **rc=124**（被调用方
   kill）、输出只有连接横幅（30 字节）。现在 `kdbctl` 在脚本模式下自己按行读入并走同一个分发入口
   （`cli_exec_line`），EOF 即收工。修复后实测同一条命令 ⇒ rc=0、三条命令都执行、数据可读回
@@ -1256,6 +1256,15 @@ the `//`-comment rule blinded by apostrophes in comments).
 **验证**：`tests/cli_smoke.sh` 从 12 项扩到 19 项，全部 PASS（新增：管道脚本 3 项、非法 limit 2 项含一条"必须不
 把本地拒绝归咎于网络"的反向断言、PIPE 的 ok/other 与 ops_timed 2 项）。这些断言的"能失败"证据就是修复前的同路径
 实测（rc=124 零执行 / rc=0 静默无界），已记在上面。
+
+## How to read the line numbers in this file
+
+Every `file:line` here was true on the commit that wrote it, and the tree keeps moving, so a reference that no
+longer lands on the symbol is expected drift, not evidence of a mistake.  The **symbol names are authoritative**;
+the numbers are a pointer.  The fourth round re-verified the references the auditors flagged (`vfs.h:339-362` /
+`:371-377` for the mem-backend bucket update, `cli.h:731` for the tty-gated reader, `code/kserver.h:5395` for
+`k_open_fail`) and refuted two more: `tools/archive/` really does hold 16 scripts and `testing.md` really does list
+five unit suites, so those numbers were right all along.
 
 ## T. mem 后端锁的范围（维护者评估）与 5.1b（客户端层面被推翻）
 

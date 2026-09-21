@@ -62,5 +62,5 @@ Read this first. It is deliberately short; the details live in `doc/`.
 - Gates and method: `doc/testing.md` · Backlog and evidence: `doc/gaps-audit.md`
 - Crash contract (what survives a crash, per platform): `doc/crash-contract.md`
 - Harnesses: `tools/harness/` · Past investigations: `doc/investigations.md`
-- Raw measurements: `doc/measurements/` · Review: `doc/code-review-2026-09.md`
+- Raw measurements: `doc/measurements/` · Reviews: `doc/code-review-2026-09.md` and the follow-ups `-09b/-09c/-09d.md` (the newest round audits the previous round's own fixes)
 - Plan for GitHub/automation: `doc/plan-github-automation.md`
