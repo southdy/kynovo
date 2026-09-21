@@ -42,9 +42,11 @@ timeout 20 "$BIN/kdbctl.exe" "127.0.0.1:$PORT" BOGUS >/dev/null 2>&1; check "unk
 # piped script input: the CLI must RUN the commands it is fed and exit at EOF.  It used to ignore stdin
 # entirely - the input path in cli.h is gated on a console - so a pipe produced the connect banner and then
 # hung until the caller killed it, with every command silently unexecuted.
-out=$(printf 'SET pipe1 a\nSET pipe2 b\nGET pipe1\n' | timeout 20 "$BIN/kdbctl.exe" "127.0.0.1:$PORT" 2>&1); check "piped script exit" "$?" "0"
-contain "piped script ran the first command" "$out" "a"
-contain "piped script ran the second command" "$out" "ok"
+# The needles are the values the script stored, not one-character strings: `contain ... "a"` was satisfied by
+# any failure text that happened to hold an "a" (review 4th round E7).
+out=$(printf 'SET pipefirst VAL_ONE\nSET pipesecond VAL_TWO\nGET pipefirst\nGET pipesecond\n' | timeout 20 "$BIN/kdbctl.exe" "127.0.0.1:$PORT" 2>&1); check "piped script exit" "$?" "0"
+contain "piped script ran the first command" "$out" "VAL_ONE"
+contain "piped script ran the second command" "$out" "VAL_TWO"
 
 # ... and a script against an UNREACHABLE host must fail fast instead of spinning: the line reader only runs
 # once the CLI has produced output, which never happens without a connection, so this used to hang until the

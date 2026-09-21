@@ -4,7 +4,7 @@
 > lives only in prose or comments and relies on "remember not to do that" is filed in the **danger list**
 > in §7.
 
-Mechanical check: `python tools/check-principles.py` → `PRINCIPLES|OK|rules=19 fail=0` (a non-zero exit is a violation).
+Mechanical check: `python tools/check-principles.py` → `PRINCIPLES|OK|rules=20 fail=0` (a non-zero exit is a violation).
 A ratchet rule keeps its budget in ONE variable and derives both the failure threshold and the message from
 it, and it prints the measured count next to the budget - the earlier form kept the number in the message
 and a different number in the slice, so the message walked down while the threshold stayed put.

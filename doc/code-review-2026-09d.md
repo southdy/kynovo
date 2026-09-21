@@ -433,7 +433,7 @@ Measured truth table, five cases, old pattern vs new rule:
 | `const char *u="disk://x";` | not caught | not caught | not caught |
 | `x=1; // hello` | caught | caught | caught |
 
-`PRINCIPLES|OK|rules=19 fail=0` on the tree (no live occurrences, as the audit said), and
+`PRINCIPLES|OK|rules=20 fail=0` on the tree (no live occurrences, as the audit said), and
 `REGRESS|quick|pass=10 fail=0 duration=269s`.
 
 ### E5 `[FIXED]`, with one half refuted: harnesses that could not report what they claimed
@@ -479,7 +479,38 @@ that ran.  Left as it is, with this note so the claim is not re-raised.
 (`rate_profile.sh:90,101`, `perf_matrix.sh:53-57`, `cpu_probe.sh`, `burst.sh`) ⇒ `atoi` yields 0, so every
 "unique" run is single-key and the CASE line still labels it `mode=unique`.
 
-### E7 `[audit]` LOW: the `sprintf` pattern cannot match column 0; the `raft_inspect` rule counts sites but never where they are; `git_out` ignores return codes; `cli_smoke.sh`'s piped assertions use 1-char needles (`contain … "a"`) that the failure text itself satisfies
+### E7 `[FIXED]`: four blind spots in the checks themselves
+
+1. **The `sprintf` ratchet could not see column 0.**  `scan(r'[^_a-zA-Z]sprintf\s*\(')` requires a character
+   before the name, so a bare `sprintf(` at the start of a line was invisible.  Now `(^|[^_a-zA-Z])sprintf\s*\(`.
+   The measured count is unchanged (10, budget 10) - this tree has no column-0 call - so the fix is about the rule
+   being able to fail, not about a current violation.
+2. **The `raft_inspect` rule reported a count but never the sites.**  With budget 1, a reader could not tell *which*
+   call is the sanctioned one.  The ok line now carries it:
+   `raft_inspect only in the diagnostics path (budget 1): allowed=['code/kserver.h:3825: ...']`.
+3. **`git_out` ignored the return code.**  A failing git produced empty stdout, which is exactly what makes a rule
+   green for want of files (E3's problem from the other side).  `git_out` now records non-zero exits and a new rule
+   reports them: `every git command the rules rely on exited 0`.  That is rule 20 - `PRINCIPLES|OK|rules=20 fail=0`.
+4. **`cli_smoke.sh`'s piped assertions accepted one-character needles.**  `contain "piped script ran the first
+   command" "$out" "a"` was satisfied by any failure message containing an "a".  The script now stores
+   `VAL_ONE`/`VAL_TWO` and asserts on those, so the check can only pass if the values actually came back.
+
+### One observation from this round's gate runs: a single false RED
+
+While the E7 tree was being verified, `./build.sh regress quick` reported
+`REGRESS|quick|pass=10 fail=1 duration=418s`, with `GATE|cli_smoke|FAIL|rc=0 verdict=<no verdict line>|43s` - and the
+layer's own log (`build/regress/cli_smoke.log`) contradicted it: 863 bytes, 32 `PASS`, 0 `FAIL`, ending in
+`cli_smoke: PASS`.  The gate's own grep, run afterwards against that same file, matches.
+
+What was checked rather than assumed: the same layer, under the same `reg_gate` extracted from `build.sh`, three
+times in a row - `ok` 3/3, each log identical in size and content.  `tests/cli_smoke.sh`'s `say()` is a plain
+`printf` with no pipe or background writer, so a late-flushing writer inside the layer is not the mechanism.  The
+one external fact that lines up is that the shell running the gate was killed by the tool harness at 420 s while the
+gate itself reported 418 s - **that is a suspicion, not a finding**, and it is written down as one.
+
+`reg_gate` now re-reads the log up to three times (0.3 s apart) before declaring a verdict line absent.  That does
+not explain the observation; it only means a verdict line that lands a moment late cannot be reported as missing.
+The gate re-ran clean immediately after: `REGRESS|quick|pass=11 fail=0 duration=224s`.
 
 ## F. Documentation
 
@@ -546,6 +577,7 @@ Every item in this round is closed one way or the other - fixed, or refuted with
 | E2 | fixed - the tautological assert now measures the bounded return, and fails when the bound is tightened |
 | E4 | fixed - the char-literal lexer understands escapes, and the comment rule catches `case 3://note` and a trailing `//` without firing on `mem://` prose (5-case truth table) |
 | E5 | fixed - the counters harness greps the fields the server emits and certifies it measured something; `regress_selftest` extracts the real detector and runs as a gate layer (it found a false "layer timeout" claim in `reg_gate`); 11 report-only harnesses now say so |
+| E7 | fixed - the `sprintf` ratchet sees column 0, the `raft_inspect` rule names its sanctioned site, `git_out` records non-zero exits (rule 20), and `cli_smoke`'s piped needles are the values it stored |
 | A4, A7, C3-C8, E4-E7 | **open** - recorded in `doc/gaps-audit.md`, not silently dropped |
 
 Evidence for the round as a whole: `REGRESS|full|pass=14 fail=0 duration=267s`, CI green on every push, and the XP

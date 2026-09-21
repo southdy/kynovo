@@ -32,6 +32,7 @@ def find_git():
 
 GIT = find_git()
 GIT_LIST_PROBLEMS = []
+GIT_FAILURES = []
 
 def git_files(*args):
     """A file list derived from git.  An EMPTY list is not a passing state: every rule that consumes one of
@@ -44,8 +45,13 @@ def git_files(*args):
     return listing
 
 def git_out(*args):
+    """git with its return code CHECKED.  The old version returned stdout and dropped rc, so a failing git looked
+    like an empty list - and an empty list is what makes a rule green for want of files (review 4th round E7)."""
     if not GIT: return None
-    return subprocess.run([GIT] + list(args), stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True).stdout
+    p = subprocess.run([GIT] + list(args), stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
+    if p.returncode != 0:
+        GIT_FAILURES.append('git %s -> rc=%d %s' % (' '.join(args), p.returncode, (p.stderr or '').strip()[:70]))
+    return p.stdout
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 os.chdir(ROOT)
@@ -259,14 +265,17 @@ report('no literal %lld/%llu in code/ (use the header format macro)', scan(r'%ll
 sites = scan(r'raft->config_(new|joint|learners)', ['code/kserver.h', 'code/kdbsvr.c'])
 report('app layer reads no raft config fields (budget 0, card t_972b67e8)', sites)
 sites = scan(r'raft_inspect', ['code/kserver.h', 'code/kdbsvr.c', 'tests/raft_cluster_fuzz.c', 'tests/raft_test.c'])
-report('raft_inspect only in the diagnostics path (budget 1)', sites[1:] or [])
+# Name the sanctioned site too: the rule used to report a count, so a reader could not tell WHICH call is the
+# one allowed (review 4th round E7).
+report('raft_inspect only in the diagnostics path (budget 1): allowed=%s' % (sites[:1] or ['<none>']), sites[1:] or [])
 
 # 8. unbounded formatting ratchet.  The INFO/STATS line used to be three unbounded sprintf calls that
 # appended through a `text+len` pointer into a fixed buffer, so one more field could overflow it.  It is
 # now built with k_text_append (bounded, always NUL-terminated, marks and counts truncation), and this
 # rule stops new bare sprintf calls into fixed buffers from creeping back in.  The budget is the site
 # count measured when the INFO/STATS line was converted; it may shrink, never grow.
-sites = scan(r'[^_a-zA-Z]sprintf\s*\(', LIB + ['code/kdbctl.c', 'code/kdbsvr.c'])
+sites = scan(r'(^|[^_a-zA-Z])sprintf\s*\(', LIB + ['code/kdbctl.c', 'code/kdbsvr.c'])   # (^|..): a bare
+# sprintf at column 0 was invisible to the old pattern (review 4th round E7).
 BUDGET_SPRINTF = 10   # measured with THIS checker on the tree that added the rule: 10 sites in code/
 report('no new bare sprintf in code/ (measured %d, budget %d, use k_text_append/k_snprintf)'
        % (len(sites), BUDGET_SPRINTF), sites[BUDGET_SPRINTF:] or [])
@@ -352,6 +361,7 @@ report('every request type is accounted for in the files that must know it (%d t
 # recorded when the list is built; this is where it becomes a failure, and the count is printed so a list that
 # shrank to near-nothing is visible in the ok line too.
 report('every git-derived file list is non-empty, so no rule is green for want of a file to look at (tests/ has %d C/H files)' % len(TESTS_C), GIT_LIST_PROBLEMS)
+report('every git command the rules rely on exited 0 (a failed git used to look like an empty list)', GIT_FAILURES)
 
 print('PRINCIPLES|%s|rules=%d fail=%d' % ('OK' if not fails else 'FAIL', rules, fails))
 sys.exit(1 if fails else 0)

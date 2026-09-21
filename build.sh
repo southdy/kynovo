@@ -369,6 +369,16 @@ reg_gate(){ # reg_gate <name> <verdict-egrep> <cmd...>
         wait "$pid"; rc=$?
     fi
     got="$(grep -E "$pat" "$log" | tail -1)"
+    # A layer's verdict line can land a moment after its process exits (a writer inside the layer still flushing),
+    # which reads as "no verdict line" even though the layer's own log ends with one - observed once, as a single
+    # inconsistent layer on 2026-09-21, and NOT reproduced in three samples of that same layer under this same function.
+    # Re-read a few times before calling it absent; the wait is bounded and only happens when the grep was empty.
+    tries=0
+    while [ -z "$got" ] && [ "$tries" -lt 3 ]; do
+        sleep 0.3
+        got="$(grep -E "$pat" "$log" | tail -1)"
+        tries=$((tries+1))
+    done
     if [ "$rc" = 0 ] && [ -n "$got" ]; then
         reg_report "$name" ok "$got" "$t0"
     else
