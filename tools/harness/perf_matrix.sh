@@ -1,4 +1,7 @@
 #!/bin/bash
+# NOTE: this is a REPORT, not a gate.  It prints what it measured and exits 0 whatever the numbers say, and
+# nothing compares them: the only harness in ./build.sh's gate chain is soak_release.sh.  Read the numbers, not
+# the final "done" (review 4th round E5).
 # perf_matrix.sh -- attributed performance matrix (no source instrumentation).
 # Splits cost into: per-round (STATS rounds), per-write, WAL/disk (mem vs disk),
 # payload (1B vs 4KiB) and batching (K=1/32/128) using server-side CPU time.
@@ -40,7 +43,11 @@ case_run(){ # tag n k vsize mode
   cpu1=$(./build/proc_time.exe $(pid_win) | sed 's/.*total_ms=//')
   b=$(stats $port)
   local ops=$(grep -m1 '^PHASE|' $out/$tag.txt | sed 's/.*ops_per_s=//')
-  echo "CASE $tag n=$n k=$k vsize=$vs mode=$mode ops_per_s=$ops cpu_ms_before=$cpu0 cpu_ms_after=$cpu1"
+  # mode= is what the TOOL reported doing, not what was requested: passing `unique` to a tool that parsed the flag
+  # with atoi() reported mode=unique for a single-key run (review 4th round E6).  If the tool printed no WORKLOAD
+  # line, say so instead of echoing the request as if it were the measurement.
+  local wl=$(grep -m1 '^WORKLOAD|' $out/$tag.txt | sed 's/.*mode=//; s/ .*//')
+  echo "CASE $tag n=$n k=$k vsize=$vs mode=${wl:-unspecified-requested-$mode} ops_per_s=$ops cpu_ms_before=$cpu0 cpu_ms_after=$cpu1"
   echo "  stats_before: $a"
   echo "  stats_after : $b"
 }

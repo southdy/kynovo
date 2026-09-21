@@ -1,4 +1,7 @@
 #!/bin/bash
+# NOTE: this is a REPORT, not a gate.  It prints what it measured and exits 0 whatever the numbers say, and
+# nothing compares them: the only harness in ./build.sh's gate chain is soak_release.sh.  Read the numbers, not
+# the final "done" (review 4th round E5).
 # pipe_frontier.sh -- throughput/latency frontier through the REAL client (kdbctl PIPE), with the
 # three verification gates.  Latency is per-response (the app-layer clock is refreshed on every
 # inbound event and on every send).

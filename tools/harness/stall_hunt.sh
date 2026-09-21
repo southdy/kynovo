@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# NOTE: this is a REPORT, not a gate.  It prints what it measured and exits 0 whatever the numbers say, and
+# nothing compares them: the only harness in ./build.sh's gate chain is soak_release.sh.  Read the numbers, not
+# the final "done" (review 4th round E5).
 # Stall hunt on a RELEASE build.  Control for the earlier
 #   pipe: stalled after 5 s (queued=127 done=0 in_flight=0)
 # observations, which came from the DEBUG binary with Application Verifier Heaps enabled - a much

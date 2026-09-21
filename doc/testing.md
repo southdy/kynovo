@@ -52,6 +52,7 @@ and their `run-*` versions, `selftest`, `kdbsvr`, `kdbctl`, `bench*`, `cemon-ben
 | L1e | end-to-end self-test (single process, with membership change/bootstrap/election) | `./build/selftest.exe` | `selftest: PASS` | ~1–3s |
 | L1f | harness cleanliness: the self-test's store artifacts are gone | (gate layer `selftest_cleanup`) | `selftest-cleanup: 0 leftover file(s)` | ~0s |
 | L1g | vfs fault injection (the storage seam, exercised not assumed, plus two threads on one mem hash bucket) | `./build/vfs_fault_test.exe` | `SUMMARY: 5/5 passed` | ~1s |
+| L1h | the gate's own detector, tested by the gate: a silent layer, a crashing layer and a hanging layer must all FAIL | `bash tools/harness/regress_selftest.sh` | `SELFTEST\|PASS\|... (4/4)` | ~10s |
 | L2 | CLI semantics smoke (real process + real socket) | `bash tests/cli_smoke.sh` | `cli_smoke: PASS` (31 checks: exit statuses, script mode incl. an unreachable host, CAS conflict=2, PIPE percentiles) | ~10s |
 | L3a | single-node randomised fuzzing (API/OOM rollback) | `./build/raft_fuzz.exe <seed> <n>` | `done: <n> iterations` / `FAIL: …` | n=2000 ~10s |
 | L3b | **multi-node cluster fuzzing** (real pull-mode wire messages: drop/reorder/duplicate/partition/crash-restart/membership change/OOM injection) | `./build/raft_cluster_fuzz.exe <seed> <n> [persist_delay]` | `done: <n> iterations` / `FAIL: …` | n=2000 ~30s |
@@ -205,10 +206,14 @@ command lists):
 - Every layer prints one line `GATE|<layer>|pass|FAIL|<verdict line>|<seconds>`; **the verdict line must
   appear** — a silent run (exit 0 but no verdict line) is judged **FAIL**; this is where "0 failures does
   not mean 0 data" is made concrete;
-- **the last line is machine-readable**: `REGRESS|quick|pass=10 fail=0 duration=166s` (the `principles` layer
-  added: `python tools/check-principles.py`) (an agent can decide by reading this line alone);
+- **the last line is machine-readable**: `REGRESS|quick|pass=11 fail=0 duration=307s` (the `principles` layer
+  `python tools/check-principles.py`, and the `regress_selftest` layer that tests the detector itself) (an agent
+  can decide by reading this line alone);
 - on failure it prints that layer's log path and the last 12 lines; logs live in `build/regress/<layer>.log`;
-- the gate's own failure path is self-tested: `bash tools/harness/regress_selftest.sh` (expects `pass=1 fail=2`).
+- the gate's own failure path is self-tested **as a gate layer** (`regress_selftest`, so a broken detector fails the
+gate it is part of): it extracts the real `reg_report`/`reg_gate` from `build.sh` by name and checks that a silent
+layer, a crashing layer and a layer that hangs (3s budget, `rc=124`) all FAIL while a verdict line passes;
+verdict `SELFTEST|PASS|... (4/4)`.
 
 ## 6. Recommended gate order and time budgets
 

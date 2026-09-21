@@ -164,8 +164,8 @@ int main(int argc,char **argv){
   }
   if(ok>0){
     qsort(s,(size_t)ok,sizeof(s[0]),cmpu64);
-    printf("persistent SET: n=%d median=%" K_U64_FMT " us  p99=%" K_U64_FMT "  min=%" K_U64_FMT "  max=%" K_U64_FMT "\n",
-           ok,(k_u64)s[ok/2],
+    printf("persistent SET: n=%d errors=%u (every request that completed, whatever its status) median=%" K_U64_FMT " us  p99=%" K_U64_FMT "  min=%" K_U64_FMT "  max=%" K_U64_FMT "\n",
+           ok,(unsigned)app.error_count,(k_u64)s[ok/2],
            (k_u64)s[(int)(((k_u64)ok*99u)/100u)],
            (k_u64)s[0],(k_u64)s[ok-1]);
   }else printf("persistent SET: all failed\n");

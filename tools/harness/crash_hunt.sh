@@ -1,4 +1,7 @@
 #!/bin/bash
+# NOTE: this is a REPORT, not a gate.  It prints what it measured and exits 0 whatever the numbers say, and
+# nothing compares them: the only harness in ./build.sh's gate chain is soak_release.sh.  Read the numbers, not
+# the final "done" (review 4th round E5).
 # crash_hunt.sh -- drive repeated deep pipelined loads until the server dies, with the server
 # running UNDER gdb and built with symbols (-O0 -g), so the death leaves a backtrace.
 set -u

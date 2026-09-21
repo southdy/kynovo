@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# NOTE: this is a REPORT, not a gate.  It prints what it measured and exits 0 whatever the numbers say, and
+# nothing compares them: the only harness in ./build.sh's gate chain is soak_release.sh.  Read the numbers, not
+# the final "done" (review 4th round E5).
 # rate_profile.sh -- one run of the open-loop load with the numbers that explain it.
 #
 # Prints, for one backend and one flush configuration: throughput, latency percentiles, and the four

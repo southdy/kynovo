@@ -1,4 +1,7 @@
 #!/bin/bash
+# NOTE: this is a REPORT, not a gate.  It prints what it measured and exits 0 whatever the numbers say, and
+# nothing compares them: the only harness in ./build.sh's gate chain is soak_release.sh.  Read the numbers, not
+# the final "done" (review 4th round E5).
 # conn_leak.sh -- does a server that has served several short-lived clients keep accepting new ones?
 # Each invocation below is a fresh process => a fresh connection (the CLI's normal usage pattern).
 set -u

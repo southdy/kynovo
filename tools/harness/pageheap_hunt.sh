@@ -1,4 +1,7 @@
 #!/bin/bash
+# NOTE: this is a REPORT, not a gate.  It prints what it measured and exits 0 whatever the numbers say, and
+# nothing compares them: the only harness in ./build.sh's gate chain is soak_release.sh.  Read the numbers, not
+# the final "done" (review 4th round E5).
 # pageheap_hunt.sh -- enable Application Verifier's Heaps checks for the symbol-bearing server, then
 # drive repeated deep pipelined loads.  Page heap faults AT the write to freed memory, so the
 # backtrace names the corruptor instead of the detector.

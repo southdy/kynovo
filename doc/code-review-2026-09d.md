@@ -436,15 +436,42 @@ Measured truth table, five cases, old pattern vs new rule:
 `PRINCIPLES|OK|rules=19 fail=0` on the tree (no live occurrences, as the audit said), and
 `REGRESS|quick|pass=10 fail=0 duration=269s`.
 
-### E5 `[audit]` MEDIUM: `watch_counters.sh` greps field names the server never emits; several harnesses advertise gates they do not enforce
+### E5 `[FIXED]`, with one half refuted: harnesses that could not report what they claimed
 
-`watch_counters.sh:22` greps `client_requests|request_count|request_bytes` while the emitted names are
-`wal_inflight=`, `client_connections=`, `pending_requests=`, `pending_request_bytes=` - so the in-flight leak
-signal the harness exists for is never printed.  `pipe_verify.sh`, `pipe_frontier.sh`, `perf_matrix.sh`,
-`cpu_probe.sh`, `crash_hunt.sh`, `pageheap_hunt.sh` print reports and end with `echo done`: no comparison, no
-readiness certification, so a failed build can read as a crash.  `regress_selftest.sh` is never invoked by the
-gate; nothing checks the layer count; `bench_persist.c` counts responses as accepted writes; `raft_fuzz`'s
-`done: N iterations` counts requested iterations, not ones that ran.
+**The counters harness grep'd field names the server has never emitted.**  `watch_counters.sh` filtered
+`client_requests|wal_inflight_count|client_connection_count|request_count|request_bytes`; the STATS line
+(`code/kserver.h:3830`) emits `wal_inflight=`, `client_connections=`, `pending_requests=`,
+`pending_request_bytes=`.  So the harness whose stated purpose is to catch an admission leak printed an empty field
+set and left the judgement to the reader.  It now greps the real names, **certifies that it measured something**
+(a run where the counters are absent prints `STATS-FIELDS-MISSING ...` and the script exits 1 instead of looking
+like a clean report), compares `pending_requests` before and after the runs - the leak it exists for - and ends in
+`WATCH|PASS|...` or `WATCH|FAIL|...` with the corresponding exit code.
+
+**Eleven harnesses ended in `echo done` and printed no verdict.**  None of them is in the gate chain (the only
+harness `build.sh` calls is `soak_release.sh`), so the risk is a human or an agent reading `done` as "passed".
+Each now carries a header line saying it is a report, not a gate, and that its numbers are not compared.
+
+**`regress_selftest.sh` tested a lookalike, and was never run.**  It redefined `reg_report`/`reg_gate` inline - a
+copy free to drift from the functions it claims to test - and no gate invoked it.  It now extracts the real
+functions from `build.sh` by name and `eval`s them, and it runs **as a gate layer** (`regress_selftest`), so a
+broken detector fails the gate it is part of.  It checks four cases: silent-but-exit-0, crash with no verdict,
+a verdict line, and a layer that hangs (3 s budget -> `rc=124`).
+
+That last case is the E1 proof, now permanent - and it immediately found a real defect in the gate itself: every
+FAIL line read `[layer timeout 1800s]`, because `${timed_out:+ ...}` expands whenever the variable is *set*, and it
+is set to `0` on the normal path.  A layer that exited 0 with no verdict line was reported as a timeout.  Fixed in
+`reg_gate` (`to_note` only when `timed_out = 1`), and the selftest's four cases now pass:
+`SELFTEST|PASS|the detector FAILs a silent layer, a crashing layer and a hanging one and passes a verdict line (4/4)`,
+with `REGRESS|quick|pass=11 fail=0 duration=307s` (the layer count went 10/13/14 -> 11/14/15).
+
+**`bench_persist.c` counted responses, not accepted writes.**  Its summary called every completed request a SET;
+the label now says what was measured (`n=... errors=... (every request that completed, whatever its status)`),
+backed by the client's own `error_count`.
+
+**Refuted:** "`raft_fuzz`'s `done: N iterations` counts requested iterations, not ones that ran".  The loop
+(`tests/raft_fuzz.c:541`) is a plain `for(i=0;i<count;i++)` with no early exit - the `break`s the audit may have
+seen are in a helper above it - and it prints `done` only after the loop, so the count IS the number of iterations
+that ran.  Left as it is, with this note so the claim is not re-raised.
 
 ### E6 `[audit]` MEDIUM: `bench_rate`'s `unique` workload flag is unreachable from every harness that passes it
 
@@ -518,6 +545,7 @@ Every item in this round is closed one way or the other - fixed, or refuted with
 | F (doc numbers) | fixed (`c018ed3`), with two of the flagged numbers refuted rather than changed |
 | E2 | fixed - the tautological assert now measures the bounded return, and fails when the bound is tightened |
 | E4 | fixed - the char-literal lexer understands escapes, and the comment rule catches `case 3://note` and a trailing `//` without firing on `mem://` prose (5-case truth table) |
+| E5 | fixed - the counters harness greps the fields the server emits and certifies it measured something; `regress_selftest` extracts the real detector and runs as a gate layer (it found a false "layer timeout" claim in `reg_gate`); 11 report-only harnesses now say so |
 | A4, A7, C3-C8, E4-E7 | **open** - recorded in `doc/gaps-audit.md`, not silently dropped |
 
 Evidence for the round as a whole: `REGRESS|full|pass=14 fail=0 duration=267s`, CI green on every push, and the XP

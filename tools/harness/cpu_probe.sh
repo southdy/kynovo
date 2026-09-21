@@ -1,4 +1,7 @@
 #!/bin/bash
+# NOTE: this is a REPORT, not a gate.  It prints what it measured and exits 0 whatever the numbers say, and
+# nothing compares them: the only harness in ./build.sh's gate chain is soak_release.sh.  Read the numbers, not
+# the final "done" (review 4th round E5).
 # cpu_probe.sh [tag] -- measure server-side CPU vs wall time for a pipelined load.
 # Answers: is the event loop CPU-bound (burning cycles per round) or waiting?
 set -u

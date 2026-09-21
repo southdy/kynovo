@@ -4,7 +4,7 @@
    percentiles.  Every TPS/latency number quoted in the review notes comes from here, so
    it ships with the tree instead of living in a scratch file.
 
-   run: bench_rate.exe <host:port> <N> <K> [value_size] [key] [unique] [mode]
+   run: bench_rate.exe <host:port> <N> <K> [value_size] [key] [unique|single] [get]
    prints STATS_BEFORE, PHASE, LAT and STATS_AFTER lines (one per line, key=value).
    mode=get: issue N GETs instead of SETs and print a GET| summary plus VALUE|<body> for
    the first response - that is how the cluster tests check that a committed value is still
@@ -49,9 +49,16 @@ int main(int argc,char **argv){
   char *host,*colon;
   unsigned short port;
   const char *key=argc>5?argv[5]:"__rate__";
-  int unique=argc>6?atoi(argv[6]):0;   /* 1 = append the request id to the key, so the
-                                          workload has N DISTINCT keys and exercises the
-                                          real treap depth (COW path length) */
+  const char *mode_arg=argc>6?argv[6]:"";   /* `unique` (or 1) = append the request id to the
+                                                 key, so the workload has N DISTINCT keys and
+                                                 exercises the real treap depth (COW path
+                                                 length).  Parsed as a STRING: the harnesses
+                                                 pass the word `unique`, and atoi() of that is 0,
+                                                 which made every "unique" run single-key while
+                                                 the report still said mode=unique (review 4th
+                                                 round E6).  An unrecognised word is refused
+                                                 instead of silently measuring something else. */
+  int unique;
   unsigned int key_len;
   char host_buf[64];
   int g_probe_status=-1;
@@ -68,6 +75,9 @@ int main(int argc,char **argv){
   if(argc<4){ printf("usage: tmp_rate <host:port> <N> <K> [value_size] [key]\n"); return 1; }
   colon=strchr(argv[1],':');
   if(!colon){ printf("bad host:port\n"); return 1; }
+  if(mode_arg[0]==0||strcmp(mode_arg,"single")==0||strcmp(mode_arg,"0")==0) unique=0;
+  else if(strcmp(mode_arg,"unique")==0||strcmp(mode_arg,"1")==0) unique=1;
+  else { printf("bad mode '%s': expected `unique`, `single`, 1 or 0\n",mode_arg); return 1; }
   host=argv[1];
   *colon='\0';
   port=(unsigned short)atoi(colon+1);
@@ -121,6 +131,8 @@ int main(int argc,char **argv){
      STATS reading that silently came from the leader instead of the port the caller named
      once looked exactly like three servers claiming leadership. */
   printf("TARGET|%s:%u\n",host,(unsigned)port);
+  printf("WORKLOAD|mode=%s keys=%s base_key=%s\n",unique?"unique":"single",
+         unique?"distinct":"one",key);
   if(k_sync_call(host,port,K_REQ_STATS,0,0,0,0,5000,&resp)!=0){ printf("stats call failed\n"); return 1; }
   printf("STATS_BEFORE|%.*s\n",(int)resp.body_size,(const char *)resp.body);
   k_response_data_free(&resp);

@@ -1,4 +1,7 @@
 #!/bin/bash
+# NOTE: this is a REPORT, not a gate.  It prints what it measured and exits 0 whatever the numbers say, and
+# nothing compares them: the only harness in ./build.sh's gate chain is soak_release.sh.  Read the numbers, not
+# the final "done" (review 4th round E5).
 # pipe_verify.sh -- pipelined load through the REAL client (kdbctl PIPE) + its verification gates:
 #   gate 1: PIPE SET  <K> <n> SET <prefix> <value>   -> ok == n        (accepted)
 #   gate 2: PIPE GET  <K> <n> GET <prefix>           -> ok == n, not_found == 0  (actually stored)

@@ -372,7 +372,12 @@ reg_gate(){ # reg_gate <name> <verdict-egrep> <cmd...>
     if [ "$rc" = 0 ] && [ -n "$got" ]; then
         reg_report "$name" ok "$got" "$t0"
     else
-        reg_report "$name" FAIL "rc=$rc${timed_out:+ [layer timeout ${limit}s]} verdict=${got:-<no verdict line>}" "$t0"
+        # Say a layer timed out ONLY when it did.  `${timed_out:+...}` expands whenever the variable is set,
+        # including to 0, so every FAIL line claimed "[layer timeout ...]" - the first thing the detector's own
+        # selftest caught once it ran the real function (review 4th round E5).
+        to_note=""
+        [ "$timed_out" = 1 ] && to_note=" [layer timeout ${limit}s]"
+        reg_report "$name" FAIL "rc=$rc${to_note} verdict=${got:-<no verdict line>}" "$t0"
         echo "  log: $log"; tail -12 "$log" | sed 's/^/  | /'
     fi
 }
@@ -420,6 +425,8 @@ do_regress(){
     reg_build
     # Principles first: cheap, and it catches a violation while the context is still fresh.
     reg_gate principles     '^PRINCIPLES\|OK' $PYTHON tools/check-principles.py
+    # The gate's own detector, tested by the gate: it fails a silent layer, a crashing layer and a hanging one.
+    reg_gate regress_selftest 'SELFTEST\|PASS' bash tools/harness/regress_selftest.sh
     reg_gate raft_test  'SUMMARY: [1-9][0-9]*/[0-9]+ passed' "$BUILD_DIR/raft_test.exe"
     reg_gate kserver_test   'SUMMARY: [1-9][0-9]*/[0-9]+ passed' "$BUILD_DIR/kserver_test.exe"
     reg_gate kclient_test   'SUMMARY: [1-9][0-9]*/[0-9]+ passed' "$BUILD_DIR/kclient_test.exe"
