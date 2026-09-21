@@ -2184,6 +2184,87 @@ static int drive_store(k_server *s,const char *base,k_u64 seg_size,k_u64 want_se
   return s->wal_meta.next.segment>want_segments?0:-4;
 }
 
+/* Rewrite the LAST complete record in a segment so it claims a different snapshot base, keeping the record
+   self-consistent (the payload's CRC is recomputed and stored back in the header), so the load has no reason to
+   call the record damaged and every reason to act on the base it names. */
+static int forge_last_record_base(const char *base,k_u64 seg,raft_i64 new_base){
+  char path[K_URI_MAX];
+  k_u8 header[K_WAL_HEADER_SIZE];
+  k_u8 *payload;
+  k_u32 payload_size,crc;
+  k_u64 off=0,last=0;
+  int have_last=0;
+  vfs_file *f;
+  if(k_path_wal_segment(path,base,seg)!=0) return -1;
+  f=vfs_open(path);
+  if(!f) return -2;
+  for(;;){
+    k_u64 next;
+    if(vfs_read(f,off,header,K_WAL_HEADER_SIZE)!=0) break;
+    if(k_read_u32(header)!=K_WAL_MAGIC||k_read_u32(header+4)!=K_WAL_VERSION) break;
+    payload_size=k_read_u32(header+16);
+    if(!payload_size||payload_size>K_STATE_MAX) break;
+    next=off+(k_u64)K_WAL_HEADER_SIZE+(k_u64)payload_size;
+    payload=(k_u8 *)K_MALLOC(payload_size);
+    if(!payload){ vfs_close(f); return -3; }
+    if(vfs_read(f,off+(k_u64)K_WAL_HEADER_SIZE,payload,payload_size)!=0){ K_FREE(payload); break; }
+    K_FREE(payload);
+    last=off; have_last=1;
+    off=next;
+  }
+  if(!have_last){ vfs_close(f); return -4; }
+  if(vfs_read(f,last,header,K_WAL_HEADER_SIZE)!=0){ vfs_close(f); return -5; }
+  payload_size=k_read_u32(header+16);
+  payload=(k_u8 *)K_MALLOC(payload_size);
+  if(!payload){ vfs_close(f); return -6; }
+  if(vfs_read(f,last+(k_u64)K_WAL_HEADER_SIZE,payload,payload_size)!=0){ K_FREE(payload); vfs_close(f); return -7; }
+  if(payload_size<24u){ K_FREE(payload); vfs_close(f); return -8; }
+  k_write_u64(payload+12,(k_u64)new_base);          /* the base lives at payload+12, per the loader */
+  k_crc32(payload,payload_size,&crc);
+  k_write_u32(header+20,crc);                       /* the CRC covers the payload and sits at header+20 */
+  if(vfs_write(f,last+(k_u64)K_WAL_HEADER_SIZE,payload,payload_size)!=0){ K_FREE(payload); vfs_close(f); return -9; }
+  if(vfs_write(f,last,header,K_WAL_HEADER_SIZE)!=0){ K_FREE(payload); vfs_close(f); return -10; }
+  K_FREE(payload);
+  vfs_close(f);
+  return 0;
+}
+
+/* A5: base 0 is not a verified snapshot.  The newest record claims a base whose snapshot file was never written,
+   so the load rolls back to the previous distinct base - and for a store that never snapshotted that is 0.  The
+   rollback must refuse rather than start from a state no snapshot ever certified. */
+static void test_wal_recovery_refuses_a_rollback_to_base_zero(void){
+  k_server s;
+  char base[64];
+  k_u8 frame[K_FRAME_HEADER+64];
+  char key[24];
+  k_u32 total;
+  raft_i64 bl;
+  int i,rc;
+  TEST_BEGIN("server WAL recovery refuses a rollback to base 0 (it never certified a state)");
+  sprintf(base,"mem://kstest-base0-%u",g_snapcase_seq++);
+  setup(&s,1,base);
+  if(k_server_open(&s)==0){
+    TEST_ASSERT(elect(&s)==0,"leader");
+    k_server_client_accepted(&s,(void*)(size_t)1);
+    for(i=0;i<3;i++){
+      sprintf(key,"b%d",i);
+      bl=s.last_applied;
+      total=make_client_frame(frame,sizeof(frame),K_REQ_SET,(k_u32)(i+1),key,(k_u32)strlen(key),"v",1);
+      TEST_ASSERT(total>0,"SET frame");
+      k_server_client_received(s.connections,frame,total);
+      apply_until(&s,bl+1);
+      for(bl=0;bl<3;bl++) turn(&s,20u);
+    }
+    k_server_release(&s);
+  }
+  TEST_ASSERT(forge_last_record_base(base,0,(raft_i64)7)==0,"the newest record now claims base 7");
+  setup(&s,1,base);
+  rc=k_server_open(&s);
+  if(rc==0) k_server_release(&s);
+  TEST_ASSERT(rc!=0,"a base with no snapshot file must not roll back to base 0 and start empty");
+  TEST_END();
+}
+
 /* A1's tail-scan branch with a snapshot base in play: the scan ceiling stops the walk before it ever reaches the
    segment holding the newest record, and what it must not do is come back having read nothing - a store that HAS
    a snapshot base and acknowledged records must recover THAT state, silently or otherwise. */
@@ -2235,7 +2316,7 @@ static void test_wal_recovery_keeps_a_snapshot_base_past_the_ceiling(void){
 
 int main(int argc,char **argv){
   if(argc>=3&&strcmp(argv[1],"--apply-stress")==0) return apply_stress(test_strtoull(argv[2]),argc>=4?test_strtoull(argv[3]):TEST_U64_C(4096),argc>=5&&strcmp(argv[4],"thread")==0,argc>=6&&strcmp(argv[5],"nosnap")==0);
-  TEST_PLAN(48);
+  TEST_PLAN(49);
   g_run_tag=0;
   if(k_monotonic_us(&g_run_tag)!=0) g_run_tag=(k_u64)time(0);
   test_fcall_gate_reopens_when_its_request_dies();
@@ -2285,6 +2366,7 @@ int main(int argc,char **argv){
   test_shutdown_stops_even_when_the_ack_cannot_be_sent();
   test_wal_recovery_continues_a_torn_tail_by_generation();
   test_wal_recovery_keeps_a_snapshot_base_past_the_ceiling();
+  test_wal_recovery_refuses_a_rollback_to_base_zero();
   test_mem_store_accepts_worker_threads();
   TEST_SUMMARY();
   return TEST_EXIT_CODE();

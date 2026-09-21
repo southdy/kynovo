@@ -46,7 +46,7 @@ and their `run-*` versions, `selftest`, `kdbsvr`, `kdbctl`, `bench*`, `cemon-ben
 |---|---|---|---|---|
 | L0 | compile gate | `./build.sh` | rc=0 and 0 warnings in `build.log` | ~90s |
 | L1a | raft unit | `./build/raft_test.exe` | `SUMMARY: 221/221 passed` | ~1s |
-| L1b | server unit (with stress mode) | `./build/kserver_test.exe` | `SUMMARY: 48/48 passed` | ~45s |
+| L1b | server unit (with stress mode) | `./build/kserver_test.exe` | `SUMMARY: 49/49 passed` | ~45s |
 | L1c | client unit | `./build/kclient_test.exe` | `SUMMARY: 19/19 passed` | ~0.1s |
 | L1d | cemon event-loop unit | `./build/cemon_test.exe` | `SUMMARY: 5/5 passed` | ~2s (includes a 2s long wait) |
 | L1e | end-to-end self-test (single process, with membership change/bootstrap/election) | `./build/selftest.exe` | `selftest: PASS` | ~1–3s |
@@ -348,7 +348,13 @@ the walk falls through to the pre-fix `break` makes the case fail (`rc==0` / `it
 were measured on the way and are worth keeping: opening a store loads its **persisted** configuration over
 whatever the caller set before `k_server_open` (a pre-open `cfg.snapshot_segments` read back as the default 10),
 and on the mem backend `vfs_open` CREATES an unlinked path, so an existence probe resurrects the very prefix it
-is checking.  This case has not been run on the guest yet; it is in the plan the next guest run will fetch.
+is checking.  This case has not been run on the guest yet; it is in the plan the next guest run will fetch.  A second case covers **A5** with a forged payload rather than a snapshot: `forge_last_record_base` rewrites the
+  last complete record of a segment so it claims a base whose snapshot file was never written, recomputing the
+  payload CRC it stores back, and `server WAL recovery refuses a rollback to base 0 (it never certified a state)`
+  requires the load to refuse instead of rolling back to base 0 and replaying from an empty tree.  Red proof:
+  removing the `prev_base>0` guard makes the store OPEN (48/49, at `rc!=0`) - which is exactly the silent
+  empty start that guard exists to stop.
+
 
 **Two guest runs were void, and why.**  The staging area has `code/` and `tests/` subdirectories because
 `kynovo_step.bat` fetches paths with a directory prefix (`GET code/kserver.h`).  A refresh that copies the

@@ -145,6 +145,8 @@ empty tree, silently whenever the retained entries happened to start at index 1)
 snapshot and no earlier base falls into the existing refuse branch - the honest answer.  No test covers this yet:
 constructing the case needs a store with a snapshot base, and this suite does not drive snapshots (the same gap
 recorded under A1's residual).
+**Case (added with the store-level harness).** `forge_last_record_base` rewrites the last complete record of a segment so it names a base whose snapshot file was never written (payload CRC recomputed and stored back), and `server WAL recovery refuses a rollback to base 0 (it never certified a state)` requires the load to refuse. Red proof: removing the `prev_base>0` guard makes the store OPEN (48/49, at `rc!=0`) - the silent empty start this guard exists to stop.
+
 
 ### A6 `[me]` **[FIXED]** MEDIUM: InstallSnapshot wrote its target in place, with no truncate and no end probe
 
