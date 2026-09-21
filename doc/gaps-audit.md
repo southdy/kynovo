@@ -1326,7 +1326,7 @@ of the fourth round with its terminal state.
 
 | area | findings | state |
 |------|----------|-------|
-| Recovery | **A1 CRITICAL - FIXED (`kserver.h` scan + `test_wal_recovery_refuses_a_prefix_past_the_scan_ceiling`)**; **A2/A3 REFUTED (reachable forms) - the misleading slot comment is rewritten and the property pinned by `test_wal_recovery_refuses_a_middle_segment_cut`**; **A5/A6 FIXED (`prev_base>0` guard; the install probes past its end and discards, after the fuzz refuted the delete-at-offset-0 version 5/5)**; **B4 FIXED with a red case (the suite segfaults at that case when the guard is neutered)**; open: A4 (no generation continuity after a torn tail) `[audit]`; A7 (forced-high base decodes the wrong record; the verify helper creates files) `[audit]`; and one residual that no test can reach yet - a store with a snapshot base needs a snapshot-driving harness before A1's tail-scan branch, A5's guard and the recovery side of A6 can be covered | **open** |
+| Recovery | **A1 CRITICAL - FIXED (`kserver.h` scan + `test_wal_recovery_refuses_a_prefix_past_the_scan_ceiling`)**; **A2/A3 REFUTED (reachable forms) - the misleading slot comment is rewritten and the property pinned by `test_wal_recovery_refuses_a_middle_segment_cut`**; **A5/A6 FIXED (`prev_base>0` guard; the install probes past its end and discards, after the fuzz refuted the delete-at-offset-0 version 5/5)**; **B4 FIXED with a red case (the suite segfaults at that case when the guard is neutered)**; **A4 FIXED** (a segment continuing a torn tail must still be newer, exactly `+1` after a payload tear and `>` after a header tear, and term/vote now merge by term so a term cannot regress - red case: the stale continuation is accepted when the rule is reverted); **A7 FIXED** (the forced-high base decodes the record that first carried it; the verify helper no longer creates the file it verifies - both unred-proofed, see the note below; `skipped_prefix` was already gone); and one residual that no test can reach yet - a store with a snapshot base needs a snapshot-driving harness before A1's tail-scan branch, A5's guard, the recovery side of A6 and A7's forced-high-base path can be covered | **open (residuum only)** |
 | Threads/lifetime | **B1 FIXED** (`wait_exit` reports whether every worker is gone; release closes only then); **B2 FIXED** (`thread_destroy` leaks instead of freeing when a thread outlived the join); B3 the event loop writes an inbound snapshot unlocked while the worker may write the same path `[audit]`; B4 rx buffer freed inline while the reader is inside it `[me]`; B5 a failed snapshot-result post wedges the stop path (OOM) `[audit]`; B6 mem open/unlink still read the table through `be` `[me]` | **open** |
 | Protocol/membership | **C1 FIXED** (the note now lives on the `k_request` that submitted the change, so it cannot be misdelivered, overwritten or left behind - the earlier claim that this had already been done was false); **C2 FIXED** (a note that would not fit ships empty and says so, instead of a cut sentence); **C3 FIXED (defensive - see the note below the table: no red proof, stated as such)**; **C4 FIXED** (`pending_since_ms` per entry from the server's internal clock, printed per entry); **C5 FIXED** (the counter is named `membership_targets_graduated` for what it counts, and the `STATS` label it was printed under was misspelled `..._gompleted` - fixed); **C6 FIXED** (TOPOLOGY is answered locally with INFO/STATS, sharing the single `raft_inspect` site, and no longer enters the barrier it is exempt from); **C7 REFUTED** (freeing a failed FCALL re-opens the gate and leadership loss drains the queue by design); **C8 FIXED** (both halves: SHUTDOWN stops regardless of its ack; a refused change's leftover pending entry is marked `source=-1` and reported instead of hidden) | **closed except A4/A7** |
 | Client/CLI | **D1 FIXED** (the opening wait is bounded and a failed command fails the script); **D2 FIXED** (a final redirect fails, a CAS conflict exits 2, OK/NOT_FOUND stay 0); **D3 FIXED** (the table is per mille now); **D4 FIXED** (a truncated or short run exits non-zero; the rate counts only redirect-excluded completions); D5 deadlines armed at queue time `[audit]`; D6 give-up paths drop requests and can leave `discovering` set `[audit]`; D7 6 s budget on local refusals, argv re-join splits args, connect never retried `[audit]`; D8 EXIT reports failure, no redirect bound, limit guard dead on 32-bit `[audit]` | **open** |
@@ -1334,6 +1334,34 @@ of the fourth round with its terminal state.
 | Docs | F1 the ledger's own §N claim about the ceiling is false (corrected above) `[me]`; F2 a list of wrong/stale references and counts `[audit]` | **F1 corrected; F2 open** |
 
 Fix order and the evidence each fix owes: section H of `doc/code-review-2026-09d.md`.
+
+### The A4/A7 batch: the round's last HIGH item, and the evidence it owes
+
+**A4 is a Raft safety fix, not a cleanliness one.**  After a torn tail the scan required no generation relation at
+all, so a stale, foreign or mis-ordered segment was accepted and treated as the newest state; and term/vote were
+assigned unconditionally from whichever record the walk reached last, so such a segment could hand back an **older
+term with that older term's vote** - a node that comes back believing an older term can grant a vote it already
+granted elsewhere or unseat a legitimate leader (Ongaro Sec. 5.1: `currentTerm` "must never decrease").  The rule is
+now split by where the segment was torn, because that is what decides how much can be known: a payload tear leaves
+the torn record's header intact, so the continuation is exactly `+1`; a header tear leaves even that record's own
+generation unknowable, so only `>` can be required.  `>` alone is not enough after a payload tear - it would still
+admit a segment from another history - and requiring nothing (what the code did) admits everything.
+
+**Evidence, and one trap worth recording.**  `test_wal_recovery_continues_a_torn_tail_by_generation` covers all four
+cases.  Its first version was **vacuous**: it wrote the continuation into segment 1 while the scan stops at the
+write position (`meta->next.segment`), so the walk never reached it and all four cases "passed" - including the
+two that must refuse.  The suite was green and measuring nothing.  The case now sets a tiny `wal_seg_size` so the
+store really rotates, reads the segment numbers instead of assuming them, and **asserts the rotation happened**
+before using it.  Red case for the continuity rule: with it reverted to the old behaviour the case fails on
+`header tear + 0`.  The term merge has no red case of its own - with the continuity rule in place a stale segment
+no longer reaches the decode, so it is defence in depth (labelled as such in the review document).
+
+**What stays unred-proofed, and why.**  A7's two fixed parts have no case.  The forced-high base needs a store with
+two bases plus the forced-high rollback, i.e. the store-level snapshot harness this round's residuum already waits
+on.  The verify helper's failure mode is only observable on a filesystem - and without a vfs existence probe,
+"absent" and "present but empty" are indistinguishable from inside the process, so every assertion the suite could
+make passes either way.  A first version of that case was written, found not to discriminate (it passed with the fix
+reverted) and **removed**: a test that cannot fail is worse than no test, because it is read as coverage.
 
 ### The C3-C8 batch: what the evidence is, and where it is missing
 

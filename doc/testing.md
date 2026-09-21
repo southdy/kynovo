@@ -46,7 +46,7 @@ and their `run-*` versions, `selftest`, `kdbsvr`, `kdbctl`, `bench*`, `cemon-ben
 |---|---|---|---|---|
 | L0 | compile gate | `./build.sh` | rc=0 and 0 warnings in `build.log` | ~90s |
 | L1a | raft unit | `./build/raft_test.exe` | `SUMMARY: 221/221 passed` | ~1s |
-| L1b | server unit (with stress mode) | `./build/kserver_test.exe` | `SUMMARY: 46/46 passed` | ~45s |
+| L1b | server unit (with stress mode) | `./build/kserver_test.exe` | `SUMMARY: 47/47 passed` | ~45s |
 | L1c | client unit | `./build/kclient_test.exe` | `SUMMARY: 19/19 passed` | ~0.1s |
 | L1d | cemon event-loop unit | `./build/cemon_test.exe` | `SUMMARY: 5/5 passed` | ~2s (includes a 2s long wait) |
 | L1e | end-to-end self-test (single process, with membership change/bootstrap/election) | `./build/selftest.exe` | `selftest: PASS` | ~1–3s |
@@ -311,10 +311,10 @@ against the repository before transfer:
 - unit suites at that guest run: `cemon_test 5/5`, `kclient_test 19/19`, `raft_test 221/221`,
   `kserver_test 41/41`, `vfs_fault_test 5/5` - the same counts the local gate reported at that time.  Every case the fourth
 
-  **The `kserver_test 41/41` counts above predate the C3-C8 batch.**  That batch added five cases (41 -> 46) and an
-  updated `doc/`; they have not run on the guest yet, so the guest's 41/41 covers C3-C8 exactly as much as it covers
-  the A1 case it was re-run for - i.e. only after the next `go.bat` refresh.  The same boundary, stated the same way,
-  is recorded for the A1 case above.  review round added passes verbatim on the guest:
+  **The `kserver_test 41/41` counts above predate the C3-C8 and A4 batches.**  Those added six cases
+  (41 -> 47) and updated `doc/`; they have not run on the guest yet, so the guest's 41/41 covers them exactly as
+  much as it covers the A1 case it was re-run for - i.e. only after the next `go.bat` refresh.  The same boundary,
+  stated the same way, is recorded for the A1 case above.  review round added passes verbatim on the guest:
   `PASS proto: a handler that frees the rx buffer cannot be parsed through in the same feed  38 us` (the case that
   segfaults inside `kclient_test` when its guard is removed),
   `PASS server InstallSnapshot replaces a stale longer file instead of keeping its tail  999 us`,

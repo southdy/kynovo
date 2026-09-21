@@ -2021,9 +2021,119 @@ static void test_shutdown_stops_even_when_the_ack_cannot_be_sent(void){
   TEST_END();
 }
 
+/* ---- fourth-round review A4 ----
+   A7's snapshot-verify fix (the helper no longer leaves behind the `.snap.<index>` that vfs_open creates) has no
+   case here on purpose: without a vfs existence probe, "absent" and "present and empty" are indistinguishable
+   from inside the process, so any assertion this suite could make would pass either way - a test that cannot
+   fail is worse than no test, and the fix is recorded as unred-proofed in doc/gaps-audit.md instead. */
+
+/* A4: after a torn tail the walk used to require NO generation relation at all, so a stale, foreign or
+   mis-ordered segment was accepted and treated as the newest state - and term/vote come from whichever record
+   the walk reaches last.  The relation the evidence supports depends on HOW the segment was torn: a payload tear
+   leaves the torn record's header (and its generation) complete, so the next record continues at exactly +1; a
+   header tear does not, so only "strictly newer" can be required.  A store torn after the last complete record
+   and continued in the next segment is exactly the shape a crash produces, and each of the four cases below is
+   decided by that rule. */
+static unsigned int g_walcont_seq;
+static int wal_continue_after_torn(const int payload_tear,const int gen_delta){
+  k_server s;
+  char base[64];
+  char path[K_URI_MAX];
+  k_u8 frame[K_FRAME_HEADER+64];
+  k_u8 header[K_WAL_HEADER_SIZE];
+  k_u8 *copy;
+  k_u32 total,rec_size;
+  vfs_file *seg;
+  k_u64 second,base_gen,seg0_end,seg0,seg1;
+  raft_i64 bl;
+  int i,rc;
+  sprintf(base,"mem://kstest-walcont-%u",g_walcont_seq++);
+  setup(&s,1,base);
+  if(k_server_open(&s)!=0||elect(&s)!=0) return -10;
+  /* A tiny segment size, so the second record really rotates into segment 1 - the walk only visits segments up
+     to the write position, and a "continuation" that the walk never reaches would make every case below pass for
+     the wrong reason.  The case asserts the rotation happened rather than assuming it. */
+  s.cfg.wal_seg_size=192u;
+  bl=s.last_applied;
+  k_server_client_accepted(&s,(void*)(size_t)1);
+  total=make_client_frame(frame,sizeof(frame),K_REQ_SET,1u,"k",1,"a",1);
+  if(!total) return -11;
+  k_server_client_received(s.connections,frame,total);
+  apply_until(&s,bl+1);
+  for(i=0;i<40;i++) turn(&s,20u);
+  bl=s.last_applied;
+  k_server_client_accepted(&s,(void*)(size_t)1);
+  /* Where the store stands after the first record - the segment number is whatever it is (the config record
+     itself may have rotated already), so it is read rather than assumed. */
+  seg0=s.wal_meta.next.segment;
+  seg0_end=s.wal_meta.next.offset;
+  if(!seg0_end) return -34;
+  total=make_client_frame(frame,sizeof(frame),K_REQ_SET,2u,"k",1,"b",1);
+  if(!total) return -12;
+  k_server_client_received(s.connections,frame,total);
+  apply_until(&s,bl+1);
+  for(i=0;i<40;i++) turn(&s,20u);
+  seg1=seg0+1u;
+  if(s.wal_meta.next.segment!=seg1) return -30;         /* the rotation is a precondition, not a hope */
+  /* the continuation: the record that segment 1 starts with (offset 0 of the segment it rotated into) */
+  if(k_path_wal_segment(path,base,seg1)!=0) return -13;
+  seg=vfs_open(path);
+  if(!seg) return -14;
+  if(vfs_read(seg,0u,header,sizeof(header))!=0){ vfs_close(seg); return -15; }
+  rec_size=(k_u32)K_WAL_HEADER_SIZE+k_read_u32(header+16);
+  copy=(k_u8 *)malloc((size_t)rec_size);
+  if(!copy){ vfs_close(seg); return -16; }
+  if(vfs_read(seg,0u,copy,rec_size)!=0){ free(copy); vfs_close(seg); return -17; }
+  base_gen=k_read_u64(copy+8)-1u;                       /* the generation segment 0's last complete record carried */
+  k_write_u64(copy+8,base_gen+(k_u64)gen_delta);        /* the CRC covers the payload, not the WAL header */
+  /* tear segment 0's tail: a payload tear leaves the header complete, a header tear does not */
+  vfs_close(seg);
+  if(k_path_wal_segment(path,base,seg0)!=0){ free(copy); return -31; }
+  seg=vfs_open(path);
+  if(!seg){ free(copy); return -18; }
+  second=seg0_end;
+  memset(header,0,sizeof(header));
+  k_write_u32(header,K_WAL_MAGIC);
+  k_write_u32(header+4,K_WAL_VERSION);
+  k_write_u64(header+8,base_gen+1u);
+  if(payload_tear){
+    /* a COMPLETE header whose payload was never written: the torn record's generation is known */
+    k_write_u32(header+16,rec_size-K_WAL_HEADER_SIZE);
+    k_write_u32(header+20,0u);
+    if(vfs_write(seg,second,header,sizeof(header))!=0){ free(copy); vfs_close(seg); return -19; }
+  }else{
+    /* LESS than a header: the tear is inside the header itself, so even the torn record's own generation is
+       unknowable - this is the case that may legitimately consume more than one generation. */
+    if(vfs_write(seg,second,header,(k_u32)(K_WAL_HEADER_SIZE/3))!=0){ free(copy); vfs_close(seg); return -19; }
+  }
+  vfs_close(seg);
+  if(k_path_wal_segment(path,base,seg1)!=0){ free(copy); return -20; }
+  seg=vfs_open(path);
+  if(!seg){ free(copy); return -21; }
+  if(vfs_write(seg,0u,copy,rec_size)!=0){ free(copy); vfs_close(seg); return -22; }
+  vfs_close(seg);
+  free(copy);
+  k_server_release(&s);
+  setup(&s,1,base);
+  rc=k_server_open(&s);                           /* 0 = recovered, non-zero = refused */
+  if(rc==0) k_server_release(&s);
+  return rc;
+}
+
+static void test_wal_recovery_continues_a_torn_tail_by_generation(void){
+  TEST_BEGIN("server WAL recovery judges a segment that continues a torn tail by generation");
+  /* torn in the PAYLOAD: the torn record's header is complete, so the next record continues at exactly +1 */
+  TEST_ASSERT_I64_EQ(wal_continue_after_torn(1,1),0,"payload tear + 1: the continuation is accepted");
+  TEST_ASSERT(wal_continue_after_torn(1,2)!=0,"payload tear + 2: a skipped generation is refused");
+  /* torn in the HEADER: one generation was certainly consumed, but a rewrite may have consumed more */
+  TEST_ASSERT(wal_continue_after_torn(0,2)==0,"header tear + 2: newer is accepted");
+  TEST_ASSERT(wal_continue_after_torn(0,0)!=0,"header tear + 0: a segment no newer than the tear is refused");
+  TEST_END();
+}
+
 int main(int argc,char **argv){
   if(argc>=3&&strcmp(argv[1],"--apply-stress")==0) return apply_stress(test_strtoull(argv[2]),argc>=4?test_strtoull(argv[3]):TEST_U64_C(4096),argc>=5&&strcmp(argv[4],"thread")==0,argc>=6&&strcmp(argv[5],"nosnap")==0);
-  TEST_PLAN(46);
+  TEST_PLAN(47);
   g_run_tag=0;
   if(k_monotonic_us(&g_run_tag)!=0) g_run_tag=(k_u64)time(0);
   test_fcall_gate_reopens_when_its_request_dies();
@@ -2071,6 +2181,7 @@ int main(int argc,char **argv){
   test_topology_names_a_refused_changes_leftover();
   test_topology_is_answered_locally();
   test_shutdown_stops_even_when_the_ack_cannot_be_sent();
+  test_wal_recovery_continues_a_torn_tail_by_generation();
   test_mem_store_accepts_worker_threads();
   TEST_SUMMARY();
   return TEST_EXIT_CODE();

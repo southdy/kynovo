@@ -97,11 +97,38 @@ the retained range is fail-stop therefore holds for the reachable forms, and it 
 `test_wal_recovery_refuses_a_middle_segment_cut` (39th case).  Deliberately labelled: that case is green before and
 after any fix - it is a regression guard for a property, not evidence for a change.
 
-### A4 `[audit]` HIGH: after a torn tail, cross-segment generation continuity is not enforced, and term/vote can regress
+### A4 **[FIXED]** HIGH: after a torn tail, cross-segment generation continuity is not enforced, and term/vote can regress
 
 `:1687` gates `:1712` `if(!have&&prev_seg_clean&&prev_seg_gen&&gen!=prev_seg_gen+1u){` on `prev_seg_clean`, so a
 segment following a torn tail is accepted with no relation to the previous generation; `:1757` adopts term/vote from
 the *last record read* (segment order), not the highest generation.
+
+**Outcome: fixed, with a red case.**  Two changes, because the two halves had different answers.
+
+*Continuity.*  A segment that merely follows a torn tail must still be **newer** than it, and how much more can be
+required depends on where the tear is - the thing the old code got wrong in both directions.  A tear in the
+PAYLOAD leaves the torn record's header (and therefore its generation) intact, so the next record continues at
+exactly `+1`; a tear in the HEADER does not - a record was started, so at least one generation was consumed, but a
+rewrite may have consumed more that is invisible now - so only `>` can be required there.  ">" alone is not enough
+after a payload tear either: it would still accept a segment from a different history.  The claim in the old
+comment, that a torn tail "may legitimately skip" and therefore justifies dropping the check entirely, is gone.
+
+*Term/vote.*  `k_state_decode_record` assigned `restore->persist.term` unconditionally, so whichever record the
+walk reached last won; a stale segment accepted after a torn tail could hand back an OLDER term with that older
+term's vote attached.  A node that comes back believing an older term can grant a vote it already granted
+elsewhere, or unseat a legitimate leader - which is why this is the round's HIGH item (Ongaro Sec. 5.1:
+`currentTerm` "must never decrease").  The merge is by term now, with `voted_for` taken from the very record the
+term came from; an equal term takes the later record's vote.
+
+*Evidence.*  `test_wal_recovery_continues_a_torn_tail_by_generation` builds a store that really rotates (tiny
+segment size), tears the last segment's tail, and continues in the next one: payload tear `+1` accepted, payload
+tear `+2` refused, header tear `+2` accepted, header tear `+0` refused - and it asserts the rotation happened
+rather than assuming it, because a continuation the walk never reaches would make every case pass for the wrong
+reason (the first version of this case did exactly that: it wrote segment 1 while the walk stopped at the write
+position, so all four cases were vacuous).  Red case: with the rule reverted to the old "no relation after a torn
+tail", the case fails on `header tear + 0` - the stale segment is accepted and its state taken as the newest.  The
+term merge itself has no red case of its own: with the continuity rule in place a stale segment no longer gets
+that far, so it is defence in depth, and it is labelled as such rather than claimed as covered.
 
 ### A5 `[me]` **[FIXED]** MEDIUM: base 0 was accepted as a "verified snapshot"
 
@@ -139,13 +166,31 @@ the file and returns an error.  Measured after that change: `kserver_test` 40/40
 `test_install_snapshot_discards_a_stale_longer_file` asserts the honest behaviour (refused and the old bytes gone)
 rather than a silent trim; with the guard neutered it fails.
 
-### A7 `[audit]` MEDIUM/LOW: the forced-high base decodes the wrong record (that fallback can never work); the verify helper creates the file it verifies; `skipped_prefix` is dead state
+### A7 **[FIXED; one part unred-proofed, one third moot]** MEDIUM/LOW: the forced-high base decodes the wrong record; the verify helper creates the file it verifies; `skipped_prefix` is dead state
 
 `:1802` `if(n_base<prev_base) n_base=prev_base;` but the decode at `:1822` uses `pick_base`'s segment/offset - the
 *newest* record, carrying the lower base - so `:1847` refuses: fail-stop where the comment promises a successful
 recovery.  `:1547` `file=vfs_open(path);` in the verify helper creates a missing `.snap.<index>`.  `:1592`
 `k_u64 skipped_prefix;` is incremented and never read.
 
+**Outcome.**
+
+- *The forced-high base.*  The metadata was decoded from `bseg/boff/bsize`, and `bseg` is overwritten by **every**
+  record, so it names the newest one - which, when a higher base is forced, carries the OLDER base and not the one
+  being decoded.  The decode then failed and recovery refused, exactly where the rollback message it had just
+  printed promised a successful recovery.  The first record that carried the base in use is now remembered
+  (`base_rec_*`) and decoded from; the older-base path (`vseg/voff/vsize`) was already correct.  No case: staging it
+  needs a store with two bases and a forced-high base on top, which is the store-level snapshot harness the
+  recovery residuum still waits on - recorded as unred-proofed, not as covered.
+- *The verify helper.*  `k_snapshot_verify_file` opened the path with `vfs_open`, which CREATES a missing file, so
+  asking whether `.snap.<index>` verifies left a zero-length file behind - a question that manufactured its own
+  answer.  It now probes one byte and unlinks what it would have created, the same rule the WAL scan applies to the
+  segments it probes.  **No case, deliberately**: without a vfs existence probe, "absent" and "present but empty"
+  are indistinguishable from inside the process, so any assertion this suite could make would pass either way - a
+  test that cannot fail is worse than no test.  A first version of the case was written, found not to discriminate
+  (it passed with the fix reverted), and removed.
+- *`skipped_prefix`.*  **Moot** - the variable no longer exists; it went with an earlier round's rewrite of the
+  scan.
 ## B. Threading and lifetime
 
 ### B1 `[me]` **[FIXED]** HIGH: `k_wal_files_close` is idempotent only sequentially, and the main thread calls it after a bounded wait
@@ -638,7 +683,8 @@ Every item in this round is closed one way or the other - fixed, or refuted with
 | C6 | fixed - TOPOLOGY is answered locally instead of through the barrier it is exempt from (red case: pre-fix it answers REDIRECT to itself) |
 | C7 | **refuted** - freeing a failed FCALL already re-opens the gate, and leadership loss drains the queue by design |
 | C8 | fixed - SHUTDOWN stops regardless of its ack; a refused change's leftover pending entry is marked and reported (red case: `pending_source[0]==-1`) |
-| A4, A7 | **open** - recorded in `doc/gaps-audit.md`, not silently dropped |
+| A4 | fixed - a segment continuing a torn tail must still be newer (exactly `+1` after a payload tear, `>` after a header tear), and term/vote merge by term so a term cannot regress (red case: the stale continuation is accepted with the rule reverted) |
+| A7 | fixed - the forced-high base decodes the record that first carried it; the verify helper no longer creates the file it verifies (unred-proofed, see the section); `skipped_prefix` was already gone |
 
 Evidence for the round as a whole: `REGRESS|full|pass=14 fail=0 duration=267s`, CI green on every push, and the XP
 guest run recorded in `doc/testing.md` section 7 (`cemon 5/5`, `kclient 19/19`, `raft 221/221`, `kserver 41/41`,

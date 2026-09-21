@@ -1511,8 +1511,19 @@ static int k_state_decode_record(k_restore *restore,k_u8 *payload,k_u32 payload_
   count=k_reader_u32(&reader);
   if(reader.err||count>2147483647u) goto fail;
   if(header_mode&K_RESTORE_HDR_TERMVOTE){
-    restore->persist.term=term;
-    restore->persist.voted_for=(int)voted_for;
+    /* A term never regresses (Ongaro Sec. 5.1: currentTerm "must never decrease").  This used to assign
+       unconditionally, so whichever record the walk reached last won - and a stale or foreign segment accepted
+       after a torn tail could hand back an OLDER term, with that older term's vote attached to it.  A node that
+       comes back believing an older term does not merely lose ground: it can grant a vote it already granted
+       elsewhere, or unseat a legitimate leader (fourth-round review A4).  Merging by term, and taking voted_for
+       from the very record the term came from, keeps the two consistent; an equal term takes the later record's
+       vote, which is what a rewrite of the same term means. */
+    if(term>restore->persist.term){
+      restore->persist.term=term;
+      restore->persist.voted_for=(int)voted_for;
+    }else if(term==restore->persist.term){
+      restore->persist.voted_for=(int)voted_for;
+    }
   }
   if(header_mode&K_RESTORE_HDR_BASE){
     k_mask_free(&restore->persist.snapshot_cfg_old);
@@ -1576,6 +1587,19 @@ static int k_snapshot_verify_file(const char *base,raft_i64 index){
   if(!base||k_path_snapshot(path,base,index)!=0) return 0;
   file=vfs_open(path);
   if(!file) return 0;
+  /* vfs_open CREATES the file when it is missing, so "it opened" cannot mean "the snapshot exists" - and the
+     old code took it to mean exactly that, leaving behind a zero-length `.snap.<index>` for every index it was
+     asked about (fourth-round review A7).  A one-byte probe tells the two apart; a file that holds no byte is
+     either one this call just created or an empty leftover, and neither is a snapshot this function may leave
+     behind, so it is unlinked - the same rule the WAL scan applies to the segments it probes. */
+  {
+    k_u8 probe_byte;
+    if(vfs_read(file,0,&probe_byte,1u)!=0){
+      vfs_close(file);
+      vfs_unlink(path);
+      return 0;
+    }
+  }
   k_crc32_init(&ctx);
   off=0;
   for(i=0;i<4u;i++) tail[i]=0;
@@ -1615,13 +1639,16 @@ static int k_wal_state_load(const char *base,k_restore *restore,k_wal_meta_state
   k_u32 payload_size,crc;
   k_u64 offset,gen,prev_gen,seg,last_seg;
   k_u64 prev_seg,prev_seg_gen;   /* cross-segment continuity (issue #15) */
-  int prev_seg_clean;
+  int prev_seg_gen_known;   /* was the PREVIOUS segment's last record's generation knowable? */
   int clean_end;
+  int header_torn,payload_torn;   /* how the current segment ended, if it did not end cleanly */
+  int base_changed;               /* the record just read carries a base different from the one before it */
   vfs_file *file;
   int meta_rc,have,pick_base,meta_absent;
   int jumped_to_tail;              /* the ceiling was reached once and the scan jumped to the tail (A1) */
   k_u64 n_gen,n_seg,n_off,n_size;
   k_u64 bseg,boff,bsize,vseg,voff,vsize;
+  k_u64 base_rec_seg,base_rec_off,base_rec_size;   /* the FIRST record carrying the base in use */
   raft_i64 n_base,prev_base,base_of_use;
   int records,kept,i;
   if(!base||!restore||!meta) return -1;
@@ -1657,8 +1684,9 @@ static int k_wal_state_load(const char *base,k_restore *restore,k_wal_meta_state
   n_gen=0; n_seg=0; n_off=0; n_size=0; n_base=0;
   bseg=0; boff=0; bsize=0;
   vseg=0; voff=0; vsize=0;
+  base_rec_seg=0; base_rec_off=0; base_rec_size=0;
   prev_base=0;
-  prev_seg=0; prev_seg_gen=0; prev_seg_clean=0;
+  prev_seg=0; prev_seg_gen=0; prev_seg_gen_known=0;
   jumped_to_tail=0;
   for(seg=0;seg<=last_seg||meta_absent;seg++){
     if(k_path_wal_segment(path,base,seg)!=0) return -1;
@@ -1713,6 +1741,9 @@ static int k_wal_state_load(const char *base,k_restore *restore,k_wal_meta_state
     have=0;
     prev_gen=0;
     clean_end=0;
+    header_torn=0;
+    payload_torn=0;
+    base_changed=0;
     for(;;){
       /* Cross-segment continuity (issue #15).  The generation counter is global and increases by one
          per record, so the first complete record of a segment must continue the last complete record of
@@ -1726,6 +1757,7 @@ static int k_wal_state_load(const char *base,k_restore *restore,k_wal_meta_state
         if(vfs_read(file,offset,&probe,1u)!=0){ clean_end=1; break; }   /* clean end: no byte at all */
         printf("wal: segment %" K_U64_FMT " ends with an incomplete tail at offset %" K_U64_FMT
                " (that record was never completed, so it was never acked)\n",seg,offset);
+        header_torn=1;
         break;
       }
       if(k_read_u32(header)!=K_WAL_MAGIC||k_read_u32(header+4)!=K_WAL_VERSION){
@@ -1745,13 +1777,26 @@ static int k_wal_state_load(const char *base,k_restore *restore,k_wal_meta_state
                seg,offset,(unsigned)payload_size,gen);
         vfs_close(file); return -1;
       }
-      if(!have&&prev_seg_clean&&prev_seg_gen&&gen!=prev_seg_gen+1u){
-        /* The previous segment ended at a record boundary, so the generations MUST continue here: a gap
-           means a segment is missing or foreign.  This used to ignore the segment and carry on, which is
-           how a hole in the middle of history went unnoticed (review D11). */
+      if(!have&&prev_seg_gen&&(gen<=prev_seg_gen||(prev_seg_gen_known&&gen!=prev_seg_gen+1u))){
+        /* Cross-segment continuity.  The generation counter is global and increases as records are written, so
+           the first complete record of a segment must continue the previous EXISTING segment's last one - and a
+           segment that merely follows a torn tail must still be NEWER than it, or a stale, foreign or mis-ordered
+           segment is accepted and then treated as the newest state (fourth-round review A4: this used to be
+           gated on "the previous segment ended cleanly", so after a torn tail no relation at all was required;
+           the highest
+           generation is what term and vote are taken from, so that also let a stale segment's term win).
+           The exact "+1" is required only when the previous segment's last generation is knowable: after a
+           clean end (a record boundary) or a payload tear (the torn record's header is complete, so its
+           generation was consumed and the next is exactly one more).  After a HEADER tear only "greater" can be
+           required - a record was started, but a rewrite may have consumed generations that are invisible now.
+           "> prev_seg_gen" alone is not enough there either: it would still accept a segment from a different
+           history whose generations happen to be higher.  This is the strongest relation the evidence supports;
+           the false claim that a torn tail justifies skipping the check is gone with it. */
         printf("wal: segment %" K_U64_FMT " starts at generation %" K_U64_FMT " but segment %" K_U64_FMT
-               " ended cleanly at %" K_U64_FMT " (missing or foreign segment): refusing to recover\n",
-               seg,gen,prev_seg,prev_seg_gen);
+               " ended at %" K_U64_FMT " (%s): refusing to recover\n",
+               seg,gen,prev_seg,prev_seg_gen,
+               prev_seg_gen_known?"it ended at a record boundary, so generations must continue"
+                                 :"it was torn mid-header, so this segment must still be newer");
         vfs_close(file); return -1;
       }
       if(have&&gen!=prev_gen+1u){
@@ -1765,6 +1810,7 @@ static int k_wal_state_load(const char *base,k_restore *restore,k_wal_meta_state
         K_FREE(payload);
         printf("wal: segment %" K_U64_FMT " ends with a torn payload at offset %" K_U64_FMT
                " (the record was never completed, so it was never acked)\n",seg,offset);
+        payload_torn=1;
         break;                                               /* short payload: torn tail, tolerated */
       }
       k_crc32(payload,payload_size,&crc);
@@ -1780,10 +1826,20 @@ static int k_wal_state_load(const char *base,k_restore *restore,k_wal_meta_state
       if(payload_size>=24u){
         memcpy(head,payload,24u);
         if(n_base!=(raft_i64)k_read_i64(head+12)){
+          base_changed=1;                                     /* this record carries the new base */
           prev_base=n_base;                                   /* previous distinct base */
           vseg=bseg; voff=boff; vsize=bsize;                   /* ... and where it was */
           n_base=(raft_i64)k_read_i64(head+12);
         }
+      }
+      if(base_changed){
+        /* The record that FIRST carried the base in use.  `bseg` below is overwritten by every record, so it
+           only ever names the NEWEST one - and when a higher base is forced, that newest record carries the
+           OLDER base instead of the one being decoded, so the decode refused a recovery the rollback message
+           promised had succeeded (fourth-round review A7). */
+        base_rec_seg=seg; base_rec_off=offset;
+        base_rec_size=(k_u64)K_WAL_HEADER_SIZE+(k_u64)payload_size;
+        base_changed=0;
       }
       bseg=seg;
       boff=offset;
@@ -1805,7 +1861,14 @@ static int k_wal_state_load(const char *base,k_restore *restore,k_wal_meta_state
       offset+=n_size;
     }
     vfs_close(file);
-    if(have){ prev_seg=seg; prev_seg_gen=prev_gen; prev_seg_clean=clean_end; }
+    if(have){
+      prev_seg=seg; prev_seg_gen=prev_gen;
+      /* How much can be said about the generation that follows?  A tear in the PAYLOAD leaves the torn record's
+         header (and therefore its generation) complete, so the next record's generation is known exactly; a tear
+         in the HEADER does not - a record was started, so at least one generation was consumed, but a rewrite may
+         have consumed more - so only "strictly greater" can be required there (fourth-round review A4). */
+      prev_seg_gen_known=(clean_end||payload_torn)&&!header_torn;
+    }
   }
   if(!records){
     /* No segment in the range the scan is allowed to touch holds a byte of record.  Two cases, and they must not
@@ -1878,7 +1941,8 @@ static int k_wal_state_load(const char *base,k_restore *restore,k_wal_meta_state
   /* Snapshot metadata (last included index/term, snapshot size, config masks) from the
      record that carries the base in use: one small read, not another full pass. */
   if(base_of_use>0){
-    k_u64 use_seg=pick_base?bseg:vseg,use_off=pick_base?boff:voff,use_size=pick_base?bsize:vsize;
+    k_u64 use_seg=pick_base?base_rec_seg:vseg,use_off=pick_base?base_rec_off:voff,
+          use_size=pick_base?base_rec_size:vsize;
     if(!use_size){
       if(k_snapshot_verify_file(base,base_of_use)!=1) return -1;
       printf("wal: no record carries base %" K_I64_FMT ": refusing to recover\n",(k_i64)base_of_use);
