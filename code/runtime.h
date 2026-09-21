@@ -20,7 +20,7 @@ RUNTIME_DEF int runtime_should_stop(runtime_ctx *rt);
 RUNTIME_DEF void runtime_worker_ready(runtime_ctx *rt);
 RUNTIME_DEF void runtime_wait_workers_ready(runtime_ctx *rt);
 RUNTIME_DEF void runtime_worker_exit(runtime_ctx *rt);
-RUNTIME_DEF void runtime_wait_workers_exit(runtime_ctx *rt);
+RUNTIME_DEF int runtime_wait_workers_exit(runtime_ctx *rt);
 RUNTIME_DEF int runtime_task_post(runtime_ctx *rt,runtime_fn fn,void *arg);
 RUNTIME_DEF int runtime_task_poll(runtime_ctx *rt,int timeout_ms,runtime_fn *fn,void **arg);
 RUNTIME_DEF int runtime_result_post(runtime_ctx *rt,runtime_fn fn,void *arg);
@@ -110,7 +110,7 @@ struct runtime_backend{
   void (*worker_ready)(runtime_ctx *rt);
   void (*worker_exit) (runtime_ctx *rt);
   void (*wait_ready)  (runtime_ctx *rt);
-  void (*wait_exit)   (runtime_ctx *rt);
+  int  (*wait_exit)   (runtime_ctx *rt);   /* 1 = every worker is gone; 0 = one outlived the wait */
   void (*drain)       (runtime_ctx *rt);   /* sync: run entry inline; thread: no-op */
   void (*destroy)     (runtime_ctx *rt);
 };
@@ -395,32 +395,40 @@ static void thread_worker_exit(runtime_ctx *rt){
   pthread_mutex_unlock(&t->task.lock);
 #endif
 }
-static void thread_wait_exit(runtime_ctx *rt){
+static int thread_wait_exit(runtime_ctx *rt){
   runtime_thread_ctx *t=(runtime_thread_ctx *)rt;
 #if defined(_WIN32)
-  if(WaitForSingleObject(t->exit_event,RUNTIME_WAIT_MS)!=WAIT_OBJECT_0){ fprintf(stderr,"warning: a worker did not exit within %u ms\n",(unsigned)RUNTIME_WAIT_MS); return; }
+  if(WaitForSingleObject(t->exit_event,RUNTIME_WAIT_MS)!=WAIT_OBJECT_0){ fprintf(stderr,"warning: a worker did not exit within %u ms\n",(unsigned)RUNTIME_WAIT_MS); return 0; }   /* callers must not free what a live worker uses */
 #else
   pthread_mutex_lock(&t->task.lock);
   while(t->exit_count<t->n_threads) pthread_cond_wait(&t->exit_cond,&t->task.lock);
   pthread_mutex_unlock(&t->task.lock);
 #endif
+  return 1;
 }
 static void thread_drain(runtime_ctx *rt){ (void)rt; }  /* a live thread pool has no synchronous turn */
 static void thread_destroy(runtime_ctx *rt){
   runtime_thread_ctx *t=(runtime_thread_ctx *)rt;
   thread_stop(rt);
   if(t->threads){
-    int i;
+    int i,joined=1;
     for(i=0;i<t->n_threads;i++){
 #if defined(_WIN32)
       if(t->threads[i]){
-        if(WaitForSingleObject(t->threads[i],RUNTIME_WAIT_MS)!=WAIT_OBJECT_0){ fprintf(stderr,"warning: worker thread %d did not join within %u ms\n",i,(unsigned)RUNTIME_WAIT_MS); break; }
+        if(WaitForSingleObject(t->threads[i],RUNTIME_WAIT_MS)!=WAIT_OBJECT_0){
+          fprintf(stderr,"warning: worker thread %d did not join within %u ms, its runtime and queues are left alone\n",i,(unsigned)RUNTIME_WAIT_MS);
+          joined=0;
+        }else CloseHandle(t->threads[i]);
         CloseHandle(t->threads[i]);
       }
 #else
       pthread_join(t->threads[i],0);
 #endif
     }
+    /* A worker that outlived the join may still touch the runtime, its queues and its thread array: leaking
+       the lot is the only safe option while that thread runs (fourth-round review B2 - the bound used to be
+       enforced per handle and the frees happened anyway). */
+    if(!joined) return;
     RUNTIME_FREE(t->threads);
   }
   queue_free(&t->task);
@@ -586,7 +594,7 @@ static int sync_should_stop(runtime_ctx *rt){ return rt->stop; }
 static void sync_worker_ready(runtime_ctx *rt){ (void)rt; }
 static void sync_worker_exit(runtime_ctx *rt){ (void)rt; }
 static void sync_wait_ready(runtime_ctx *rt){ (void)rt; }
-static void sync_wait_exit(runtime_ctx *rt){ (void)rt; }
+static int sync_wait_exit(runtime_ctx *rt){ (void)rt; return 1; }  /* nothing outlives a synchronous runtime */
 /* Run the worker entry inline over the current task batch: the entry drains the
    queue (task_poll returns -1 when empty) and posts results, all on the caller's
    thread: the deterministic counterpart of one background-worker turn. */
@@ -673,9 +681,9 @@ RUNTIME_DEF void runtime_wait_workers_ready(runtime_ctx *rt){
   if(!rt||!rt->be) return;
   rt->be->wait_ready(rt);
 }
-RUNTIME_DEF void runtime_wait_workers_exit(runtime_ctx *rt){
-  if(!rt||!rt->be) return;
-  rt->be->wait_exit(rt);
+RUNTIME_DEF int runtime_wait_workers_exit(runtime_ctx *rt){
+  if(!rt||!rt->be) return 1;
+  return rt->be->wait_exit(rt);
 }
 RUNTIME_DEF void runtime_drain(runtime_ctx *rt){
   if(!rt||!rt->be) return;

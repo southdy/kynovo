@@ -148,7 +148,7 @@ recovery.  `:1547` `file=vfs_open(path);` in the verify helper creates a missing
 
 ## B. Threading and lifetime
 
-### B1 `[me]` HIGH: `k_wal_files_close` is idempotent only sequentially, and the main thread calls it after a bounded wait
+### B1 `[me]` **[FIXED]** HIGH: `k_wal_files_close` is idempotent only sequentially, and the main thread calls it after a bounded wait
 
 `code/kserver.h:1959-1961` `if(worker->seg_file){ vfs_close(worker->seg_file); worker->seg_file=0;`
 `code/kserver.h:5257-5260` `/* … k_wal_files_close is idempotent, so this is safe for both. */` then
@@ -156,10 +156,22 @@ recovery.  `:1547` `file=vfs_open(path);` in the verify helper creates a missing
 worker did not exit within `RUNTIME_WAIT_MS` (30 s).  Two concurrent callers both see a non-NULL handle: double
 `vfs_close` → double `VFS_FREE` and a double `--n->refcount`.  "Idempotent" is the unproven premise.
 
-### B2 `[audit]` HIGH: `thread_destroy` frees the runtime even when a thread did not join
+**Fix.** `wait_exit` now reports whether every worker is gone (the vtable, both backends and `runtime_wait_workers_exit`
+return it; the sync backend answers 1 by construction), and release closes the WAL handles only when it did.  A worker
+that outlived the 30 s wait leaves the handles alone and says so - a leaked handle while the node is going down beats
+a double close.  Defensive fix, honestly labelled: the suite has no way to make a worker outlive that wait, so there
+is no red case for it; the evidence is the code path plus the gates.
+
+### B2 `[audit]` **[FIXED]** HIGH: `thread_destroy` frees the runtime even when a thread did not join
 
 `code/runtime.h:417` warn-and-break, then `:426-429` queue free and `:437` `RUNTIME_FREE(t)`, while the straggler
 keeps using `rt`.  Same 30 s-timeout class as B1.
+
+**Fix.** `thread_destroy` tracks the joins; on a join timeout it no longer closes that handle nor breaks out of the
+loop, and if any worker is still alive it returns before freeing the runtime, its queues and its thread array - the
+only safe option while that thread can still touch them.  `wait_exit`'s new return value (above) carries the same
+information to the caller.  Defensive fix, same labelling as B1: the join bound exists on the Windows path (POSIX
+joins are unbounded), and no suite can drive a straggler.
 
 ### B3 `[audit]` HIGH: the event loop writes an inbound snapshot while the snapshot worker may write the same path
 
@@ -169,7 +181,7 @@ is guarded (`:4770` `!server->snapshot_inflight`), the write path is not.  A col
 coincide (deterministic policies on two nodes make it plausible - **[audit] ASSUMED**).  The mem backend's premise
 is per-*handle*, so two handles to one inode from two threads is outside it.
 
-### B4 `[me]` HIGH (latent): the rx buffer is freed inline while the frame reader is inside it
+### B4 `[me]` **[FIXED]** HIGH (latent): the rx buffer is freed inline while the frame reader is inside it
 
 `code/kserver.h:2383-2386` `if(!conn->close_pending){ conn->close_pending=1; k_rx_free(&conn->rx);` with the
 comment `/* the reader is done with this buffer before any reap */` - false at that moment: cemon calls
@@ -177,6 +189,13 @@ comment `/* the reader is done with this buffer before any reap */` - false at t
 (`kproto.h:212-215`: the handler returns, then `rx->len>total ? memmove : …; rx->len-=total;`).  `k_rx_free`
 memsets the struct, so `rx->len` underflows and the next turn reads `rx->data==0`.  Safe today only because every
 in-handler close happens to propagate a nonzero return; nothing states or checks that.
+
+**Fix, with a red case.** `k_rx_feed` now checks, after every handler call, that the buffer is still the one it was
+parsing (`rx->data!=0 && rx->len>=total`) and stops otherwise, instead of subtracting from a length a handler may
+just have zeroed.  `test_rx_feed_stops_when_the_handler_frees_the_buffer` (kclient_test, now 19 cases) drives it
+directly with a handler that frees the buffer and returns 0 - the shape that used to depend on no handler ever doing
+this.  Measured: with the guard replaced by `/* NEUTERED */` the suite **segfaults (rc=139)** inside that very case,
+with the guard restored it passes and the build is warning-free.
 
 ### B5 `[audit]` MEDIUM (OOM only): a failed snapshot-result post wedges the stop path
 

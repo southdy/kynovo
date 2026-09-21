@@ -443,9 +443,42 @@ static void test_pipeline_keeps_k_in_flight(void){
   TEST_END();
 }
 
+/* A frame handler may close the connection - and k_conn_closed frees the rx buffer in place.  The feed loop
+   used to subtract the frame size from a length that free had just zeroed, which wraps, and the next turn then
+   read through a NULL data pointer; it was only saved by every closing handler happening to return non-zero.
+   This drives that case directly, with a handler that frees the buffer and reports success. */
+static int rx_free_frame(void *ud,k_u8 type,const k_u8 *payload,k_u32 size){
+  k_rx *rx=(k_rx *)ud;
+  (void)type; (void)payload; (void)size;
+  k_rx_free(rx);
+  return 0;
+}
+static void test_rx_feed_stops_when_the_handler_frees_the_buffer(void){
+  k_rx rx;
+  k_u8 buf[2u*K_FRAME_HEADER];
+  TEST_BEGIN("proto: a handler that frees the rx buffer cannot be parsed through in the same feed");
+  memset(&rx,0,sizeof(rx));
+  memset(buf,0,sizeof(buf));
+  k_write_u32(buf,K_CLIENT_MAGIC);
+  buf[4]=1u;
+  buf[5]=(k_u8)K_WIRE_VERSION;
+  k_write_u16(buf+6,0u);
+  k_write_u32(buf+8,0u);
+  k_write_u32(buf+K_FRAME_HEADER,K_CLIENT_MAGIC);
+  buf[K_FRAME_HEADER+4]=1u;
+  buf[K_FRAME_HEADER+5]=(k_u8)K_WIRE_VERSION;
+  k_write_u16(buf+K_FRAME_HEADER+6,0u);
+  k_write_u32(buf+K_FRAME_HEADER+8,0u);
+  TEST_ASSERT(k_rx_feed(&rx,K_CLIENT_MAGIC,buf,(k_u32)sizeof(buf),rx_free_frame,&rx)!=0,
+              "the feed reports failure instead of parsing a buffer the handler released");
+  k_rx_free(&rx);
+  TEST_END();
+}
+
 int main(void){
-  TEST_PLAN(18);
+  TEST_PLAN(19);
   test_shutdown_body_printed();
+  test_rx_feed_stops_when_the_handler_frees_the_buffer();
   test_member_body_printed();
   test_queue_before_connect_is_sent_after();
   test_seed_parse_basic();

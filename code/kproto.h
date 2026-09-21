@@ -210,6 +210,11 @@ static int k_rx_feed(k_rx *rx,k_u32 magic,const void *data,k_u32 size,k_frame_fn
     total=K_FRAME_HEADER+payload_size;
     if(rx->len<total) break;
     if(fn(ud,type,rx->data+K_FRAME_HEADER,payload_size)!=0) return -1;
+    /* The handler may have closed the connection, which frees this very buffer (k_conn_closed ->
+       k_rx_free zeroes data and len).  Without this check len -= total wraps and the next turn reads
+       through a NULL data pointer; today that is only avoided because every closing handler happens to
+       return non-zero (fourth-round review B4).  Bail out instead of relying on that. */
+    if(rx->data==0||rx->len<total) return -1;
     if(rx->len>total) memmove(rx->data,rx->data+total,rx->len-total);
     rx->len-=total;
   }

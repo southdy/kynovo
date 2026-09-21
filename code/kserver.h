@@ -5310,11 +5310,13 @@ static void k_server_release(k_server *server){
   server->releasing=1;   /* requested shutdown: freeing still-submitted requests here is expected */
   if(server->wal_rt){
     runtime_stop(server->wal_rt);
-    runtime_wait_workers_exit(server->wal_rt);
-    /* The thread backend closes the held WAL handles from the worker entry on stop;
-       the deterministic "sync" backend never re-enters the entry, so release owns the
-       close as well.  k_wal_files_close is idempotent, so this is safe for both. */
-    k_wal_files_close(&server->wal_worker);
+    /* The thread backend closes the held WAL handles from the worker entry on stop; the deterministic "sync"
+       backend never re-enters the entry, so release owns the close as well.  Closing twice is only safe while
+       nothing else is running: a worker that outlived the wait can reopen or drop those handles at any moment,
+       so in that case they are left alone - a leaked handle while the node is going down beats a double close
+       of the same file (fourth-round review B1: the old comment claimed idempotence unconditionally). */
+    if(runtime_wait_workers_exit(server->wal_rt)) k_wal_files_close(&server->wal_worker);
+    else fprintf(stderr,"warning: the WAL worker outlived its wait, leaving the WAL handles alone\n");
     k_wal_runtime_drain(server->wal_rt);
     runtime_destroy(server->wal_rt);
     server->wal_rt=0;
