@@ -1814,9 +1814,216 @@ static void test_membership_note_is_bound_to_its_request(void){
   TEST_END();
 }
 
+/* ---- fourth-round review C3/C4/C6/C8 ---- */
+
+/* C3: a REFUSED change cleared the whole wait clock, so a change still pending (layering is explicitly
+   supported) had its reported age reset to 0 and its reminder budget re-armed.  The guard is defensive: the one
+   refusal shape this harness can stage is the address-log submit failing before the reconfig is even attempted
+   (a stale leadership view), so the clock is untouched there by construction and no red proof was obtained -
+   recorded as such in doc/code-review-2026-09d.md rather than dressed up as a covered fix.  What the case DOES
+   pin is that this refusal answers an error and leaves the running wait's clock and notice budget alone. */
+static void test_membership_refusal_keeps_a_live_wait_clock(void){
+  k_server s;
+  k_cluster c;
+  k_conn *conn;
+  k_response_data resp;
+  int ids[1];
+  int i;
+  TEST_BEGIN("membership: a refused change answers an error and leaves a running wait's clock alone");
+  memset(&s,0,sizeof(s)); memset(&c,0,sizeof(c));
+  c.count=1;   /* one voter, so a single node can elect itself; node 2 goes into the ADDRESS BOOK below */
+  c.nodes[0].id=1; c.nodes[0].client_port=7200; c.nodes[0].peer_port=7201; strcpy(c.nodes[0].host,"127.0.0.1");
+  k_server_init(&s,1,7200,7201,"mem://kstest-crefuse-1",&c);
+  s.runtime_backend="sync";
+  s.transport=&cap_transport;
+  s.admission=1;
+  cap_reset();
+  TEST_ASSERT(k_server_open(&s)==0,"open");
+  TEST_ASSERT(elect(&s)==0,"leader");
+  k_server_client_accepted(&s,(void*)(size_t)1);
+  conn=s.connections;
+  TEST_ASSERT(conn!=0,"a client connection");
+  /* The second node is pre-listed in the address book (the white list every target id must be in) but is not a
+     voter yet: exactly what a catch-up target is.  Injected after the election, because a second voter would need
+     a second vote. */
+  s.cluster.count=2;
+  s.cluster.nodes[1].id=2; s.cluster.nodes[1].client_port=7202; s.cluster.nodes[1].peer_port=7203;
+  strcpy(s.cluster.nodes[1].host,"127.0.0.1");
+  /* A wait THIS node is running, as it stands once a change of its own has targets catching up. */
+  s.pending[0]=2; s.pending_source[0]=1; s.pending_since_ms[0]=s.elapsed_total_ms; s.pending_count=1;
+  for(i=0;i<20;i++) turn(&s,1000u);
+  TEST_ASSERT_I64_EQ((raft_i64)s.membership_pending_ms,20000,"20s of the wait accumulated");
+  /* Make the FIRST submit be the refused one.  Stepping Raft down and then leaving the app's own cached
+     is_leader at 1 is exactly the stale-view case the audited clear was reachable from: the app lets the change
+     through, Raft refuses it. */
+  raft_step_down(s.raft,s.raft->current_term+1,2);
+  s.is_leader=1;
+  ids[0]=2;
+  gcap.send_count=0;
+  k_server_submit_member(&s,conn,20,K_MEMBER_ADD,ids,1);
+  for(i=0;i<100&&gcap.send_count==0;i++) turn(&s,50u);
+  TEST_ASSERT(gcap.send_count>=1,"the change was answered");
+  TEST_ASSERT(k_response_decode(&resp,gcap.last_payload,gcap.last_size)==0,"its ack decodes");
+  TEST_ASSERT_I64_EQ(resp.status,K_STATUS_ERROR,"Raft really refused it");
+  k_response_data_free(&resp);
+  /* One more second AFTER the refusal: had the refusal cleared the clock (the bug), the wait would read 1000
+     here - the seconds before it are gone - instead of continuing from 20000. */
+  turn(&s,1000u);
+  TEST_ASSERT_I64_EQ((raft_i64)s.membership_pending_ms,21000,"the still-running wait kept its clock");
+  TEST_ASSERT(s.membership_notice_count>0,"and its reminder budget was not re-armed from zero");
+  TEST_ASSERT(s.pending_count>=1,"the refused change added no target of its own");
+  k_server_release(&s);
+  TEST_END();
+}
+
+/* C4: age_ms was one server-wide accumulator printed on every pending entry, so a young entry could be reported
+   with an old entry's age. */
+static void test_topology_reports_per_entry_ages(void){
+  k_server s;
+  k_cluster c;
+  k_buf body;
+  TEST_BEGIN("TOPOLOGY: each pending entry carries its own age, not one server-wide accumulator");
+  memset(&s,0,sizeof(s)); memset(&c,0,sizeof(c));
+  c.count=3;
+  c.nodes[0].id=1; c.nodes[0].client_port=7300; c.nodes[0].peer_port=7301; strcpy(c.nodes[0].host,"127.0.0.1");
+  c.nodes[1].id=2; c.nodes[1].client_port=7302; c.nodes[1].peer_port=7303; strcpy(c.nodes[1].host,"127.0.0.1");
+  c.nodes[2].id=3; c.nodes[2].client_port=7304; c.nodes[2].peer_port=7305; strcpy(c.nodes[2].host,"127.0.0.1");
+  k_server_init(&s,1,7300,7301,"mem://kstest-cage-1",&c);
+  s.runtime_backend="sync";
+  s.voters[0]=1; s.voter_count=1;
+  s.pending[0]=2; s.pending_source[0]=1; s.pending_since_ms[0]=s.elapsed_total_ms; s.pending_count=1;
+  turn(&s,10000u);
+  s.pending[1]=3; s.pending_source[1]=1; s.pending_since_ms[1]=s.elapsed_total_ms; s.pending_count=2;
+  turn(&s,5000u);
+  memset(&body,0,sizeof(body));
+  TEST_ASSERT(k_server_topology_build(&s,&body)==0,"topology builds");
+  TEST_ASSERT(strstr((const char *)body.data,"2@127.0.0.1:7302:7303 role=pending age_ms=15000")!=0,
+              "the first entry reports its own 15s");
+  TEST_ASSERT(strstr((const char *)body.data,"3@127.0.0.1:7304:7305 role=pending age_ms=5000")!=0,
+              "the second reports its own 5s, not the server-wide 15s");
+  k_buf_free(&body);
+  k_server_release(&s);
+  TEST_END();
+}
+
+/* C8 (first half): the ADDR of a refused change still applies later, re-adding its target as a pending entry
+   with source 0 - hidden from every report - while the peer topology keeps dialing it.  It is marked now. */
+static void test_topology_names_a_refused_changes_leftover(void){
+  k_server s;
+  k_cluster c;
+  k_buf body;
+  int i;
+  int tmp_ids[1];
+  TEST_BEGIN("TOPOLOGY: a refused change's leftover pending entry says where it came from");
+  memset(&s,0,sizeof(s)); memset(&c,0,sizeof(c));
+  c.count=1;
+  c.nodes[0].id=1; c.nodes[0].client_port=7400; c.nodes[0].peer_port=7401; strcpy(c.nodes[0].host,"127.0.0.1");
+  k_server_init(&s,1,7400,7401,"mem://kstest-cleft-1",&c);
+  s.runtime_backend="sync";
+  s.transport=&cap_transport;
+  s.voters[0]=1; s.voter_count=1;
+  s.refused_ids[0]=2; s.refused_count=1;                       /* a change this node submitted was refused */
+  TEST_ASSERT(k_server_refused_contains(&s,2)==1,"the refusal is remembered");
+  /* The ADDR for that target was submitted BEFORE the refused reconfig (followers need the address first), so it
+     still applies.  Drive the real apply path and check the marking there, not just the label: */
+  TEST_ASSERT(k_server_open(&s)==0,"open");
+  TEST_ASSERT(elect(&s)==0,"leader");
+  /* Pre-listed in the address book only AFTER the election: a second voter would need a second vote. */
+  s.cluster.count=2;
+  s.cluster.nodes[1].id=2; s.cluster.nodes[1].client_port=7402; s.cluster.nodes[1].peer_port=7403;
+  strcpy(s.cluster.nodes[1].host,"127.0.0.1");
+  tmp_ids[0]=2;
+  TEST_ASSERT(k_server_submit_addr(&s,tmp_ids,1)==0,"the leftover ADDR still submits");
+  for(i=0;i<20&&s.pending_count==0;i++) turn(&s,1000u);
+  TEST_ASSERT(s.pending_count==1,"the ADDR apply added the target");
+  TEST_ASSERT_I64_EQ((raft_i64)s.pending_source[0],-1,"and marked it as a refused change's leftover");
+  s.pending_since_ms[0]=s.elapsed_total_ms;
+  memset(&body,0,sizeof(body));
+  TEST_ASSERT(k_server_topology_build(&s,&body)==0,"topology builds");
+  TEST_ASSERT(strstr((const char *)body.data,"left over from a refused change")!=0,
+              "the leftover is REPORTED with its provenance instead of being invisible");
+  k_buf_free(&body);
+  TEST_ASSERT(k_server_membership_own_pending(&s)==0,"and it is not counted as this node's own wait");
+  k_server_release(&s);
+  TEST_END();
+}
+
+/* C6: TOPOLOGY is exempt from the admission gate like INFO/STATS/HELP, but it was served through the read
+   barrier: refused there with leader_id still naming this node, it answered REDIRECT to the client's own
+   endpoint - a redirect ring - while MEMBERS on the identical path gets a hard "server stopping". */
+static void test_topology_is_answered_locally(void){
+  k_server s;
+  k_cluster c;
+  k_u8 frame[K_FRAME_HEADER+16];
+  k_u32 total;
+  k_response_data resp;
+  int i;
+  TEST_BEGIN("TOPOLOGY is answered locally, even when a request through the barrier would be refused");
+  memset(&s,0,sizeof(s)); memset(&c,0,sizeof(c));
+  c.count=1;
+  c.nodes[0].id=1; c.nodes[0].client_port=7500; c.nodes[0].peer_port=7501; strcpy(c.nodes[0].host,"127.0.0.1");
+  k_server_init(&s,1,7500,7501,"mem://kstest-ctopo-1",&c);
+  s.runtime_backend="sync";
+  s.transport=&cap_transport;
+  s.admission=1;
+  cap_reset();
+  TEST_ASSERT(k_server_open(&s)==0,"open");
+  TEST_ASSERT(elect(&s)==0,"leader");
+  k_server_client_accepted(&s,(void*)(size_t)1);
+  /* A stopping server refuses reads through the barrier - the state SHUTDOWN puts it in.  TOPOLOGY is exempt
+     from admission, so unlike MEMBERS it still reaches the handler, and before the fix it went on to the barrier
+     and came back as a REDIRECT naming this very node. */
+  s.stopping=1;
+  s.admission=0;
+  TEST_ASSERT(s.is_leader,"still the leader, so the refused request would have been redirected to itself");
+  gcap.send_count=0;
+  total=make_client_frame(frame,sizeof(frame),K_REQ_TOPOLOGY,31u,0,0,0,0);
+  TEST_ASSERT(total>0,"TOPOLOGY frame");
+  k_server_client_received(s.connections,frame,total);
+  for(i=0;i<100&&gcap.send_count==0;i++) turn(&s,50u);
+  TEST_ASSERT(gcap.send_count>=1,"answered");
+  TEST_ASSERT(k_response_decode(&resp,gcap.last_payload,gcap.last_size)==0,"the answer decodes");
+  TEST_ASSERT_I64_EQ(resp.status,K_STATUS_OK,"answered locally with OK, not a REDIRECT to itself");
+  TEST_ASSERT(resp.body_size>0&&strstr((const char *)resp.body,"role=")!=0,"and it carries the topology");
+  k_response_data_free(&resp);
+  k_server_release(&s);
+  TEST_END();
+}
+
+/* C8 (second half): SHUTDOWN answered first and stopped only if that answer was sent, so a dropped connection
+   turned it into a request that answered nothing AND shut nothing down. */
+static void test_shutdown_stops_even_when_the_ack_cannot_be_sent(void){
+  k_server s;
+  k_cluster c;
+  k_u8 frame[K_FRAME_HEADER+16];
+  k_u32 total;
+  TEST_BEGIN("SHUTDOWN stops the server even when the ack cannot be sent");
+  memset(&s,0,sizeof(s)); memset(&c,0,sizeof(c));
+  c.count=1;
+  c.nodes[0].id=1; c.nodes[0].client_port=7600; c.nodes[0].peer_port=7601; strcpy(c.nodes[0].host,"127.0.0.1");
+  k_server_init(&s,1,7600,7601,"mem://kstest-cstop-1",&c);
+  s.runtime_backend="sync";
+  s.transport=&cap_transport;
+  s.admission=1;
+  cap_reset();
+  TEST_ASSERT(k_server_open(&s)==0,"open");
+  TEST_ASSERT(elect(&s)==0,"leader");
+  k_server_client_accepted(&s,(void*)(size_t)1);
+  gcap.fail_send=1;                                  /* the connection is gone: the ack cannot go out */
+  total=make_client_frame(frame,sizeof(frame),K_REQ_SHUTDOWN,41u,0,0,0,0);
+  TEST_ASSERT(total>0,"SHUTDOWN frame");
+  k_server_client_received(s.connections,frame,total);
+  turn(&s,50u);
+  TEST_ASSERT(s.stopping,"the operator's intent was carried out anyway");
+  gcap.fail_send=0;
+  TEST_ASSERT(gcap.send_count==0,"and nothing was answered (the send really did fail)");
+  k_server_release(&s);
+  TEST_END();
+}
+
 int main(int argc,char **argv){
   if(argc>=3&&strcmp(argv[1],"--apply-stress")==0) return apply_stress(test_strtoull(argv[2]),argc>=4?test_strtoull(argv[3]):TEST_U64_C(4096),argc>=5&&strcmp(argv[4],"thread")==0,argc>=6&&strcmp(argv[5],"nosnap")==0);
-  TEST_PLAN(41);
+  TEST_PLAN(46);
   g_run_tag=0;
   if(k_monotonic_us(&g_run_tag)!=0) g_run_tag=(k_u64)time(0);
   test_fcall_gate_reopens_when_its_request_dies();
@@ -1859,6 +2066,11 @@ int main(int argc,char **argv){
   test_rx_buffer_admission_accounting();
   test_membership_wait_reporting();
   test_membership_note_is_bound_to_its_request();
+  test_membership_refusal_keeps_a_live_wait_clock();
+  test_topology_reports_per_entry_ages();
+  test_topology_names_a_refused_changes_leftover();
+  test_topology_is_answered_locally();
+  test_shutdown_stops_even_when_the_ack_cannot_be_sent();
   test_mem_store_accepts_worker_threads();
   TEST_SUMMARY();
   return TEST_EXIT_CODE();

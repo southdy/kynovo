@@ -243,43 +243,87 @@ asserts the note fits and that the stored length excludes the terminator; it exe
 ("submitted by auto-replace", 26 bytes) but with a short node id and a 4-digit age, so the absolute worst case
 (11-digit id + 20-digit age) is bounded by the arithmetic in the comment rather than measured.
 
-### C3 `[audit]` MEDIUM-HIGH: a refused change resets the *whole* wait clock
+### C3 **[FIXED]** MEDIUM-HIGH: a refused change resets the *whole* wait clock
 
 `:3398-3404` `pending_before=server->pending_count;` … `server->membership_pending_ms=0;`
 `server->membership_pending_notice_ms=0; server->membership_notice_count=0;` - unconditional, while a second own
 pending entry may be alive (layering is explicitly supported).  After 20 s waiting on change A, a refused change B
 resets A's reported age to 0 and re-arms the notice budget.  The count rollback itself is correct.
 
-### C4 `[audit]` MEDIUM: `age_ms` is one server-global accumulator reported per entry, and `pending[]` is a bag
+**Outcome: fixed, defensive, no red proof - and that is recorded, not hidden.**  The three resets are now guarded
+by `k_server_membership_own_pending(server)==0`: only a refusal that leaves no wait of this node's own standing may
+clear the clock.  The red proof could not be obtained because the only refusal shape the unit harness can stage is
+the *address-log* submit failing before the reconfig is even attempted (a stale leadership view), where the clock is
+untouched by construction; the reconfig refusal itself needs a real in-flight change, and the harness cannot keep a
+catch-up target from graduating into the desired config.  The new case therefore pins what it can: the refusal
+answers an error and leaves the running wait's clock and notice budget alone.  With the guard removed the case still
+passes - stated here so nobody reads it as a covered fix.
+
+### C4 **[FIXED]** MEDIUM: `age_ms` is one server-global accumulator reported per entry, and `pending[]` is a bag
 
 `:3065-3067` prints `server->membership_pending_ms` for every entry; the array is swapped-with-last on removal
 (`:1330-1332`), so a young entry can be reported with an old entry's age.  The unit test pins the accumulator
 semantics, so this is report-vs-behaviour, not a test gap.
 
-### C5 `[audit]` MEDIUM: `membership_change_started`/`_completed` do not count the same thing
+**Outcome: fixed, with a red case.**  Each pending entry carries `pending_since_ms`, stamped from the server's
+internal clock (`elapsed_total_ms`, the only clock a pure function may use), and TOPOLOGY prints that entry's own
+age.  `membership_pending_ms` stays what it is - the server-level *wait* clock that drives the notices - so the two
+quantities now have two names and two meanings instead of one being reported as the other.  New case: two targets
+added 10 s apart report `age_ms=15000` and `age_ms=5000`; printing the global accumulator fails it.
+
+### C5 **[FIXED]** MEDIUM: `membership_change_started`/`_completed` do not count the same thing
 
 `:1329` increments `completed` inside the per-entry loop (one change adding N voters counts N) while `:3420`
 increments `started` once per accepted change; a follower applying a change increments `completed` with
 `started==0`.  `STATS` presents them as a pair.
 
-### C6 `[audit]` MEDIUM-LOW: TOPOLOGY is exempt from the admission gate but served through a barrier ⇒ a redirect ring
+**Outcome: fixed by naming both correctly, plus a real defect found while doing it.**  The counter is
+`membership_targets_graduated`: it counts catch-up *targets* that graduated into the config, and a follower
+applying a change graduates targets with `change_started==0`, which is coherent under that name.  While renaming,
+the `STATS` format string turned out to print the label `membership_targets_gompleted` - a misspelling that would
+have made any external scraper of that field miss it.  Fixed, and `doc/`, `tools/` and `tests/` contain no other
+reference to either old name.
+
+### C6 **[FIXED]** MEDIUM-LOW: TOPOLOGY is exempt from the admission gate but served through a barrier ⇒ a redirect ring
 
 `:3595` exempts TOPOLOGY like INFO/STATS/HELP, but only those three are answered locally (`:3745`, `:3756-3774`);
 TOPOLOGY goes through the barrier (`:3216-3239`) and, refused with `leader_id` still naming this node, answers
 REDIRECT to the client's own endpoint, which the client follows with no self-check and no retry bound
 (`kclient.h:247-264`).  MEMBERS, on the identical path, gets a hard "server stopping" - inconsistent.
 
-### C7 `[audit]` MEDIUM-LOW: a write queued behind a failed FCALL is stranded with no answer
+**Outcome: fixed, with a red case.**  TOPOLOGY is now answered locally in the same diagnostics block as INFO and
+STATS - it reads only application state, so it needs no barrier - and no longer enters the read barrier at all.  It
+shares the single `raft_inspect` site, so the gate's budget-1 rule for that call is untouched.  New case: with the
+server stopping (which refuses reads through the barrier) a TOPOLOGY request must be answered `OK` carrying
+`role=`; pre-fix it comes back as a `REDIRECT` - naming the very node that received it - and the case fails.
+
+### C7 **[REFUTED]** MEDIUM-LOW: a write queued behind a failed FCALL is stranded with no answer
 
 `:3148-3153` frees the failed FCALL and `return`s, after `:3143` already cleared `gate_closed`, so the rest of
 `gate_head` is neither answered nor redirected until another FCALL, leadership loss or release.
 
-### C8 `[audit]` LOW: a refused change leaves a phantom pending entry labelled "not ours"; `SHUTDOWN` depends on its ack
+**Outcome: refuted against the current code - the guard exists.**  Freeing a request whose type is FCALL while the
+gate is closed calls `k_server_open_gate` (`code/kserver.h:2204`, with a comment naming this exact deadlock), which
+re-opens a fresh gate window over the queued writes so they are drained rather than stranded; and leadership loss
+goes through `k_server_clear_gate`, which drains and redirects the whole queue by design (its comment names
+"strand the tail of `gate_head`" as the thing it prevents).  The line numbers in the audit point at
+`k_server_build_write_command` in this revision - they had drifted; the code they claim to describe does not.
+
+### C8 **[FIXED]** LOW: a refused change leaves a phantom pending entry labelled "not ours"; `SHUTDOWN` depends on its ack
 
 `:3381` submits the ADDR before the reconfig is attempted; after a refusal the ADDR applies later and re-adds the
 target with `pending_source=0`, hidden from every report (`:3057`, `:3336`) while `k_server_reconnect` keeps dialing
 it.  `:3778-3779` sends the SHUTDOWN ack first and only then stops, so a failed send answers the request zero times
 and performs no shutdown.
+
+**Outcome: both halves fixed.**  (a) `SHUTDOWN` now stops the server whether or not the ack could be sent: the ack
+is a courtesy, the stop is the operator's intent, and a dropped connection used to turn the request into one that
+answered nothing *and* shut nothing down.  (b) The targets of a change this node submitted are remembered when Raft
+refuses it (and forgotten when a change is accepted), so the later ADDR apply - submitted before the reconfig on
+purpose, because followers need the address first - marks their pending entries `source=-1`; TOPOLOGY reports them
+as "left over from a refused change" instead of hiding them, and `k_server_membership_own_pending` counts only
+sources 1 and 2, so a leftover is never mistaken for this node's own wait.  Red case: with the mark neutered, the
+new case fails on `pending_source[0]==-1` (expected -1, got 0).
 
 ## D. Client and CLI
 
@@ -588,7 +632,13 @@ Every item in this round is closed one way or the other - fixed, or refuted with
 | E4 | fixed - the char-literal lexer understands escapes, and the comment rule catches `case 3://note` and a trailing `//` without firing on `mem://` prose (5-case truth table) |
 | E5 | fixed - the counters harness greps the fields the server emits and certifies it measured something; `regress_selftest` extracts the real detector and runs as a gate layer (it found a false "layer timeout" claim in `reg_gate`); 11 report-only harnesses now say so |
 | E7 | fixed - the `sprintf` ratchet sees column 0, the `raft_inspect` rule names its sanctioned site, `git_out` records non-zero exits (rule 20), and `cli_smoke`'s piped needles are the values it stored |
-| A4, A7, C3-C8, E4-E7 | **open** - recorded in `doc/gaps-audit.md`, not silently dropped |
+| C3 | fixed - the wait clock is only cleared by a refusal that leaves no wait of this node's own; **defensive, no red proof, and the section above says why** |
+| C4 | fixed - every pending entry carries its own age from the server's internal clock (red case: 15 s vs 5 s) |
+| C5 | fixed - the counter is named for what it counts; the `STATS` label it was printed under was misspelled and is fixed |
+| C6 | fixed - TOPOLOGY is answered locally instead of through the barrier it is exempt from (red case: pre-fix it answers REDIRECT to itself) |
+| C7 | **refuted** - freeing a failed FCALL already re-opens the gate, and leadership loss drains the queue by design |
+| C8 | fixed - SHUTDOWN stops regardless of its ack; a refused change's leftover pending entry is marked and reported (red case: `pending_source[0]==-1`) |
+| A4, A7 | **open** - recorded in `doc/gaps-audit.md`, not silently dropped |
 
 Evidence for the round as a whole: `REGRESS|full|pass=14 fail=0 duration=267s`, CI green on every push, and the XP
 guest run recorded in `doc/testing.md` section 7 (`cemon 5/5`, `kclient 19/19`, `raft 221/221`, `kserver 41/41`,

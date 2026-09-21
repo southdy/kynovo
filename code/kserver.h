@@ -416,7 +416,12 @@ struct k_server{
      server: as a server-wide field the next submission overwrote it and every later wait was attributed to
      whoever submitted last (review 3.5), and a node that merely replicated an ADDR reported a change it never
      asked for - which is how a refused change kept showing up as "still waiting" forever (review 3.3). */
-  int pending_source[K_MAX_NODES];
+  int pending_source[K_MAX_NODES];      /* 0 = learned from a replicated ADDR (not ours), 1 = auto-replace,
+                                            2 = client request, -1 = left over from a change that was REFUSED */
+  k_u64 pending_since_ms[K_MAX_NODES];  /* elapsed_total_ms when this entry was added: age_ms is per entry, not one
+                                           server-wide accumulator printed on every entry (review C4) */
+  int refused_ids[K_MAX_NODES];         /* targets of a change this node submitted that Raft refused (review C8) */
+  int refused_count;
   int pending_count;
   const k_server_transport *transport;
   void *loop;                    /* opaque app event-loop handle (transport->dial only) */
@@ -588,7 +593,9 @@ struct k_server{
   k_u64 membership_pending_ms;        /* how long the current catch-up wait has lasted (0 = none) */
   k_u64 membership_pending_notice_ms; /* when the last reminder was printed (rate limiting) */
   k_u32 membership_change_started;    /* configuration changes handed to Raft (client or auto-replace) */
-  k_u32 membership_change_completed;  /* changes that committed and graduated their catch-up target */
+  k_u32 membership_targets_graduated;  /* catch-up TARGETS that graduated into the config, not changes: one
+                                          change adding N voters graduates N of them, and a follower that only
+                                          replicated the change graduates them with started==0 (review C5) */
   k_u32 membership_notice_count;      /* reminders printed for the current/last wait (rate-limit proof) */
 
   int snapshot_cleanup_busy;
@@ -604,6 +611,12 @@ struct k_server{
   int leader_id;
   raft_i64 last_applied;
 };
+
+/* Forward declarations for two membership helpers whose uses moved ahead of their definitions (the TOPOLOGY
+   builder now reports each pending entry's source, and the replicated ADDR apply asks whether a target came from
+   a refused change).  C89 has no implicit declarations, so they are declared here rather than reordered. */
+static const char *k_server_membership_source_label(int source);
+static int k_server_refused_contains(const k_server *server,int id);
 /* ================= Server: snapshot cache & WAL metadata ================= */
 /* ---- raft-mask codec ---- */
 static void k_buf_mask(k_buf *b,raft_mask mask){
@@ -1343,7 +1356,7 @@ static void k_membership_update(k_server *server,const int *old_ids,int old_coun
     if(k_membership_has(voters,count,server->pending[i])||k_membership_has(learner_ids,learner_count,server->pending[i])){
       printf("membership: node %d graduated into the config after %" K_U64_FMT "ms; the catch-up wait is over\n",
              server->pending[i],server->membership_pending_ms);
-      server->membership_change_completed++;
+      server->membership_targets_graduated++;
       server->pending[i]=server->pending[server->pending_count-1];
       server->pending_source[i]=server->pending_source[server->pending_count-1];
       server->pending_count--;
@@ -2824,7 +2837,11 @@ mbatch_fail:
          graduates it into voters (and drops it from pending).  Nodes already in
          the member set are left alone. */
       if(!k_membership_contains(server,id)&&server->pending_count<K_MAX_NODES){
-        server->pending_source[server->pending_count]=0;   /* learned from the replicated ADDR: not ours */
+        /* -1 when this target is one a refused change already asked for: the ADDR was submitted before the
+           reconfig was attempted (followers need the address first), so it applies anyway, and its pending
+           entry would otherwise be invisible in every report while the peer topology keeps dialing it. */
+        server->pending_source[server->pending_count]=k_server_refused_contains(server,id)?-1:0;
+        server->pending_since_ms[server->pending_count]=server->elapsed_total_ms;
         server->pending[server->pending_count++]=id;
       }
     }
@@ -3045,7 +3062,7 @@ static void k_server_begin_stop(k_server *server){
   if(server->raft) raft_stop(server->raft);
 }
 static int k_request_is_read(int type){
-  return type==K_REQ_GET||type==K_REQ_COUNT||type==K_REQ_MIN||type==K_REQ_MAX||type==K_REQ_RGET||type==K_REQ_MEMBERS||type==K_REQ_MGET||type==K_REQ_TOPOLOGY;
+  return type==K_REQ_GET||type==K_REQ_COUNT||type==K_REQ_MIN||type==K_REQ_MAX||type==K_REQ_RGET||type==K_REQ_MEMBERS||type==K_REQ_MGET;
 }
 /* Serialize the address book (the Sec 6.1 inclusive directory) as
    "id@host:client_port:peer_port, ..." for client discovery. */
@@ -3125,9 +3142,12 @@ static int k_server_topology_build(k_server *server,k_buf *body){
     /* A pending target is the one an operator has to ACT on ("start this node"), so it carries the age of
        the wait and whether this node currently holds a peer connection to it.  Both are facts the app has;
        replication progress is deliberately not read here. */
-    len=k_snprintf(buf,sizeof(buf),"%d@%s:%u:%u role=pending age_ms=%" K_U64_FMT " state=%s",
+    len=k_snprintf(buf,sizeof(buf),"%d@%s:%u:%u role=pending age_ms=%" K_U64_FMT " state=%s source=%s",
                    node->id,node->host,(unsigned)node->client_port,(unsigned)node->peer_port,
-                   server->membership_pending_ms,k_server_peer_link_state(server,node->id));
+                   (server->elapsed_total_ms>server->pending_since_ms[i]
+                      ? server->elapsed_total_ms-server->pending_since_ms[i] : 0u),
+                   k_server_peer_link_state(server,node->id),
+                   k_server_membership_source_label(server->pending_source[i]));
     k_buf_bytes(body,(const k_u8*)buf,(k_u32)len);
   }
   return body->err?-1:0;
@@ -3396,11 +3416,22 @@ static int k_server_submit_addr(k_server *server,const int *ids,int id_count){
 static int k_server_membership_own_pending(const k_server *server){
   int i,own=0;
   if(!server) return 0;
-  for(i=0;i<server->pending_count;i++) if(server->pending_source[i]!=0) own++;
+  for(i=0;i<server->pending_count;i++)
+    if(server->pending_source[i]==1||server->pending_source[i]==2) own++;   /* -1 is a refusal's leftover, not ours */
   return own;
 }
 static const char *k_server_membership_source_label(int source){
-  return source==1?"submitted by auto-replace":(source==2?"client request":"submitted elsewhere");
+  if(source==1) return "submitted by auto-replace";
+  if(source==2) return "client request";
+  if(source==-1) return "left over from a refused change (its address entry was already submitted)";
+  return "submitted elsewhere";
+}
+/* Is this target one a refused change asked for?  See the -1 source above. */
+static int k_server_refused_contains(const k_server *server,int id){
+  int i;
+  if(!server) return 0;
+  for(i=0;i<server->refused_count;i++) if(server->refused_ids[i]==id) return 1;
+  return 0;
 }
 static int k_server_submit_member(k_server *server,k_conn *conn,k_u32 request_id,int subcmd,const int *ids,int id_count){
   int source;
@@ -3462,9 +3493,16 @@ static int k_server_submit_member(k_server *server,k_conn *conn,k_u32 request_id
   if(raft_recvfrom_client(server->raft,&message)!=0){
     k_request_free(server,request);
     server->pending_count=pending_before;
-    server->membership_pending_ms=0;
-    server->membership_pending_notice_ms=0;
-    server->membership_notice_count=0;
+    /* Clear the wait clock ONLY if this refusal left no own wait standing.  Zeroing unconditionally wiped the
+       age of a second, still-pending change - layering is explicitly supported - resetting its reported
+       age_ms to 0 and re-arming the operator's reminder budget (review 4th round C3). */
+    server->refused_count=0;
+    for(i=0;i<final_count&&server->refused_count<K_MAX_NODES;i++) server->refused_ids[server->refused_count++]=final_ids[i];
+    if(k_server_membership_own_pending(server)==0){
+      server->membership_pending_ms=0;
+      server->membership_pending_notice_ms=0;
+      server->membership_notice_count=0;
+    }
     return k_server_send_response(server,conn,request_id,K_STATUS_ERROR,0,"reconfig rejected",17u);
   }
   /* accepted: any voter not yet in the snapshot is catch-up material.  Mark it
@@ -3476,10 +3514,12 @@ static int k_server_submit_member(k_server *server,k_conn *conn,k_u32 request_id
     if(!k_membership_has(server->voters,server->voter_count,final_ids[i])&&!k_membership_has(server->learners,server->learner_count,final_ids[i])&&!k_membership_has(server->pending,server->pending_count,final_ids[i])){
       if(server->pending_count<K_MAX_NODES){
         server->pending_source[server->pending_count]=source;     /* this node submitted it */
+        server->pending_since_ms[server->pending_count]=server->elapsed_total_ms;
         server->pending[server->pending_count++]=final_ids[i];
       }
     }
   }
+  server->refused_count=0;    /* an accepted change supersedes any earlier refusal's marker */
   server->membership_change_started++;
   /* A configuration change that arrives while another is still waiting does not cancel the wait by itself -
      but the operator has to know they are touching a cluster with a change in flight, and today their only
@@ -3804,7 +3844,7 @@ static int k_server_client_frame(void *ud,k_u8 type,const k_u8 *payload,k_u32 si
     if(reader.err||reader.off!=reader.len) return -1;
     return k_server_submit(server,conn,request_id,(int)type,key,key_len,value,value_len);
   }
-  if(type==K_REQ_MEMBERS||type==K_REQ_TOPOLOGY){
+  if(type==K_REQ_MEMBERS){
     if(reader.off!=reader.len) return -1;
     return k_server_submit(server,conn,request_id,(int)type,0,0,0,0);
   }
@@ -3813,7 +3853,7 @@ static int k_server_client_frame(void *ud,k_u8 type,const k_u8 *payload,k_u32 si
     if(reader.off!=reader.len) return -1;
     return k_server_send_response(server,conn,request_id,K_STATUS_OK,server->id,help,(k_u32)(sizeof(help)-1u));
   }
-  if(type==K_REQ_INFO||type==K_REQ_STATS){
+  if(type==K_REQ_INFO||type==K_REQ_STATS||type==K_REQ_TOPOLOGY){
     raft_info info;
     treap_info tree_info;
     /* 4096, not 2048: the counter line grew to ~1330 bytes once the stall diagnostics were added, and
@@ -3822,7 +3862,24 @@ static int k_server_client_frame(void *ud,k_u8 type,const k_u8 *payload,k_u32 si
     char text[4096];
     int len,over;
     memset(&info,0,sizeof(info));
-    if(reader.off!=reader.len||raft_inspect(server->raft,&info)!=0||treap_inspect(server->tree,&tree_info)!=0) return -1;
+    if(reader.off!=reader.len||raft_inspect(server->raft,&info)!=0) return -1;
+    /* TOPOLOGY is exempt from the admission gate like INFO/STATS/HELP, so it must be ANSWERED here too: sending
+       it through the barrier let a refused request come back as a REDIRECT naming this very node, which the
+       client follows to its own endpoint - a redirect ring - while MEMBERS on the identical path gets a hard
+       "server stopping" (review 4th round C6).  It needs no raft read of its own: the body is app state. */
+    if(type==K_REQ_TOPOLOGY){
+      k_buf body;
+      int rc;
+      memset(&body,0,sizeof(body));
+      if(k_server_topology_build(server,&body)!=0||body.len>K_RESPONSE_BODY_MAX){
+        k_buf_free(&body);
+        return k_server_send_response(server,conn,request_id,K_STATUS_ERROR,info.leader_id,"topology too large",19u);
+      }
+      rc=k_server_send_response(server,conn,request_id,K_STATUS_OK,info.leader_id,body.data,body.len);
+      k_buf_free(&body);
+      return rc;
+    }
+    if(treap_inspect(server->tree,&tree_info)!=0) return -1;
     len=0;
     over=0;
     k_text_append(text,sizeof(text),&len,&over,"id=%d state=%d leader=%d term=%" K_I64_FMT " commit=%" K_I64_FMT " applied=%" K_I64_FMT " snapshot=%" K_I64_FMT " log=%" K_I64_FMT " count=%" K_U64_FMT " height=%u bytes=%" K_U64_FMT " pending_frees=%" K_U64_FMT " pending_bytes=%" K_U64_FMT " persist_generation=%" K_U64_FMT " wal_segment=%" K_U64_FMT " wal_offset=%" K_U64_FMT " wal_size=%" K_U64_FMT " wal_next_segment=%" K_U64_FMT " wal_next_offset=%" K_U64_FMT " wal_pending=%" K_U64_FMT " wal_events=%" K_U64_FMT " wal_records=%" K_U64_FMT " wal_open_files=%d wal_post_failed=%" K_U64_FMT " sync_us_ewma=%" K_U64_FMT " sync_us_max=%" K_U64_FMT " slow_syncs=%" K_U64_FMT " window_ms=%" K_U64_FMT " flush_by_target=%" K_U64_FMT " flush_by_drain=%" K_U64_FMT " flush_by_window=%" K_U64_FMT " flush_by_bytes=%" K_U64_FMT " flush_by_barrier=%" K_U64_FMT " flush_by_stop=%" K_U64_FMT " write_bytes=%" K_U64_FMT " batch_bytes_limit=%u wal_inflight_max=%u latency_budget_us=%u rounds=%" K_U64_FMT " client_requests=%" K_U64_FMT " snapshot_inflight=%d snapshot_failed=%d snapshot_cleanup_busy=%d cleanup_failed=%d flush_batches=%" K_U64_FMT " flush_writes=%" K_U64_FMT " peer_send_drops=%" K_U64_FMT " round_us_last=%" K_U64_FMT " round_us_max=%" K_U64_FMT " round_us_ewma=%" K_U64_FMT " slow_rounds=%" K_U64_FMT " req_age_ms_last=%" K_U64_FMT " req_age_ms_max=%" K_U64_FMT " slow_acks=%" K_U64_FMT " req_wait_ms_last=%" K_U64_FMT " req_wait_ms_max=%" K_U64_FMT " req_svc_ms_last=%" K_U64_FMT " req_svc_ms_max=%" K_U64_FMT " wake_us_last=%" K_U64_FMT " wake_us_max=%" K_U64_FMT " slow_wakes=%" K_U64_FMT " handoff_us_last=%" K_U64_FMT " handoff_us_max=%" K_U64_FMT " slow_handoffs=%" K_U64_FMT " handoff_samples=%" K_U64_FMT " wake_samples=%" K_U64_FMT " wake_pre_us_last=%" K_U64_FMT " wake_pre_us_max=%" K_U64_FMT " slow_wake_pres=%" K_U64_FMT " wake_pre_samples=%" K_U64_FMT " poll_us_last=%" K_U64_FMT " poll_us_max=%" K_U64_FMT " poll_us_ewma=%" K_U64_FMT " frames_last=%" K_U64_FMT " frames_max=%" K_U64_FMT " poll_samples=%" K_U64_FMT " ",
@@ -3830,9 +3887,9 @@ static int k_server_client_frame(void *ud,k_u8 type,const k_u8 *payload,k_u32 si
     k_text_append(text,sizeof(text),&len,&over,"wal_inflight=%d client_connections=%u client_connection_limit=%u pending_requests=%u pending_request_limit=%u pending_request_bytes=%" K_U64_FMT " pending_request_bytes_limit=%" K_U64_FMT,
       server->wal_inflight_count,(unsigned)server->client_connection_count,(unsigned)K_CLIENT_CONNECTION_MAX,(unsigned)server->request_count,(unsigned)K_REQUEST_INFLIGHT_MAX,server->request_bytes,(k_u64)K_REQUEST_BYTES_MAX);
     k_text_append(text,sizeof(text),&len,&over,
-      " membership_pending=%d membership_pending_ms=%" K_U64_FMT " membership_change_started=%u membership_change_completed=%u membership_notices=%u",
+      " membership_pending=%d membership_pending_ms=%" K_U64_FMT " membership_change_started=%u membership_targets_graduated=%u membership_notices=%u",
       k_server_membership_own_pending(server),server->membership_pending_ms,
-      (unsigned)server->membership_change_started,(unsigned)server->membership_change_completed,
+      (unsigned)server->membership_change_started,(unsigned)server->membership_targets_graduated,
       (unsigned)server->membership_notice_count);
     k_text_append(text,sizeof(text),&len,&over," rx_buffer_bytes=%" K_U64_FMT " rx_buffer_bytes_limit=%" K_U64_FMT " stats_truncated=%" K_U64_FMT,server->rx_buffer_bytes,(k_u64)K_RX_BYTES_MAX,server->stats_truncated);
     if(over){
@@ -3843,10 +3900,14 @@ static int k_server_client_frame(void *ud,k_u8 type,const k_u8 *payload,k_u32 si
     return k_server_send_response(server,conn,request_id,K_STATUS_OK,info.leader_id,text,(k_u32)len);
   }
   if(type==K_REQ_SHUTDOWN){
+    int ack_rc;
     if(reader.off!=reader.len) return -1;
-    if(k_server_send_response(server,conn,request_id,K_STATUS_OK,server->id,"stopping",8u)!=0) return -1;
+    /* The ack is a courtesy; the STOP is the operator's intent.  Returning early when the ack could not be sent
+       made a dropped connection turn SHUTDOWN into a request that answered nothing AND shut nothing down
+       (review 4th round C8). */
+    ack_rc=k_server_send_response(server,conn,request_id,K_STATUS_OK,server->id,"stopping",8u);
     k_server_begin_stop(server);
-    return 0;
+    return ack_rc;
   }
   return -1;
 }
@@ -4311,12 +4372,6 @@ static int k_server_handle_client_result(k_server *server,const raft_client_resu
       k_buf body;
       memset(&body,0,sizeof(body));
       if(k_server_members_build(server,&body)!=0||body.len>K_RESPONSE_BODY_MAX) k_server_send_response(server,request->conn,request->id,K_STATUS_ERROR,result->leader_id,"result too large",16u);
-      else k_server_send_response(server,request->conn,request->id,K_STATUS_OK,result->leader_id,body.data,body.len);
-      k_buf_free(&body);
-    }else if(request->type==K_REQ_TOPOLOGY){
-      k_buf body;
-      memset(&body,0,sizeof(body));
-      if(k_server_topology_build(server,&body)!=0||body.len>K_RESPONSE_BODY_MAX) k_server_send_response(server,request->conn,request->id,K_STATUS_ERROR,result->leader_id,"result too large",16u);
       else k_server_send_response(server,request->conn,request->id,K_STATUS_OK,result->leader_id,body.data,body.len);
       k_buf_free(&body);
     }else if(request->type==K_REQ_RGET){
