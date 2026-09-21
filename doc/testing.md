@@ -52,7 +52,7 @@ and their `run-*` versions, `selftest`, `kdbsvr`, `kdbctl`, `bench*`, `cemon-ben
 | L1e | end-to-end self-test (single process, with membership change/bootstrap/election) | `./build/selftest.exe` | `selftest: PASS` | ~1–3s |
 | L1f | harness cleanliness: the self-test's store artifacts are gone | (gate layer `selftest_cleanup`) | `selftest-cleanup: 0 leftover file(s)` | ~0s |
 | L1g | vfs fault injection (the storage seam, exercised not assumed, plus two threads on one mem hash bucket) | `./build/vfs_fault_test.exe` | `SUMMARY: 5/5 passed` | ~1s |
-| L2 | CLI semantics smoke (real process + real socket) | `bash tests/cli_smoke.sh` | `cli_smoke: PASS` | ~10s |
+| L2 | CLI semantics smoke (real process + real socket) | `bash tests/cli_smoke.sh` | `cli_smoke: PASS` (31 checks: exit statuses, script mode incl. an unreachable host, CAS conflict=2, PIPE percentiles) | ~10s |
 | L3a | single-node randomised fuzzing (API/OOM rollback) | `./build/raft_fuzz.exe <seed> <n>` | `done: <n> iterations` / `FAIL: …` | n=2000 ~10s |
 | L3b | **multi-node cluster fuzzing** (real pull-mode wire messages: drop/reorder/duplicate/partition/crash-restart/membership change/OOM injection) | `./build/raft_cluster_fuzz.exe <seed> <n> [persist_delay]` | `done: <n> iterations` / `FAIL: …` | n=2000 ~30s |
 | L3c | server cluster fuzzing (with the in-harness linearizability checker `tests/lincheck.h`) | `./build/kserver_cluster_fuzz.exe <seed> <n>` | `done: 1/1 clusters consistent` **and** `linearizability: <N> histories / <M> ops decided by the checker` with N>0 | ~10s |

@@ -283,30 +283,53 @@ and performs no shutdown.
 
 ## D. Client and CLI
 
-### D1 `[me]` HIGH: script mode still hangs when the host is unreachable, and always exits 0
+### D1 `[me]` **[FIXED]** HIGH: script mode still hangs when the host is unreachable, and always exits 0
 
 `code/kdbctl.c:744` `if(!cli.tty&&!k_client_busy(&app)&&g_cli_out_count>0){` - `g_cli_out_count` counts only
 `app->output` (`:568`), which a client that never reaches a server never touches, so stdin is never read, EOF is
 never seen, and the process spins.  The same loop assigns `rc` only for an event-loop failure (`:761-762`), so a
 script whose commands time out still exits 0.  Both are the class the one-shot path already fixed.
 
-### D2 `[me]` HIGH: one-shot mode reports success for a request that was only redirected (and for a failed CAS)
+**Fix, two halves.** Script mode now bounds its opening wait with the same budget the one-shot handshake uses
+(`K_CLI_SETTLE_BUDGET_US`): with no output ever arriving it prints `no output from the server within 6000ms;
+script mode needs a working connection` and exits non-zero instead of spinning.  And after the loop the exit
+status reflects what happened inside the script - `app.error_count` (the client's own count of responses that were
+neither OK, NOT_FOUND nor REDIRECT) makes any failed command fail the run.  Smoke: `printf 'GET k\n' | kdbctl
+127.0.0.1:1` must exit 1 and must not hang (the check's `timeout 30` would turn a hang into 124).
+
+### D2 `[me]` **[FIXED]** HIGH: one-shot mode reports success for a request that was only redirected (and for a failed CAS)
 
 `code/kdbctl.c:714` `if(cmd_id&&app.last_done_id==cmd_id&&!k_client_busy(&app)&&app.last_done_status!=K_STATUS_ERROR) one_shot_ok=1;`
 `last_done_id/status` are set *before* redirect handling (`kclient.h:239-240`), so a swept or dropped redirect
 leaves status REDIRECT (3) ≠ ERROR (2) ⇒ `one_shot_ok=1`, no error line, exit 0.  A compare failure is CONFLICT
 (4), so a `CAS` that did not swap also exits 0.
 
-### D3 `[me]` MEDIUM: PIPE's latency percentiles are the 5th/9th/9.9th
+**Fix.** The success test now reads the response STATUS rather than "anything but ERROR": a final REDIRECT means no
+leader ever accepted the command, so it prints why and fails; a CONFLICT (the command ran, its condition was false)
+gets its own exit status, 2, so a script can tell it from both success and failure; OK and NOT_FOUND stay 0, since
+an absent key is a legitimate answer to a read.  A usage error or a locally refused command stays 1.
+
+### D3 `[me]` **[FIXED]** MEDIUM: PIPE's latency percentiles are the 5th/9th/9.9th
 
 `code/kdbctl.c:465-468` `pct=(i==0)?50u:…` with `sorted[(pct*(n-1))/1000u]` - the divisor suits `p99.9`/`max`
 only, so `p50` is `sorted[n/20]`.  Every reported percentile except the tail is ~10× too good.
 
-### D4 `[me]` MEDIUM: PIPE can exit 0 while requests were dropped, and its rate numerator counts redirects
+**Fix.** The table is per mille and the percent labels were written as percent: `p50` indexed `50*(n-1)/1000`.  The
+values are now 500/900/990/999/1000.  Honest limit on the evidence: wrong percentiles of a monotone distribution
+still satisfy `min<=p50<=p90<=p99<=max`, so the smoke check can only pin the labels and that ordering - the
+arithmetic rests on the one-line table plus inspection.
+
+### D4 `[me]` **[FIXED]** MEDIUM: PIPE can exit 0 while requests were dropped, and its rate numerator counts redirects
 
 `code/kdbctl.c:549` `return app->done_count?(g_pipe_status_other?1:0):-1;` - counters move only in the completion
 hook (`:428-442`), which requests dropped by the client's deadline sweep or give-up paths never reach; and `:545`
 feeds `ops_per_s` the redirect-inclusive `app->done_count` while `ok/not_found/other` exclude redirects.
+
+**Fix, two halves.** The run now exits non-zero unless it actually completed: `end=complete`, every request queued,
+no redirect-excluded failures, no `other` statuses, and at least one completion - `end=` was already printed but
+nothing acted on it.  And the rate numerator is a new `g_pipe_done` incremented in the pipe's own completion hook
+after the redirect early-return, because the client's `done_count` counts redirect responses too, so the old figure
+charged the run for work it did not do.
 
 ### D5 `[audit]` MEDIUM: deadlines are armed at queue time and never re-armed on (re)send
 

@@ -425,6 +425,7 @@ static k_u32 g_pipe_first_id;   /* ids below this belong to the automatic discov
 static k_u32 g_pipe_status_ok,g_pipe_status_nf,g_pipe_status_other;
 static k_u64 g_pipe_us_sum;
 static k_u64 g_pipe_us_n;        /* how many durations went into g_pipe_us_sum (NOT capped like the samples) */
+static k_u32 g_pipe_done;         /* requests this PIPE run completed, EXCLUDING redirects */
 static void k_cli_pipe_on_done(void *ud,k_u32 id,k_u8 status,k_u64 duration_us){
   (void)ud;(void)id;
   if(id<g_pipe_first_id) return;   /* the client's own discovery request, not part of the load */
@@ -433,6 +434,9 @@ static void k_cli_pipe_on_done(void *ud,k_u32 id,k_u8 status,k_u64 duration_us){
      completion count, and (c) landed in `other`, which is why a run in which every operation eventually
      succeeded could still report a non-zero exit status (review 5.x). */
   if(status==K_STATUS_REDIRECT) return;
+  g_pipe_done++;                     /* completions of THIS load.  The client's done_count also counts the
+                                        redirect responses, so using it as the rate numerator charged the run
+                                        for work it did not do (fourth-round review D4). */
   if(g_pipe_lat_n<K_PIPE_SAMPLES) g_pipe_lat[g_pipe_lat_n++]=(k_u32)(duration_us>4294967295u?4294967295u:duration_us);
   g_pipe_us_sum+=duration_us;
   g_pipe_us_n++;
@@ -462,8 +466,10 @@ static void k_pipe_report(const char *mode,k_u32 k,k_u32 count,k_u64 wall_us,k_u
       qsort(sorted,g_pipe_lat_n,sizeof(k_u32),k_pipe_cmp_u32);
       printf("pipe latency_us: min=%u",(unsigned)sorted[0]);
       for(i=0;i<5u;i++){
-        pct=(i==0)?50u:(i==1?90u:(i==2?99u:(i==3?999u:1000u)));
-        printf(" %s=%u",pct==50u?"p50":(pct==90u?"p90":(pct==99u?"p99":(pct==999u?"p99.9":"max"))),
+        /* PERMILLE, not percent: the labels were right and the index was not, so p50 printed the 5th
+           percentile, p90 the 9th and p99 the 9.9th (fourth-round review D3). */
+        pct=(i==0)?500u:(i==1?900u:(i==2?990u:(i==3?999u:1000u)));
+        printf(" %s=%u",pct==500u?"p50":(pct==900u?"p90":(pct==990u?"p99":(pct==999u?"p99.9":"max"))),
                (unsigned)sorted[(k_u32)(((k_u64)pct*(k_u64)(g_pipe_lat_n-1u))/1000u)]);
       }
       /* The mean is over EVERY timed operation, which is what g_pipe_us_sum sums: dividing that sum by the
@@ -499,6 +505,7 @@ static int k_cli_pipeline_run(k_client_app *app,cemon *loop,const char *line){
   g_pipe_status_ok=g_pipe_status_nf=g_pipe_status_other=0;
   g_pipe_us_sum=0;
   g_pipe_us_n=0;
+  g_pipe_done=0;
   g_pipe_first_id=app->next_id+1u;   /* the first request THIS run will queue */
   app->inflight_limit=(int)k;
   app->on_done=k_cli_pipe_on_done;
@@ -542,11 +549,19 @@ static int k_cli_pipeline_run(k_client_app *app,cemon *loop,const char *line){
     }
   }
   if(t0&&k_monotonic_us(&now)==0) wall_us=now-t0;
-  k_pipe_report(mode,k,count,wall_us,app->done_count);
-  if(queued<count||failed) printf("warning: only %u of %u requests were queued\n",(unsigned)queued,(unsigned)count);
+  k_pipe_report(mode,k,count,wall_us,g_pipe_done);
+  if(queued<count||failed) printf("error: only %u of %u requests were queued\n",(unsigned)queued,(unsigned)count);
   app->inflight_limit=0;
   app->on_done=0;
-  return app->done_count?(g_pipe_status_other?1:0):-1;
+  /* A run that did not finish is not a throughput figure.  This used to return success whenever some
+     response had arrived, so a run cut short by the 60s cap, wedged by the stall detector, or one that
+     simply could not queue its whole load exited 0 and read like a completed run (fourth-round review D4);
+     `end=` was printed but nothing acted on it. */
+  if(g_pipe_done==0) return -1;
+  if(g_pipe_status_other) return 1;
+  if(failed||queued<count) return 1;
+  if(g_pipe_end[0]&&strcmp(g_pipe_end,"complete")!=0) return 1;
+  return 0;
 }
 
 static char g_cli_last[1024];
@@ -711,7 +726,23 @@ static int k_client_run(const char *seed_list,const char *one_shot){
          "Some output appeared" was not enough - a connect failure prints a notice too. */
       /* NOT_FOUND is a legitimate answer (the key is simply absent); only a hard ERROR - or
          a request that never got a response at all - means the command did not execute. */
-      if(cmd_id&&app.last_done_id==cmd_id&&!k_client_busy(&app)&&app.last_done_status!=K_STATUS_ERROR) one_shot_ok=1;
+      if(cmd_id&&app.last_done_id==cmd_id&&!k_client_busy(&app)){
+        if(app.last_done_status==K_STATUS_ERROR){
+          one_shot_ok=0;                      /* the error text is already on stdout */
+        }else if(app.last_done_status==K_STATUS_REDIRECT){
+          /* A redirect that survived to the end means no leader ever accepted the command: the request was
+             NOT applied, and this used to be reported as success because only ERROR counted (review D2). */
+          printf("error: no leader accepted the command (redirect was not followed)\n");
+          one_shot_ok=1;                      /* judged: do not add the "no response" text on top */
+          rc=-1;
+        }else if(app.last_done_status==K_STATUS_CONFLICT){
+          /* The command ran and its condition was false.  That is a distinct outcome for a script, so it gets
+             a distinct exit status (2) instead of the silent 0 it used to share with success. */
+          printf("cas: the condition was not met\n");
+          one_shot_ok=1;
+          rc=2;
+        }else one_shot_ok=1;                  /* OK, or NOT_FOUND for a read: a legitimate answer */
+      }
       break;
     }
     if(!one_shot_ok&&(was_queued&&cmd_id)){
@@ -732,6 +763,26 @@ static int k_client_run(const char *seed_list,const char *one_shot){
       rc=-1;
     }
     app.stopping=1;
+    }
+  }
+  /* Script mode's first duty is to notice that there is nothing to script against.  The line reader below
+     only runs once the CLI has produced output, which never happens for an unreachable host, so that case spun
+     here forever (review D1: `printf 'GET k\n' | kdbctl 127.0.0.1:1` had to be killed).  Bound the wait with
+     the same budget the one-shot path uses for its handshake. */
+  if(!cli.tty){
+    k_u64 t_wait=0,now_w=0;
+    if(k_monotonic_us(&t_wait)!=0) t_wait=0;
+    while(g_cli_out_count==0&&!app.stopping){
+      if(cemon_poll(loop,10)!=0){ rc=-1; app.stopping=1; break; }
+      k_monotonic_us(&app.now_us);
+      k_client_poll(&app);
+      if(t_wait&&k_monotonic_us(&now_w)==0&&now_w-t_wait>K_CLI_SETTLE_BUDGET_US){
+        printf("error: no output from the server within %ums; script mode needs a working connection\n",
+               (unsigned)(K_CLI_SETTLE_BUDGET_US/1000u));
+        rc=-1;
+        app.stopping=1;
+        break;
+      }
     }
   }
   while(!app.stopping){
@@ -764,6 +815,12 @@ static int k_client_run(const char *seed_list,const char *one_shot){
     }
     k_monotonic_us(&app.now_us);
     k_client_poll(&app);
+  }
+  /* A script's exit status has to reflect what happened inside it: every command it fed in used to be
+     reported as success no matter what the server answered (review D1). */
+  if(rc==0&&app.error_count>0){
+    printf("error: %u command(s) in the script failed\n",(unsigned)app.error_count);
+    rc=-1;
   }
   cli_shutdown(&cli);
   cemon_stop(loop);
@@ -799,5 +856,6 @@ int main(int argc,char **argv){
     return EXIT_FAILURE;
   }
   rc=k_client_run(argv[1],argc>2?cmdline:0);
-  return rc==0?EXIT_SUCCESS:EXIT_FAILURE;
+  /* 0 = success, 2 = the command ran and its condition was false (CAS), anything else = failure. */
+  return rc==0?EXIT_SUCCESS:(rc>0?rc:EXIT_FAILURE);
 }

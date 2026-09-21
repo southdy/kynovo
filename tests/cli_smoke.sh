@@ -46,6 +46,23 @@ out=$(printf 'SET pipe1 a\nSET pipe2 b\nGET pipe1\n' | timeout 20 "$BIN/kdbctl.e
 contain "piped script ran the first command" "$out" "a"
 contain "piped script ran the second command" "$out" "ok"
 
+# ... and a script against an UNREACHABLE host must fail fast instead of spinning: the line reader only runs
+# once the CLI has produced output, which never happens without a connection, so this used to hang until the
+# caller killed it (the timeout below turns a hang into 124, which fails this check).
+out=$(printf 'GET k\n' | timeout 30 "$BIN/kdbctl.exe" "127.0.0.1:1" 2>&1); check "piped script, dead host exit" "$?" "1"
+contain "piped script, dead host says why" "$out" "no output from the server within"
+
+# a command the SERVER answers with an error must make the script's exit status non-zero: every command in a
+# script was reported as success whatever the server said.
+out=$(timeout 20 "$BIN/kdbctl.exe" "127.0.0.1:$PORT" SET cas1 v1 2>&1); check "script setup SET exit" "$?" "0"
+out=$(printf 'CAS cas1 v2 WRONG\n' | timeout 20 "$BIN/kdbctl.exe" "127.0.0.1:$PORT" 2>&1); check "piped script with a failing command exit" "$?" "1"
+contain "piped script names the failure" "$out" "command(s) in the script failed"
+
+# CAS whose condition is not met is not a success either: the command ran, so its exit status is distinct from
+# both success (0) and failure (1).
+out=$(timeout 20 "$BIN/kdbctl.exe" "127.0.0.1:$PORT" CAS cas1 v2 WRONG 2>&1); check "CAS conflict exit" "$?" "2"
+contain "CAS conflict says so" "$out" "condition was not met"
+
 # a malformed RGET limit is refused by the CLI itself: non-zero exit, an explanation, and NO claim about the
 # network (it used to be parsed as 0, which means "unbounded", so `limit abc` silently scanned everything).
 out=$(timeout 20 "$BIN/kdbctl.exe" "127.0.0.1:$PORT" RGET '' '' asc limit abc 2>&1); check "bad RGET limit exit" "$?" "1"
@@ -59,6 +76,23 @@ esac
 out=$(timeout 60 "$BIN/kdbctl.exe" "127.0.0.1:$PORT" PIPE 4 200 SET pk 2>&1); check "PIPE exit" "$?" "0"
 contain "PIPE ok count" "$out" "ok=200 not_found=0 other=0"
 contain "PIPE mean carries its sample count" "$out" "ops_timed=200"
+
+# PIPE percentiles: the labels were right and the index was not (p50 printed the 5th percentile, p90 the 9th,
+# p99 the 9.9th).  Wrong percentiles of a monotone distribution still satisfy min<=p50<=p90<=p99<=max, so what
+# this can check is that the labels are there and that ordering; the arithmetic itself is pinned by the permille
+# table in the code and by inspection.
+contain "PIPE latency labels" "$out" "p50="
+contain "PIPE p99.9 label" "$out" "p99.9="
+mn=$(printf '%s\n' "$out" | tr ' ' '\n' | sed -n 's/^min=//p' | head -1)
+p50=$(printf '%s\n' "$out" | tr ' ' '\n' | sed -n 's/^p50=//p' | head -1)
+p90=$(printf '%s\n' "$out" | tr ' ' '\n' | sed -n 's/^p90=//p' | head -1)
+p99=$(printf '%s\n' "$out" | tr ' ' '\n' | sed -n 's/^p99=//p' | head -1)
+mx=$(printf '%s\n' "$out" | tr ' ' '\n' | sed -n 's/^max=//p' | head -1)
+ord=no
+if [ -n "$mn" ] && [ -n "$p50" ] && [ -n "$p90" ] && [ -n "$p99" ] && [ -n "$mx" ]; then
+  if [ "$mn" -le "$p50" ] && [ "$p50" -le "$p90" ] && [ "$p90" -le "$p99" ] && [ "$p99" -le "$mx" ]; then ord=ok; fi
+fi
+check "PIPE percentiles are ordered min<=p50<=p90<=p99<=max" "$ord" "ok"
 
 MSYS2_ARG_CONV_EXCL='*' taskkill /F /IM kdbsvr.exe >/dev/null 2>&1
 if [ "$fails" -eq 0 ]; then say "cli_smoke: PASS"; exit 0; fi
