@@ -4,7 +4,7 @@
 > lives only in prose or comments and relies on "remember not to do that" is filed in the **danger list**
 > in §7.
 
-Mechanical check: `python tools/check-principles.py` → `PRINCIPLES|OK|rules=20 fail=0` (a non-zero exit is a violation).
+Mechanical check: `python tools/check-principles.py` → `PRINCIPLES|OK|rules=21 fail=0` (a non-zero exit is a violation).
 A ratchet rule keeps its budget in ONE variable and derives both the failure threshold and the message from
 it, and it prints the measured count next to the budget - the earlier form kept the number in the message
 and a different number in the slice, so the message walked down while the threshold stayed put.
@@ -39,7 +39,7 @@ that is captured archival evidence, and reflowing it destroys it.
 
 | Principle | Why | Enforcement |
 |---|---|---|
-| **`ready` must be reported in full**: all application-layer state comes from the ready returned by `raft_advance`, and `raft_inspect` is **for the observation endpoint only** | otherwise the observation interface leaks into the decision path | **Mechanical ratchet**: budget for `raft_inspect` sites in the application layer and the tests = **1** (the only legal site = the STATS endpoint, `kserver.h:3433`); growth is an error |
+| **`ready` must be reported in full**: all application-layer state comes from the ready returned by `raft_advance`, and `raft_inspect` / `treap_inspect` is **for the observation endpoint only** | otherwise the observation interface leaks into the decision path | **Mechanical ratchet**: budget for `raft_inspect` / `treap_inspect` sites in the application layer and the tests = **1** (the only legal site = the STATS endpoint, `kserver.h:3433`); growth is an error |
 | The snapshot view is **read-only for non-owner threads**; `capture` and `finish` must run on the owner thread | while the snapshot thread stream-reads, the main thread is still mutating the treap | Discipline (the `treap.h` header comment states the invariant) |
 | The free point must be the **contract endpoint**, not "the place where the data was copied" | once a request has been handed to raft it is still that request's cookie and payload | Discipline + regression (single free point, `k_request_free`) |
 | At every close site: **save first, clear second, close third** | once cemon has closed, the object is void; a leftover handle = a delayed UAF | Discipline + crash-class regressions |

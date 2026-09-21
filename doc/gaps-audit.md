@@ -1290,6 +1290,12 @@ five unit suites, so those numbers were right all along.
 - **顺带量了一条基线**：干净服务端上，**第一条**一次性请求约 **1.0 s**（其后约 0.68 s）⇒ 不是 5 s 超时；先前两次
   探针里出现的首条超时在干净服务端上**不可复现**（那两次打的是被反复 kill/重启的服务端），记在此处以免被当成
   缺陷复现步骤。
+- **store 级快照 harness（第四轮残余项，已开始收口）**：`tests/kserver_test.c` 的 `drive_store` 分三阶段造出"记录带
+  **快照基址**、且 WAL 已越过扫描 ceiling"的存储（每阶段都自证：`snapshot.index>0` 且快照文件校验通过 ✓、unlink 返回 0 才算"前缀确已释放" ✓）；
+  首个用例 `server WAL recovery keeps a snapshot base behind a released prefix past the scan ceiling` 用 `treap_get` 断言恢复出的状态 ✓，
+  **红证成立**（停掉 A1 的尾部跳转 ⇒ 47/48 ✓）。过程中实测到两条机制：`k_server_open` 会以持久化配置覆盖 open 前设置的 cfg 字段；
+  mem 后端 `vfs_open` 对已 unlink 的路径会**新建**文件（存在性探测会复活被测前缀）。**仍未覆盖**：A7 的强制抬高回滚（载具已有、用例未写）、
+  A5 的 `prev_base>0` 守卫（需伪造载荷 ✓）、C3（需"变更在飞行中"的集群 harness ✓）。
 - **XP 客人机验证（C3-C8 + A4/A7 批，2026-09-22）**：`[kynovo_step.bat] size=4672 ver=H`、`[xp_tests.bat]
   size=5996 ver=G`、`build_exit=0 run_exit=0 tests_exit=0`、`error C`=0、`LNK`=0、17 条 `C4761`（与历次同数、同类别）；
   `SUMMARY: 5/5 · 19/19 · 221/221 · 47/47 · 5/5`。六条新用例逐字 PASS（41–46 号），含 A4 的
@@ -1369,9 +1375,18 @@ before using it.  Red case for the continuity rule: with it reverted to the old 
 `header tear + 0`.  The term merge has no red case of its own - with the continuity rule in place a stale segment
 no longer reaches the decode, so it is defence in depth (labelled as such in the review document).
 
-**What stays unred-proofed, and why.**  A7's two fixed parts have no case.  The forced-high base needs a store with
-two bases plus the forced-high rollback, i.e. the store-level snapshot harness this round's residuum already waits
-on.  The verify helper's failure mode is only observable on a filesystem - and without a vfs existence probe,
+**The store-level snapshot harness now exists** (`drive_store` in `tests/kserver_test.c`), and its first case
+covers **A1 with a snapshot base**: a store that really took a snapshot (certified: `snapshot.index > 0` and the
+file verifies) whose released prefix passes the scan ceiling must recover the snapshot's state, asserted through
+`treap_get` rather than `treap_inspect` (a new checker rule, 21, forbids branching on the latter).  **Red proof:**
+neutralising the tail jump so the walk falls through to the pre-fix `break` fails the case (47/48, on `rc==0` /
+`it recovers`).  Two measured facts went into the harness: opening a store loads its persisted configuration over
+whatever the caller set before `k_server_open`, and on the mem backend `vfs_open` creates an unlinked path, so an
+existence probe resurrects the prefix it is checking (the unlink return value is what certifies a release).
+
+**What still has no case.**  A7's forced-high rollback now has a vehicle - the harness can build the two-base
+store - but the case itself is not written yet.  A5's `prev_base>0` guard needs a store whose newest record names
+an unusable base while the earlier ones name base 0, which is a forged-payload case rather than a snapshot one.  The verify helper's failure mode is only observable on a filesystem - and without a vfs existence probe,
 "absent" and "present but empty" are indistinguishable from inside the process, so every assertion the suite could
 make passes either way.  A first version of that case was written, found not to discriminate (it passed with the fix
 reverted) and **removed**: a test that cannot fail is worse than no test, because it is read as coverage.
@@ -1398,7 +1413,8 @@ reconfig refusal needs a real in-flight change, and the harness cannot keep that
 graduating into the desired config, which legitimately ends the wait.  The guard is therefore a defensive fix with
 the audit's reasoning accepted on the code, and the case pins only what it can: a refusal answers an error and
 leaves a running wait's clock and notice budget alone.  Covering it properly needs a harness that can hold a config
-change in flight across an advance - the same store-level harness the recovery residuum (A1/A5) still waits on.
+change in flight across an advance.  The store-level snapshot harness added for A1 does not provide that: it drives
+recovery from a written store, not a live change, so C3's guard still has no case.
 
 One further defect was found **while** fixing C5 and is recorded here because no audit found it: the `STATS` format
 string printed `membership_targets_gompleted`.  Any external scraper reading that field by name would have missed

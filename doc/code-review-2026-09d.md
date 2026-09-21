@@ -60,7 +60,9 @@ ceiling`); with the fix it passes and the store refuses with `wal: replayed log 
 Residual, stated rather than implied: the test proves the *no-silent-empty* property. The other branch - the tail
 walk rebuilding a store whose retained records still carry the state, i.e. one with a snapshot base inside the tail -
 is what the jump is for and is **not** covered by a test yet; it would need the test to drive a snapshot (this suite
-does not). The next store-level test that drives snapshots should cover it.
+does not). **Now covered**: the store-level snapshot harness (`drive_store`) drives one, and the case
+`server WAL recovery keeps a snapshot base behind a released prefix past the scan ceiling` asserts the recovered
+state through `treap_get`; its red proof (the jump neutralised) fails at `rc==0` / `it recovers`.
 
 ### A2 `[me]` **[REFUTED in its reachable form; the comment was the defect]** HIGH: "the metadata stores the last ACKNOWLEDGED record" is a misleading description - the slot is a watermark
 
@@ -180,8 +182,9 @@ recovery.  `:1547` `file=vfs_open(path);` in the verify helper creates a missing
   being decoded.  The decode then failed and recovery refused, exactly where the rollback message it had just
   printed promised a successful recovery.  The first record that carried the base in use is now remembered
   (`base_rec_*`) and decoded from; the older-base path (`vseg/voff/vsize`) was already correct.  No case: staging it
-  needs a store with two bases and a forced-high base on top, which is the store-level snapshot harness the
-  recovery residuum still waits on - recorded as unred-proofed, not as covered.
+  needs a store with two bases and a forced-high base on top.  That harness now exists (`drive_store`), so this is a
+  case waiting to be written rather than a capability that is missing - still recorded as unred-proofed, not as
+  covered.
 - *The verify helper.*  `k_snapshot_verify_file` opened the path with `vfs_open`, which CREATES a missing file, so
   asking whether `.snap.<index>` verifies left a zero-length file behind - a question that manufactured its own
   answer.  It now probes one byte and unlinks what it would have created, the same rule the WAL scan applies to the

@@ -2131,9 +2131,111 @@ static void test_wal_recovery_continues_a_torn_tail_by_generation(void){
   TEST_END();
 }
 
+/* ---- the store-level snapshot harness (the fourth round's residuum) ----
+
+   A1's tail jump, A5's `prev_base>0` guard and A7's forced-high rollback are only reachable from a store whose
+   records carry a SNAPSHOT BASE - i.e. one that really took a snapshot.  Driving that here is the point: a case
+   that merely *hopes* it has a snapshot base passes for the wrong reason, so every case below certifies the base
+   exists (`snapshot.index > 0`, and the file verifies) before it asserts anything about recovery. */
+
+static unsigned int g_snapcase_seq;
+
+/* Drive a store so that its records carry a snapshot base AND its WAL has grown past `want_segments`.
+   Three phases, because each defeats the others: with snapshots at any normal cadence the cleanup releases the
+   whole log (the segment counter never leaves 0), without a snapshot there is no base, and the size arm of the
+   policy (`wal_bytes >= 4 * snapshot.size`) fires unless the snapshot is taken over a tree that outweighs the log
+   phase 2 writes.  So: grow a tree with every arm off, let exactly one snapshot happen over it, then switch the
+   arms off again and let the log run.  Returns 0 only when all three happened. */
+static int drive_store(k_server *s,const char *base,k_u64 seg_size,k_u64 want_segments){
+  k_u8 frame[K_FRAME_HEADER+64];
+  char key[24];
+  k_u32 total;
+  raft_i64 bl;
+  int i,phase;
+  setup(s,1,base);
+  if(k_server_open(s)!=0) return -1;
+  /* After the open, not before: opening a store loads its persisted configuration over whatever the caller set,
+     so a field written beforehand is silently reset to the default (measured: snapshot_segments read back as 10). */
+  s->cfg.wal_seg_size=seg_size;             /* rotate every few records */
+  s->cfg.snapshot_segments=1000000u;        /* arms off until phase 1 asks for one */
+  s->cfg.snapshot_entries=4000000000u;
+  if(elect(s)!=0) return -2;
+  k_server_client_accepted(s,(void*)(size_t)1);
+  for(phase=0;phase<3;phase++){
+    if(phase==1) s->cfg.snapshot_entries=1u;          /* exactly one snapshot, over the tree phase 0 built */
+    if(phase==2){
+      if(s->snapshot.index<=0) return -5;             /* no base: the store cannot reach the branch under test */
+      s->cfg.snapshot_entries=4000000000u;            /* arms off again, so the log can grow */
+    }
+    for(i=0;i<(phase==0?2000:4000);i++){
+      if(phase==1&&s->snapshot.index>0) break;
+      if(phase==2&&s->wal_meta.next.segment>want_segments) break;
+      if(phase==0) sprintf(key,"k%d",i);              /* k0 exists here, so the snapshot must hold it */
+      else if(phase==1) sprintf(key,"s%d",i);
+      else sprintf(key,"m%d",i);
+      bl=s->last_applied;
+      total=make_client_frame(frame,sizeof(frame),K_REQ_SET,(k_u32)(i+1),key,(k_u32)strlen(key),"v",1);
+      if(!total) return -3;
+      k_server_client_received(s->connections,frame,total);
+      apply_until(s,bl+1);
+      for(bl=0;bl<(phase==1?40:3);bl++) turn(s,20u);
+    }
+  }
+  return s->wal_meta.next.segment>want_segments?0:-4;
+}
+
+/* A1's tail-scan branch with a snapshot base in play: the scan ceiling stops the walk before it ever reaches the
+   segment holding the newest record, and what it must not do is come back having read nothing - a store that HAS
+   a snapshot base and acknowledged records must recover THAT state, silently or otherwise. */
+static void test_wal_recovery_keeps_a_snapshot_base_past_the_ceiling(void){
+  k_server s;
+  char base[64];
+  char path[K_URI_MAX];
+  const unsigned char *val=0;
+  unsigned int vlen=0;
+  k_u64 seg,released=0,snap_seg=0;
+  int i,rc,recovered=0;
+  TEST_BEGIN("server WAL recovery keeps a snapshot base behind a released prefix past the scan ceiling");
+  sprintf(base,"mem://kstest-snapceil-%u",g_snapcase_seq++);
+  rc=drive_store(&s,base,900u,K_WAL_SCAN_EMPTY_PREFIX_MAX+1u);
+  TEST_ASSERT(rc==0,"drove a store with a snapshot base past the scan ceiling");
+  TEST_ASSERT(s.wal_meta.next.segment>K_WAL_SCAN_EMPTY_PREFIX_MAX,"the WAL really passed the scan ceiling");
+  /* certify the base this case is about: without a snapshot the branch under test is not reached at all */
+  TEST_ASSERT(s.snapshot.index>0,"a snapshot was taken on the way");
+  TEST_ASSERT(k_snapshot_verify_file(base,s.snapshot.index)==1,"and its file verifies");
+  snap_seg=s.snapshot_wal_segment;            /* before the release: this is what the base record needs */
+  k_server_release(&s);
+  /* The segment the snapshot itself was taken in is the one the base record lives in - the recovery is meant to
+     find the base there, so it stays.  Everything else below the ceiling goes, which is what makes the scan walk
+     a long empty prefix instead of starting where the state is. */
+  for(seg=0;seg<=K_WAL_SCAN_EMPTY_PREFIX_MAX;seg++){
+    if(seg==snap_seg) continue;
+    if(k_path_wal_segment(path,base,seg)==0&&vfs_unlink(path)==0) released++;
+  }
+  /* The unlink return value is the evidence: it is 0 only when the inode was found and unlinked.  Do NOT probe
+     with vfs_open - on the mem backend an open of an unlinked path CREATES an empty file, so a probe would both
+     resurrect the prefix and make the store it is about to recover a different one. */
+  TEST_ASSERT(released>0,"the prefix really was released");
+  setup(&s,1,base);
+  rc=k_server_open(&s);
+  if(rc==0){
+    for(i=0;i<300;i++) turn(&s,20u);
+    if(elect(&s)==0){
+      /* k0 was written while segment 0 was current, and segment 0 is in the prefix this case released, so the
+         only thing that can still hold it is the snapshot.  Reading it through the ordinary query path is the
+         honest assertion: treap_inspect is an observation, not something to branch on. */
+      recovered=treap_get(s.tree,(const unsigned char*)"k0",2u,&val,&vlen);
+    }
+    k_server_release(&s);
+  }
+  TEST_ASSERT(rc==0,"it recovers");
+  TEST_ASSERT(recovered==1,"with the snapshot's state, not an empty tree");
+  TEST_END();
+}
+
 int main(int argc,char **argv){
   if(argc>=3&&strcmp(argv[1],"--apply-stress")==0) return apply_stress(test_strtoull(argv[2]),argc>=4?test_strtoull(argv[3]):TEST_U64_C(4096),argc>=5&&strcmp(argv[4],"thread")==0,argc>=6&&strcmp(argv[5],"nosnap")==0);
-  TEST_PLAN(47);
+  TEST_PLAN(48);
   g_run_tag=0;
   if(k_monotonic_us(&g_run_tag)!=0) g_run_tag=(k_u64)time(0);
   test_fcall_gate_reopens_when_its_request_dies();
@@ -2182,6 +2284,7 @@ int main(int argc,char **argv){
   test_topology_is_answered_locally();
   test_shutdown_stops_even_when_the_ack_cannot_be_sent();
   test_wal_recovery_continues_a_torn_tail_by_generation();
+  test_wal_recovery_keeps_a_snapshot_base_past_the_ceiling();
   test_mem_store_accepts_worker_threads();
   TEST_SUMMARY();
   return TEST_EXIT_CODE();

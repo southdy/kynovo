@@ -272,6 +272,11 @@ sites = scan(r'raft_inspect', ['code/kserver.h', 'code/kdbsvr.c', 'tests/raft_cl
 # Name the sanctioned site too: the rule used to report a count, so a reader could not tell WHICH call is the
 # one allowed (review 4th round E7).
 report('raft_inspect only in the diagnostics path (budget 1): allowed=%s' % (sites[:1] or ['<none>']), sites[1:] or [])
+# Same contract for the other inspect: treap_info is an observation of the tree, so a caller that branches on it
+# (or on a field of it) has put business logic behind an inspection.  One site is allowed - the INFO/STATS
+# builder that fills in the reported sizes - and it is named for the same reason as above.
+sites = scan(r'treap_inspect\b', ['code/kserver.h', 'code/kdbsvr.c', 'tests/kserver_test.c', 'tests/kserver_cluster_fuzz.c'])
+report('treap_inspect only in the diagnostics path (budget 1): allowed=%s' % (sites[:1] or ['<none>']), sites[1:] or [])
 
 # 8. unbounded formatting ratchet.  The INFO/STATS line used to be three unbounded sprintf calls that
 # appended through a `text+len` pointer into a fixed buffer, so one more field could overflow it.  It is

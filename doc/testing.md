@@ -46,7 +46,7 @@ and their `run-*` versions, `selftest`, `kdbsvr`, `kdbctl`, `bench*`, `cemon-ben
 |---|---|---|---|---|
 | L0 | compile gate | `./build.sh` | rc=0 and 0 warnings in `build.log` | ~90s |
 | L1a | raft unit | `./build/raft_test.exe` | `SUMMARY: 221/221 passed` | ~1s |
-| L1b | server unit (with stress mode) | `./build/kserver_test.exe` | `SUMMARY: 47/47 passed` | ~45s |
+| L1b | server unit (with stress mode) | `./build/kserver_test.exe` | `SUMMARY: 48/48 passed` | ~45s |
 | L1c | client unit | `./build/kclient_test.exe` | `SUMMARY: 19/19 passed` | ~0.1s |
 | L1d | cemon event-loop unit | `./build/cemon_test.exe` | `SUMMARY: 5/5 passed` | ~2s (includes a 2s long wait) |
 | L1e | end-to-end self-test (single process, with membership change/bootstrap/election) | `./build/selftest.exe` | `selftest: PASS` | ~1–3s |
@@ -335,6 +335,20 @@ against the repository before transfer:
   `PASS membership: the note is bound to the request that submitted the change, not to the server  961 us`;
   the storage seam's real-thread case still holds there too (`PASS vfs mem backend: two threads, two paths in one
   hash bucket  202747 us`), and all five of its cases build and pass under cl 12.00.8804 with the Platform SDK;
+
+**The store-level snapshot harness (added after that guest run).**  `kserver_test` now drives a store whose
+records carry a real snapshot base - three phases, because each defeats the others: grow a tree with every
+snapshot arm off, let exactly one snapshot happen over it, then switch the arms off again and let the WAL pass
+the scan ceiling - and the case `server WAL recovery keeps a snapshot base behind a released prefix past the
+scan ceiling` recovers that store after releasing the prefix.  It certifies what it depends on (`snapshot.index
+> 0` and the file verifies, the unlink calls returned 0) and asserts through the ordinary query path
+(`treap_get`), because `treap_inspect` is an observation, not something to branch on - a rule the checker now
+enforces for `treap_inspect` the same way it does for `raft_inspect`.  Red proof: neutralising A1's tail jump so
+the walk falls through to the pre-fix `break` makes the case fail (`rc==0` / `it recovers`), 47/48.  Two traps
+were measured on the way and are worth keeping: opening a store loads its **persisted** configuration over
+whatever the caller set before `k_server_open` (a pre-open `cfg.snapshot_segments` read back as the default 10),
+and on the mem backend `vfs_open` CREATES an unlinked path, so an existence probe resurrects the very prefix it
+is checking.  This case has not been run on the guest yet; it is in the plan the next guest run will fetch.
 
 **Two guest runs were void, and why.**  The staging area has `code/` and `tests/` subdirectories because
 `kynovo_step.bat` fetches paths with a directory prefix (`GET code/kserver.h`).  A refresh that copies the
