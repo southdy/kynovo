@@ -490,7 +490,17 @@ that ran.  Left as it is, with this note so the claim is not re-raised.
    `raft_inspect only in the diagnostics path (budget 1): allowed=['code/kserver.h:3825: ...']`.
 3. **`git_out` ignored the return code.**  A failing git produced empty stdout, which is exactly what makes a rule
    green for want of files (E3's problem from the other side).  `git_out` now records non-zero exits and a new rule
-   reports them: `every git command the rules rely on exited 0`.  That is rule 20 - `PRINCIPLES|OK|rules=20 fail=0`.
+   reports them.  That is rule 20 - `PRINCIPLES|OK|rules=20 fail=0`.
+
+   **The first version of that rule was wrong, and CI said so.**  It recorded *every* git call, and the rules also
+   run `git diff --name-only HEAD~1 HEAD` - which exits 128 on CI, because CI checks out a **shallow clone** where
+   `HEAD~1` does not exist.  Both CI jobs went red on the commit that added the rule while the tree was fine, which
+   is exactly what a new rule is for and the honest way to find out.  The rule now records only the list-producing
+   calls (`git ls-files ...`), whose emptiness is the state that makes rules green; a shallow clone's missing
+   `HEAD~1` is a property of the checkout, not of the tree.  Reproduced locally in a clone made the same way
+   (`git clone --depth 1`): before the narrowing, `FAIL every git command the rules rely on exited 0` plus
+   `PRINCIPLES|FAIL|rules=20 fail=1`; after it, `PRINCIPLES|OK|rules=20 fail=0`.  The renamed rule says what it
+   checks: `every file list the rules read came from a git that exited 0`
 4. **`cli_smoke.sh`'s piped assertions accepted one-character needles.**  `contain "piped script ran the first
    command" "$out" "a"` was satisfied by any failure message containing an "a".  The script now stores
    `VAL_ONE`/`VAL_TWO` and asserts on those, so the check can only pass if the values actually came back.

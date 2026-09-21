@@ -49,7 +49,11 @@ def git_out(*args):
     like an empty list - and an empty list is what makes a rule green for want of files (review 4th round E7)."""
     if not GIT: return None
     p = subprocess.run([GIT] + list(args), stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
-    if p.returncode != 0:
+    # Only the LIST-PRODUCING calls are recorded: their emptiness is what makes a rule green for want of files.
+    # `git diff HEAD~1 HEAD` is deliberately not one of them - CI checks out a shallow clone where HEAD~1 does not
+    # exist, so it exits 128 there every time, and flagging it made this rule red on CI while the tree was fine
+    # (caught by CI on the commit that added it, which is the honest way to find out).
+    if p.returncode != 0 and args and args[0] == 'ls-files':
         GIT_FAILURES.append('git %s -> rc=%d %s' % (' '.join(args), p.returncode, (p.stderr or '').strip()[:70]))
     return p.stdout
 
@@ -361,7 +365,7 @@ report('every request type is accounted for in the files that must know it (%d t
 # recorded when the list is built; this is where it becomes a failure, and the count is printed so a list that
 # shrank to near-nothing is visible in the ok line too.
 report('every git-derived file list is non-empty, so no rule is green for want of a file to look at (tests/ has %d C/H files)' % len(TESTS_C), GIT_LIST_PROBLEMS)
-report('every git command the rules rely on exited 0 (a failed git used to look like an empty list)', GIT_FAILURES)
+report('every file list the rules read came from a git that exited 0 (a failed ls-files used to look like an empty tree)', GIT_FAILURES)
 
 print('PRINCIPLES|%s|rules=%d fail=%d' % ('OK' if not fails else 'FAIL', rules, fails))
 sys.exit(1 if fails else 0)
