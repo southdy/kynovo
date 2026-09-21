@@ -308,13 +308,25 @@ against the repository before transfer:
   tests_exit=0`, with `error C` and `LNK` counts of **0** in both logs.  MSVC 6 reports 17 `C4761` warnings on the
   same code it always did - the documented class below, not a regression: those lines are unchanged since before
   this round;
-- unit suites at that guest run: `cemon_test 5/5`, `kclient_test 19/19`, `raft_test 221/221`,
-  `kserver_test 41/41`, `vfs_fault_test 5/5` - the same counts the local gate reported at that time.  Every case the fourth
-
-  **The `kserver_test 41/41` counts above predate the C3-C8 and A4 batches.**  Those added six cases
-  (41 -> 47) and updated `doc/`; they have not run on the guest yet, so the guest's 41/41 covers them exactly as
-  much as it covers the A1 case it was re-run for - i.e. only after the next `go.bat` refresh.  The same boundary,
-  stated the same way, is recorded for the A1 case above.  review round added passes verbatim on the guest:
+- unit suites, **latest guest run** (2026-09-22, the `cc05159` sources): `cemon_test 5/5`, `kclient_test 19/19`,
+  `raft_test 221/221`, `kserver_test 47/47`, `vfs_fault_test 5/5`, with `error C` and `LNK` counts of **0**;
+  MSVC 6 reports 17 `C4761` warnings - the same class and the same count as every earlier run (see the note
+  below), not a regression.  The six cases the C3-C8 and A4/A7 batches added build and pass verbatim here:
+  `PASS membership: a refused change answers an error and leaves a running wait's clock alone  711 us`,
+  `PASS TOPOLOGY: each pending entry carries its own age, not one server-wide accumulator  17 us`,
+  `PASS TOPOLOGY: a refused change's leftover pending entry says where it came from  435 us`,
+  `PASS TOPOLOGY is answered locally, even when a request through the barrier would be refused  666 us`,
+  `PASS SHUTDOWN stops the server even when the ack cannot be sent  489 us`,
+  `PASS server WAL recovery judges a segment that continues a torn tail by generation  3425 us`
+  - and the case numbers run `[41/47]`..`[46/47]`, so the run can be seen to have executed the new plan;
+- **how that run is known to be the new sources, not a re-run of an old tree.**  The bootstrap prints its own
+  `ver=`/`size=` and `GET failures: 0` whether or not the transfer carried new bytes, so freshness is read from the
+  artifacts instead: the log's `Transfer successful: N bytes` lines carry **278831** for `code/kserver.h` and
+  **102251** for `tests/kserver_test.c` - the sizes of exactly the two files these batches changed - and the suite's
+  own plan number agrees (`47/47` against `TEST_PLAN(47)`);
+- the earlier guest run's `41/41` counts (and the A1 case's, above) were **superseded** by this one: see the two
+  void runs recorded below.  Every case the fourth review round added before this batch passes verbatim on the
+  guest:
   `PASS proto: a handler that frees the rx buffer cannot be parsed through in the same feed  38 us` (the case that
   segfaults inside `kclient_test` when its guard is removed),
   `PASS server InstallSnapshot replaces a stale longer file instead of keeping its tail  999 us`,
@@ -323,6 +335,16 @@ against the repository before transfer:
   `PASS membership: the note is bound to the request that submitted the change, not to the server  961 us`;
   the storage seam's real-thread case still holds there too (`PASS vfs mem backend: two threads, two paths in one
   hash bucket  202747 us`), and all five of its cases build and pass under cl 12.00.8804 with the Platform SDK;
+
+**Two guest runs were void, and why.**  The staging area has `code/` and `tests/` subdirectories because
+`kynovo_step.bat` fetches paths with a directory prefix (`GET code/kserver.h`).  A refresh that copies the
+repository's files into the staging ROOT updates files the guest never fetches, and the run then builds the
+previous refresh's sources: both runs reported `41/41` with `Transfer successful: 270417 bytes` for
+`code/kserver.h` and `84890` for `tests/kserver_test.c` - the sizes of the tree from the refresh before the
+batches.  The bootstrap's own `ver=`/`size=`/`GET failures: 0`, its exit codes and its clean `error C`/`LNK`
+counts all said the run was fine, which is exactly why the artifact (the byte counts, the case count) is what gets
+read here.  `doc/gaps-audit.md` records this, and the refresh procedure now updates the fetched subdirectories and
+certifies the channel by fetching the same prefixed paths the guest uses.
 
 The fuzz drivers were added to that evidence afterwards.  With the seam test included, every one of the
 twenty-four compile/link/run exit codes is zero as well (`cl` and `link` for eight drivers, then eight runs):

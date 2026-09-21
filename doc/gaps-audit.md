@@ -1290,6 +1290,19 @@ five unit suites, so those numbers were right all along.
 - **顺带量了一条基线**：干净服务端上，**第一条**一次性请求约 **1.0 s**（其后约 0.68 s）⇒ 不是 5 s 超时；先前两次
   探针里出现的首条超时在干净服务端上**不可复现**（那两次打的是被反复 kill/重启的服务端），记在此处以免被当成
   缺陷复现步骤。
+- **XP 客人机验证（C3-C8 + A4/A7 批，2026-09-22）**：`[kynovo_step.bat] size=4672 ver=H`、`[xp_tests.bat]
+  size=5996 ver=G`、`build_exit=0 run_exit=0 tests_exit=0`、`error C`=0、`LNK`=0、17 条 `C4761`（与历次同数、同类别）；
+  `SUMMARY: 5/5 · 19/19 · 221/221 · 47/47 · 5/5`。六条新用例逐字 PASS（41–46 号），含 A4 的
+  `server WAL recovery judges a segment that continues a torn tail by generation  3425 us`。**新鲜度由产物证明**：
+  取件日志含 `Transfer successful: 278831 bytes`（`code/kserver.h`）与 `102251`（`tests/kserver_test.c`）—— 正是这两批改过的两个文件；
+  `doc/testing.md` 第七节已收口。
+- **两次作废的客人机运行（同一批，取件路径错位 —— 我的操作错误）**：`.bat` 取的是带前缀的路径
+  （`GET code/kserver.h`），服务端因此解析到 `staging/code/`、`staging/tests/`；我前两次把仓库源码复制到了暂存**根目录**，
+  那两份从未被更新 ⇒ 客人机编译的是**上一次刷新**的源码。证据：两次都报 `41/41`，且取件字节数为 `270417`（`code/kserver.h`）与
+  `84890`（`tests/kserver_test.c`）= 批改之前的树，与我"三向一致"的自检**都不矛盾**（我核对的是根目录文件，不是被取件的那份）。
+  脚本自身的 `ver=`/`size=`/`GET failures: 0`/退出码/`error C`=0 全程正常 ⇒ 唯一能识别空跑的证据是**字节数与用例数**。
+  修正：刷新 `staging/code/`、`staging/tests/`，并用**与客人机相同的带前缀路径**取回自证（`GET code/kserver.h` ⇒ 278831，md5 与仓库一致）；
+  同时删除根目录的扁平副本，避免下次自检再被它骗过。
 - **XP 客人机验证（已跑完，第四轮收口复跑）**：暂存刷新后由客人机执行 `go.bat`（`kynovo_step.bat` size=4672
   ver=**H**、`xp_tests.bat` size=5996 ver=**G**，脚本自报尺寸+版本、且与暂存区一致 ⇒ 可证明跑的是新脚本），
   `build_exit=0 / run_exit=0 / tests_exit=0`，两份日志里 `error C` 与 `LNK` 均为 **0**；MSVC 6 的 17 条 `C4761`
