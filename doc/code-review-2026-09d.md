@@ -210,7 +210,7 @@ benign today because the wrapper forwards `&vfs_mem.base`.  The lock no longer h
 
 ## C. Request/protocol and membership visibility
 
-### C1 `[me]` HIGH: the membership note is still server-global, so it is misdelivered or silently killed
+### C1 `[me]` **[FIXED]** HIGH: the membership note is still server-global, so it is misdelivered or silently killed
 
 `code/kserver.h:575` `char membership_note[128];` · set at `:3424-3434` · consumed at `:4176`
 `if(request->type==K_REQ_MEMBER&&request->conn&&server->membership_note_len>0){` - by *whichever* MEMBER commits
@@ -219,12 +219,29 @@ client's response is delivered; a note set for one request is answered on anothe
 `!request->conn` / `CATCHUP_FAILED` terminal paths (`:4108-4137`, `:4149-4157`) never clear it.  The third-round
 write-up says this was fixed by putting the note on the request - it was not, and that text must be corrected.
 
-### C2 `[me]` MEDIUM: the note's worst case does not fit its buffer (three auditors, same arithmetic)
+**Fix.** The note now lives on the `k_request` that submitted the change (`char member_note[128]` +
+`member_note_len`), is rendered there at submit time, and is attached to that request's own reply; the server-wide
+`membership_note`/`membership_note_len` fields are gone, so there is no path by which one submitter's text can
+reach another client, no overwrite race between two submitters, and no leftover text waiting to be printed with a
+later reply.  **The previous round's document claimed this had already been moved onto the request; that claim was
+false** - the field was still on the server, set in `k_server_submit_member` and read in the result handler.
+`test_membership_note_is_bound_to_its_request` drives two submitters and asserts each note sits on its own request;
+it is a guard for the new contract rather than a red case for the old bug (the old shape has no per-request field
+to assert on), and it is labelled that way.
+
+### C2 `[me]` **[FIXED]** MEDIUM: the note's worst case does not fit its buffer (three auditors, same arithmetic)
 
 Fixed text 96 chars + node id + ms + label, with `:3340` `return source==1?"submitted by auto-replace":(source==2?"client request":"submitted elsewhere");`
 fed by `:3429` from `server->pending_source[0]`.  With `"submitted by auto-replace"` (25) and a 2-digit id the
 rendering is 128 > the 127 `k_snprintf(dst,128,…)` can write, so the sentence the feature exists to deliver is cut
 mid-word.  The comment at `:3426-3428` ("Measured worst case … = 118 bytes") budgets 14 for the label.
+
+**Fix.** The render now checks its own result and, when the text would not fit, ships an EMPTY note and prints why
+(`the note for the change submitted here no longer fits its 128-byte buffer (N bytes) - widen it`) instead of
+handing the operator half a sentence.  The comment carries the arithmetic over the reachable inputs.  The test
+asserts the note fits and that the stored length excludes the terminator; it exercises the longest label
+("submitted by auto-replace", 26 bytes) but with a short node id and a 4-digit age, so the absolute worst case
+(11-digit id + 20-digit age) is bounded by the arithmetic in the comment rather than measured.
 
 ### C3 `[audit]` MEDIUM-HIGH: a refused change resets the *whole* wait clock
 

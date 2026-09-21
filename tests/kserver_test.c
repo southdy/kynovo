@@ -1763,9 +1763,60 @@ static void test_membership_wait_reporting(void){
   TEST_END();
 }
 
+/* The membership note must travel WITH the request that submitted the change (fourth-round review C1).  It
+   used to be one field on the server: whichever MEMBER request committed next carried it - possibly another
+   client's - a second submitter overwrote it before the first reply went out, and one that never got attached
+   stayed behind to be printed with a later, unrelated reply. */
+static k_conn *conn_by_sock(k_server *s,void *sock){
+  k_conn *c;
+  for(c=s->connections;c;c=c->next) if(c->sock==sock) return c;
+  return 0;
+}
+static void test_membership_note_is_bound_to_its_request(void){
+  k_server s;
+  k_cluster c;
+  k_conn *ca,*cb;
+  k_request *ra=0,*rb=0,*it;
+  int ids[1];
+  TEST_BEGIN("membership: the note is bound to the request that submitted the change, not to the server");
+  memset(&s,0,sizeof(s));
+  memset(&c,0,sizeof(c));
+  c.count=1;
+  c.nodes[0].id=1; c.nodes[0].client_port=7100; c.nodes[0].peer_port=7101; strcpy(c.nodes[0].host,"127.0.0.1");
+  k_server_init(&s,1,7100,7101,"mem://kstest-mnote-1",&c);
+  s.runtime_backend="sync";
+  s.transport=&cap_transport;
+  s.admission=1;
+  cap_reset();
+  TEST_ASSERT(k_server_open(&s)==0,"open");
+  TEST_ASSERT(elect(&s)==0,"leader");
+  k_server_client_accepted(&s,(void*)(size_t)1);
+  k_server_client_accepted(&s,(void*)(size_t)2);
+  ca=conn_by_sock(&s,(void*)(size_t)1);
+  cb=conn_by_sock(&s,(void*)(size_t)2);
+  TEST_ASSERT(ca!=0&&cb!=0,"two client connections");
+  s.pending[0]=2; s.pending_source[0]=1; s.pending_count=1; s.membership_pending_ms=2500;
+  ids[0]=1;                                  /* a no-op reconfigure: enough to reach the request, no quorum needed */
+  k_server_submit_member(&s,ca,11,K_MEMBER_RECONFIG,ids,1);
+  s.pending[0]=2; s.pending_source[0]=1; s.pending_count=1;
+  k_server_submit_member(&s,cb,12,K_MEMBER_RECONFIG,ids,1);
+  for(it=s.requests;it;it=it->next){
+    if(it->id==11) ra=it;
+    if(it->id==12) rb=it;
+  }
+  TEST_ASSERT(ra!=0&&rb!=0,"both membership requests are in flight");
+  TEST_ASSERT(ra->member_note_len>0,"the first submitter's note is on its own request");
+  TEST_ASSERT(rb->member_note_len>0,"and the second submitter's note did not overwrite it");
+  TEST_ASSERT(ra->member_note_len==rb->member_note_len,"identical state renders identical text");
+  TEST_ASSERT(ra->member_note[ra->member_note_len-1]!='\0',"the stored length excludes the terminator");
+  TEST_ASSERT(ra->member_note_len<sizeof(ra->member_note),"the note fits its buffer");
+  k_server_release(&s);
+  TEST_END();
+}
+
 int main(int argc,char **argv){
   if(argc>=3&&strcmp(argv[1],"--apply-stress")==0) return apply_stress(test_strtoull(argv[2]),argc>=4?test_strtoull(argv[3]):TEST_U64_C(4096),argc>=5&&strcmp(argv[4],"thread")==0,argc>=6&&strcmp(argv[5],"nosnap")==0);
-  TEST_PLAN(40);
+  TEST_PLAN(41);
   g_run_tag=0;
   if(k_monotonic_us(&g_run_tag)!=0) g_run_tag=(k_u64)time(0);
   test_fcall_gate_reopens_when_its_request_dies();
@@ -1807,6 +1858,7 @@ int main(int argc,char **argv){
   test_snapshot_wal_byte_accounting();
   test_rx_buffer_admission_accounting();
   test_membership_wait_reporting();
+  test_membership_note_is_bound_to_its_request();
   test_mem_store_accepts_worker_threads();
   TEST_SUMMARY();
   return TEST_EXIT_CODE();

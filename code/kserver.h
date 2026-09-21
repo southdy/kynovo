@@ -370,6 +370,13 @@ struct k_request{
   k_u64 admit_ms;        /* server-injected time at admission; the terminal result reports the age */
   k_u64 submit_ms;       /* when the request was handed to raft: splits the age into "waited for a batch
                             or a WAL slot" and "waiting for durable + the wake" */
+  /* One-shot note for the reply to THIS membership change.  It used to be a single field on the server, so it
+     was delivered to whichever MEMBER request committed next - possibly another client's - a second submitter
+     overwrote it before the first reply went out, and an unattached one stayed behind to be printed with a
+     later, unrelated reply (fourth-round review C1: the previous round's document claimed this had already
+     been moved onto the request; that claim was false). */
+  char member_note[128];
+  k_u32 member_note_len;
 };
 static k_u32 k_request_bucket(const void *cookie){
   k_u64 v=(k_u64)(size_t)cookie;
@@ -584,8 +591,6 @@ struct k_server{
   k_u32 membership_change_completed;  /* changes that committed and graduated their catch-up target */
   k_u32 membership_notice_count;      /* reminders printed for the current/last wait (rate-limit proof) */
 
-  char membership_note[128];          /* one-shot note for the response of the change being submitted */
-  k_u32 membership_note_len;          /* 0 = nothing to add (the ordinary case) */
   int snapshot_cleanup_busy;
   int snapshot_failed;
   int snapshot_cleanup_failed;
@@ -3479,17 +3484,23 @@ static int k_server_submit_member(k_server *server,k_conn *conn,k_u32 request_id
   /* A configuration change that arrives while another is still waiting does not cancel the wait by itself -
      but the operator has to know they are touching a cluster with a change in flight, and today their only
      channel is the response to this very command (the CLI prints it).  One shot, cleared when consumed. */
-  server->membership_note_len=0;
+  request->member_note_len=0;
   if(conn&&server->pending_count>0){
-    /* The text has to FIT: the buffer is 128 bytes, the old wording needed 131 and k_snprintf truncates
-       silently, so the operator got a cut-off sentence.  Measured worst case here: 11 + 4 + 23 + 6 + 2 + 14
-       + 58 = 118 bytes. */
-    int n=k_snprintf(server->membership_note,sizeof(server->membership_note),
+    /* The text has to FIT: the buffer is 128 bytes and k_snprintf truncates silently, which once cut the
+       operator's sentence in half.  Worst case over every reachable input: 11 (node id) + 4 + 20 (ms) + 6 = 41
+       for the prefix, + 2 + 19 ("submitted elsewhere", the longest label this path can carry) + 58 for the
+       tail = 120 bytes.  If a later edit ever pushes it past the buffer, the note goes out empty and the log
+       says so, instead of shipping half a sentence. */
+    int n=k_snprintf(request->member_note,sizeof(request->member_note),
                      "note: node %d is still catching up (%" K_U64_FMT "ms, %s); this change was layered on an"
                      " uncommitted config change",
                      server->pending[0],server->membership_pending_ms,
                      k_server_membership_source_label(server->pending_source[0]));
-    server->membership_note_len=(n>0)?(k_u32)n:0u;
+    if(n<=0||(k_u32)n>=sizeof(request->member_note)){
+      request->member_note_len=0;
+      printf("membership: the note for the change submitted here no longer fits its %u-byte buffer (%d bytes)"
+             " - widen it\n",(unsigned)sizeof(request->member_note),n);
+    }else request->member_note_len=(k_u32)n;
     printf("membership: a client config change was submitted while node %d was still catching up"
            " (%" K_U64_FMT "ms, %s)\n",server->pending[0],server->membership_pending_ms,
            k_server_membership_source_label(server->pending_source[0]));
@@ -4231,10 +4242,10 @@ static int k_server_handle_client_result(k_server *server,const raft_client_resu
       k_request_free(server,request);
       return 0;
     }
-    if(request->type==K_REQ_MEMBER&&request->conn&&server->membership_note_len>0){
+    if(request->type==K_REQ_MEMBER&&request->conn&&request->member_note_len>0){
       k_server_send_response(server,request->conn,request->id,K_STATUS_OK,result->leader_id,
-                             server->membership_note,server->membership_note_len);
-      server->membership_note_len=0;
+                             request->member_note,request->member_note_len);
+      request->member_note_len=0;
     }else{
       k_server_send_response(server,request->conn,request->id,K_STATUS_OK,result->leader_id,0,0);
     }
