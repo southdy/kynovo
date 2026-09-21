@@ -1,0 +1,109 @@
+BEGIN [1/41] server: freeing the FCALL that holds the write gate reopens it
+PASS  server: freeing the FCALL that holds the write gate reopens it  167 us
+BEGIN [2/41] first client request in the accept cycle is answered (CLI send-from-connect)
+BEGIN [3/41] server single-node self-elect (sync runtime)
+PASS  server single-node self-elect (sync runtime)  70 us
+BEGIN [4/41] server single-node SET applies to state machine
+PASS  server single-node SET applies to state machine  81 us
+BEGIN [5/41] server single-node GET reads back the value
+PASS  server single-node GET reads back the value  83 us
+BEGIN [6/41] server single-node crash/restart recovers state
+PASS  server single-node crash/restart recovers state  123 us
+BEGIN [7/41] server: elapsed step carries the sub-ms remainder
+PASS  server: elapsed step carries the sub-ms remainder  4 us
+BEGIN [8/41] server: fresh batch age starts at its own arrival
+PASS  server: fresh batch age starts at its own arrival  143 us
+BEGIN [9/41] server WAL recovery scans past a stale (un-fsynced) meta slot
+PASS  server WAL recovery scans past a stale (un-fsynced) meta slot  106 us
+BEGIN [10/41] server WAL recovery skips a torn (partial) tail record
+wal: segment 0 ends with a torn payload at offset 349 (the record was never completed, so it was never acked)
+PASS  server WAL recovery skips a torn (partial) tail record  98 us
+BEGIN [11/41] server WAL recovery refuses a corrupt ACKED record (fail-stop)
+wal: segment 0 offset 229 fails its CRC check (generation 3): refusing to recover
+fatal: cannot start server: state restore failed (unreadable store or corrupt state) at mem://kstest-walcorrupt-0
+PASS  server WAL recovery refuses a corrupt ACKED record (fail-stop)  97 us
+BEGIN [12/41] server WAL recovery refuses a corrupt ACKED record after the checkpoint
+wal: segment 0 offset 109 fails its CRC check (generation 2): refusing to recover
+fatal: cannot start server: state restore failed (unreadable store or corrupt state) at mem://kstest-walafter-0
+PASS  server WAL recovery refuses a corrupt ACKED record after the checkpoint  90 us
+BEGIN [13/41] server WAL recovery refuses a skipped generation
+wal: segment 0 jumps from generation 2 to 7 (a record is missing inside the segment): refusing to recover
+fatal: cannot start server: state restore failed (unreadable store or corrupt state) at mem://kstest-walgap-0
+PASS  server WAL recovery refuses a skipped generation  83 us
+BEGIN [14/41] server WAL recovery across a real segment rotation
+PASS  server WAL recovery across a real segment rotation  389 us
+BEGIN [15/41] server WAL recovery refuses a deleted newest segment (fail-stop)
+wal: the metadata says the record at segment 5 offset 122 was acknowledged, but the log ends at segment 4 offset 854 (records are missing): refusing to recover
+fatal: cannot start server: state restore failed (unreadable store or corrupt state) at mem://kstest-walmiss-0
+PASS  server WAL recovery refuses a deleted newest segment (fail-stop)  430 us
+BEGIN [16/41] server InstallSnapshot replaces a stale longer file instead of keeping its tail
+snapshot: the install of index 7 left bytes past its end (stale longer incarnation or a torn write): the file was discarded
+PASS  server InstallSnapshot replaces a stale longer file instead of keeping its tail  68 us
+BEGIN [17/41] server WAL recovery refuses a cut in the middle of the log (fail-stop)
+wal: the metadata says the record at segment 8 offset 122 was acknowledged, but the log ends at segment 3 offset 854 (records are missing): refusing to recover
+fatal: cannot start server: state restore failed (unreadable store or corrupt state) at mem://kstest-midcut-1
+PASS  server WAL recovery refuses a cut in the middle of the log (fail-stop)  445 us
+BEGIN [18/41] server WAL recovery refuses to start empty behind a released prefix past the scan ceiling
+snapshot: verified 382 (4880 bytes)
+wal: replayed log has a hole at index 400 (expected 383): refusing to recover
+fatal: cannot start server: state restore failed (unreadable store or corrupt state) at mem://kstest-walceil-2
+PASS  server WAL recovery refuses to start empty behind a released prefix past the scan ceiling  4233 us
+BEGIN [19/41] server WAL durable meta slot only advances at a checkpoint
+PASS  server WAL durable meta slot only advances at a checkpoint  76 us
+BEGIN [20/41] server WAL meta with both slots torn refuses to start (fail-stop)
+wal: the WAL metadata under 'mem://kstest-walmetabad-0' exists but holds no decodable slot (bad magic/version/CRC): refusing to recover
+fatal: cannot start server: state restore failed (unreadable store or corrupt state) at mem://kstest-walmetabad-0
+PASS  server WAL meta with both slots torn refuses to start (fail-stop)  58 us
+BEGIN [21/41] server WAL meta with a torn NEWER slot recovers from the older slot
+PASS  server WAL meta with a torn NEWER slot recovers from the older slot  93 us
+BEGIN [22/41] server snapshot: file verification rejects damage, keeps the previous base
+snapshot: verified 7 (16 bytes)
+snapshot: 7 FAILED CRC validation (torn or corrupt)
+snapshot: 7 FAILED CRC validation (torn or corrupt)
+PASS  server snapshot: file verification rejects damage, keeps the previous base  22 us
+BEGIN [23/41] server GET missing key -> NOT_FOUND
+PASS  server GET missing key -> NOT_FOUND  65 us
+BEGIN [24/41] server malformed frame (wrong magic) closes connection
+PASS  server malformed frame (wrong magic) closes connection  41 us
+BEGIN [25/41] server malformed batch frame (bogus count) rejected
+PASS  server malformed batch frame (bogus count) rejected  66 us
+BEGIN [26/41] server admission gate rejects writes when stopping
+PASS  server admission gate rejects writes when stopping  70 us
+BEGIN [27/41] server disk:// crash/restart recovers from real disk
+PASS  server disk:// crash/restart recovers from real disk  2919 us
+BEGIN [28/41] server: group-commit submits at the target or when the round drains
+PASS  server: group-commit submits at the target or when the round drains  76 us
+BEGIN [29/41] server: an undeliverable peer frame is counted, not silently dropped
+PASS  server: an undeliverable peer frame is counted, not silently dropped  67 us
+BEGIN [30/41] server: oversized AppendEntries is split at a frame-safe entry boundary
+PASS  server: oversized AppendEntries is split at a frame-safe entry boundary  450 us
+BEGIN [31/41] server: failed committed response closes the client connection
+PASS  server: failed committed response closes the client connection  79 us
+BEGIN [32/41] server: a close from inside a frame handler defers the free and accounts the rx buffer once
+PASS  server: a close from inside a frame handler defers the free and accounts the rx buffer once  67 us
+BEGIN [33/41] server: sole voter applies and acknowledges only after local WAL
+PASS  server: sole voter applies and acknowledges only after local WAL  69 us
+BEGIN [34/41] server: saturated WAL pauses and later resumes client receive
+PASS  server: saturated WAL pauses and later resumes client receive  67 us
+BEGIN [35/41] server: global client connection and request-memory limits
+PASS  server: global client connection and request-memory limits  47 us
+BEGIN [36/41] server: Raft command admission reserves peer-frame overhead
+PASS  server: Raft command admission reserves peer-frame overhead  726 us
+BEGIN [37/41] server: snapshot policy counts WAL bytes across segments
+PASS  server: snapshot policy counts WAL bytes across segments  0 us
+BEGIN [38/41] server: partial client frames obey the global RX budget
+PASS  server: partial client frames obey the global RX budget  45 us
+BEGIN [39/41] membership wait: age accumulates, reminders are rate limited to one per 10s, both reset
+membership: waiting for node 2 to catch up before the change commits (submitted by auto-replace; voters=1, link=unknown)
+membership: still waiting for node 2 after 10s (link=unknown; voters=1)
+membership: still waiting for node 2 after 20s (link=unknown; voters=1)
+membership: still waiting for node 2 after 30s (link=unknown; voters=1)
+membership: waiting for node 3 to catch up before the change commits (submitted by auto-replace; voters=1, link=unknown)
+PASS  membership wait: age accumulates, reminders are rate limited to one per 10s, both reset  144 us
+BEGIN [40/41] membership: the note is bound to the request that submitted the change, not to the server
+membership: a client config change was submitted while node 2 was still catching up (2500ms, submitted by auto-replace)
+membership: a client config change was submitted while node 2 was still catching up (2500ms, submitted by auto-replace)
+PASS  membership: the note is bound to the request that submitted the change, not to the server  90 us
+BEGIN [41/41] server: mem:// starts with the real runtime backend (the table is locked now)
+PASS  server: mem:// starts with the real runtime backend (the table is locked now)  358 us
+SUMMARY: 41/41 passed  12405 us

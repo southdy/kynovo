@@ -1,0 +1,78 @@
+membership: a client config change was submitted while node 3 was still catching up (0ms, client request)
+membership: waiting for node 3 to catch up before the change commits (client request; voters=2, link=connected)
+membership: node 3 graduated into the config after 311ms; the catch-up wait is over
+membership: node 3 graduated into the config after 0ms; the catch-up wait is over
+membership: node 3 graduated into the config after 0ms; the catch-up wait is over
+snapshot: verified 97 (1147 bytes)
+snapshot: verified 64 (1272 bytes)
+snapshot: verified 64 (1272 bytes)
+membership: node 3 graduated into the config after 0ms; the catch-up wait is over
+membership: node 3 graduated into the config after 0ms; the catch-up wait is over
+membership: a client config change was submitted while node 4 was still catching up (0ms, client request)
+membership: waiting for node 4 to catch up before the change commits (client request; voters=3, link=no-connection)
+membership: node 3 graduated into the config after 0ms; the catch-up wait is over
+membership: node 4 graduated into the config after 501ms; the catch-up wait is over
+membership: node 4 graduated into the config after 0ms; the catch-up wait is over
+membership: node 4 graduated into the config after 0ms; the catch-up wait is over
+membership: node 4 graduated into the config after 0ms; the catch-up wait is over
+snapshot: verified 64 (1272 bytes)
+membership: a client config change was submitted while node 1 was still catching up (0ms, client request)
+membership: waiting for node 1 to catch up before the change commits (client request; voters=3, link=no-connection)
+membership: node 1 graduated into the config after 389ms; the catch-up wait is over
+membership: node 1 graduated into the config after 0ms; the catch-up wait is over
+membership: node 1 graduated into the config after 0ms; the catch-up wait is over
+membership: node 3 graduated into the config after 0ms; the catch-up wait is over
+membership: node 5 graduated into the config after 0ms; the catch-up wait is over
+membership: node 4 graduated into the config after 0ms; the catch-up wait is over
+membership: a client config change was submitted while node 4 was still catching up (0ms, client request)
+membership: waiting for node 4 to catch up before the change commits (client request; voters=3, link=no-connection)
+membership: node 4 graduated into the config after 438ms; the catch-up wait is over
+membership: node 4 graduated into the config after 0ms; the catch-up wait is over
+membership: node 1 graduated into the config after 0ms; the catch-up wait is over
+membership: node 3 graduated into the config after 0ms; the catch-up wait is over
+membership: node 2 graduated into the config after 0ms; the catch-up wait is over
+membership: node 4 graduated into the config after 0ms; the catch-up wait is over
+warning: result for request id=1 whose connection is gone (type=1 status=4)
+auto-replace: voter 1 missed 3 rounds; replacing it with node 4 (add first, then remove)
+membership: waiting for node 4 to catch up before the change commits (submitted by auto-replace; voters=3, link=connected)
+membership: node 4 graduated into the config after 344ms; the catch-up wait is over
+membership: node 4 graduated into the config after 0ms; the catch-up wait is over
+membership: node 1 graduated into the config after 0ms; the catch-up wait is over
+membership: node 3 graduated into the config after 0ms; the catch-up wait is over
+membership: node 2 graduated into the config after 0ms; the catch-up wait is over
+auto-replace: node 4 is committed as a voter; now removing the failed node 1
+auto-replace: node 4 has replaced node 1; done
+auto-replace: voter 4 missed 3 rounds; replacing it with node 4 (add first, then remove)
+auto-replace: node 4 has replaced node 4; done
+membership: a client config change was submitted while node 4 was still catching up (0ms, client request)
+membership: waiting for node 4 to catch up before the change commits (client request; voters=3, link=no-connection)
+membership: node 4 graduated into the config after 405ms; the catch-up wait is over
+membership: node 4 graduated into the config after 0ms; the catch-up wait is over
+membership: node 1 graduated into the config after 0ms; the catch-up wait is over
+membership: node 3 graduated into the config after 0ms; the catch-up wait is over
+membership: node 2 graduated into the config after 0ms; the catch-up wait is over
+membership: node 4 graduated into the config after 0ms; the catch-up wait is over
+membership: a client config change was submitted while node 1 was still catching up (0ms, client request)
+membership: waiting for node 1 to catch up before the change commits (client request; voters=3, link=no-connection)
+membership: node 1 graduated into the config after 422ms; the catch-up wait is over
+membership: node 1 graduated into the config after 0ms; the catch-up wait is over
+membership: node 1 graduated into the config after 0ms; the catch-up wait is over
+membership: node 1 graduated into the config after 0ms; the catch-up wait is over
+membership: a client config change was submitted while node 4 was still catching up (0ms, client request)
+membership: waiting for node 4 to catch up before the change commits (client request; voters=3, link=no-connection)
+membership: node 4 graduated into the config after 378ms; the catch-up wait is over
+membership: node 4 graduated into the config after 0ms; the catch-up wait is over
+membership: node 1 graduated into the config after 0ms; the catch-up wait is over
+membership: node 3 graduated into the config after 0ms; the catch-up wait is over
+membership: node 2 graduated into the config after 0ms; the catch-up wait is over
+membership: node 4 graduated into the config after 0ms; the catch-up wait is over
+membership: a client config change was submitted while node 3 was still catching up (0ms, client request)
+membership: waiting for node 3 to catch up before the change commits (client request; voters=3, link=no-connection)
+membership: node 3 graduated into the config after 440ms; the catch-up wait is over
+membership: node 3 graduated into the config after 0ms; the catch-up wait is over
+membership: node 3 graduated into the config after 0ms; the catch-up wait is over
+membership: node 3 graduated into the config after 0ms; the catch-up wait is over
+snapshot: verified 64 (1272 bytes)
+snapshot: verified 97 (1147 bytes)
+snapshot: verified 64 (1272 bytes)
+selftest: PASS

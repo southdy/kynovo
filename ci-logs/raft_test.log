@@ -1,0 +1,443 @@
+BEGIN [1/221] 3.3 states: follower startup (1-node)
+PASS  3.3 states: follower startup (1-node)  20 us
+BEGIN [2/221] 3.3 states: follower to candidate on timeout (3-node)
+PASS  3.3 states: follower to candidate on timeout (3-node)  3 us
+BEGIN [3/221] 3.3 states: become leader (1-node)
+PASS  3.3 states: become leader (1-node)  12 us
+BEGIN [4/221] 3.3 states: become leader (3-node)
+PASS  3.3 states: become leader (3-node)  16 us
+BEGIN [5/221] 3.3 states: step down on higher term (3-node)
+PASS  3.3 states: step down on higher term (3-node)  5 us
+BEGIN [6/221] 3.3 states: candidate rejects equal-term AE (3-node)
+PASS  3.3 states: candidate rejects equal-term AE (3-node)  4 us
+BEGIN [7/221] 3.3 states: candidate rejects smaller-term AE (3-node)
+PASS  3.3 states: candidate rejects smaller-term AE (3-node)  2 us
+BEGIN [8/221] 3.3 states: follower surfaces leader identity after voting (3-node)
+PASS  3.3 states: follower surfaces leader identity after voting (3-node)  1 us
+BEGIN [9/221] 3.3 terms: reject stale term RPC (3-node)
+PASS  3.3 terms: reject stale term RPC (3-node)  3 us
+BEGIN [10/221] 3.3 terms: equal-term AE/InstallSnapshot does not depose leader (3-node)
+PASS  3.3 terms: equal-term AE/InstallSnapshot does not depose leader (3-node)  2 us
+BEGIN [11/221] 3.3 terms: old messages ignored (3-node)
+PASS  3.3 terms: old messages ignored (3-node)  1 us
+BEGIN [12/221] 3.3 terms: term monotonic increase (3-node)
+PASS  3.3 terms: term monotonic increase (3-node)  1 us
+BEGIN [13/221] 3.4 election: majority votes (3-node)
+PASS  3.4 election: majority votes (3-node)  6 us
+BEGIN [14/221] 3.4 election: self vote counts toward quorum (3-node, 1 external vote)
+PASS  3.4 election: self vote counts toward quorum (3-node, 1 external vote)  2 us
+BEGIN [15/221] 3.8 persist: real RequestVote deferred until term/vote persist (3-node)
+PASS  3.8 persist: real RequestVote deferred until term/vote persist (3-node)  3 us
+BEGIN [16/221] 3.4 election: one vote per term (3-node)
+PASS  3.4 election: one vote per term (3-node)  1 us
+BEGIN [17/221] 3.4 election: equal-term AE keeps the candidate's own vote (3-node)
+PASS  3.4 election: equal-term AE keeps the candidate's own vote (3-node)  1 us
+BEGIN [18/221] 3.4 election: log recency check (3-node)
+PASS  3.4 election: log recency check (3-node)  9 us
+BEGIN [19/221] 3.6.1 election restriction: same-term longer log wins (3-node)
+PASS  3.6.1 election restriction: same-term longer log wins (3-node)  5 us
+BEGIN [20/221] 3.4 election: timeout randomness (E5)
+PASS  3.4 election: timeout randomness (E5)  1 us
+BEGIN [21/221] 3.4 election: candidate steps down on AE (3-node)
+PASS  3.4 election: candidate steps down on AE (3-node)  2 us
+BEGIN [22/221] 3.4 election: split vote resolved by randomized retry (3-node)
+PASS  3.4 election: split vote resolved by randomized retry (3-node)  1 us
+BEGIN [23/221] 3.4 election: candidate increments term (1-node)
+PASS  3.4 election: candidate increments term (1-node)  2 us
+BEGIN [24/221] 3.4 election: vote granted when log up-to-date (3-node)
+PASS  3.4 election: vote granted when log up-to-date (3-node)  1 us
+BEGIN [25/221] 3.4 election: single leader after election smoke (3-node)
+PASS  3.4 election: single leader after election smoke (3-node)  5 us
+BEGIN [26/221] 3.4 election: 5-node cluster election (5-node)
+PASS  3.4 election: 5-node cluster election (5-node)  8 us
+BEGIN [27/221] 3.5 log: submit and apply (1-node)
+PASS  3.5 log: submit and apply (1-node)  3 us
+BEGIN [28/221] 3.5 log: batch submit (1-node)
+PASS  3.5 log: batch submit (1-node)  2 us
+BEGIN [29/221] 3.5 log: append entries flow (3-node)
+PASS  3.5 log: append entries flow (3-node)  3 us
+BEGIN [30/221] 3.5 log: conflict resolution (3-node)
+PASS  3.5 log: conflict resolution (3-node)  2 us
+BEGIN [31/221] 3.5 log: submit produces entries smoke (3-node)
+PASS  3.5 log: submit produces entries smoke (3-node)  2 us
+BEGIN [32/221] 3.5 apply: apply_entries expose NOOP/CONFIG/COMMAND kind (1-node)
+PASS  3.5 apply: apply_entries expose NOOP/CONFIG/COMMAND kind (1-node)  8 us
+BEGIN [33/221] 3.5 log: heartbeat commit index capped at log end (3-node)
+PASS  3.5 log: heartbeat commit index capped at log end (3-node)  1 us
+BEGIN [34/221] 3.5 log: conflict resolution full cycle (3-node)
+PASS  3.5 log: conflict resolution full cycle (3-node)  5 us
+BEGIN [35/221] 3.5 log: NOOP appended at term start (1-node)
+PASS  3.5 log: NOOP appended at term start (1-node)  1 us
+BEGIN [36/221] 3.5 log: leader never overwrites own log (1-node)
+PASS  3.5 log: leader never overwrites own log (1-node)  2 us
+BEGIN [37/221] 3.5 log: follower accepts AE from outsider leader (3-node)
+PASS  3.5 log: follower accepts AE from outsider leader (3-node)  1 us
+BEGIN [38/221] 3.5 log: AE with matching prevLogIndex accepted (3-node)
+PASS  3.5 log: AE with matching prevLogIndex accepted (3-node)  1 us
+BEGIN [39/221] 3.5 log: follower applies committed entries in order (3-node)
+PASS  3.5 log: follower applies committed entries in order (3-node)  2 us
+BEGIN [40/221] 3.5 log: AE retry with lower nextIndex after rejection (3-node)
+PASS  3.5 log: AE retry with lower nextIndex after rejection (3-node)  1 us
+BEGIN [41/221] 3.5 log: success ACK reports the confirmed range, not the log tip (3-node)
+PASS  3.5 log: success ACK reports the confirmed range, not the log tip (3-node)  2 us
+BEGIN [42/221] 3.5 log: follower appends after term bump (3-node)
+PASS  3.5 log: follower appends after term bump (3-node)  4 us
+BEGIN [43/221] 3.5 log: conflict response includes term info (3-node)
+PASS  3.5 log: conflict response includes term info (3-node)  1 us
+BEGIN [44/221] 3.5 log: conflict skip optimization (3-node)
+PASS  3.5 log: conflict skip optimization (3-node)  5 us
+BEGIN [45/221] 3.5 log: stale success ACK does not regress match_index (3-node)
+PASS  3.5 log: stale success ACK does not regress match_index (3-node)  2 us
+BEGIN [46/221] 3.5 log: Log Matching Property (3-node)
+PASS  3.5 log: Log Matching Property (3-node)  1 us
+BEGIN [47/221] 3.5 log: follower matching prev appends after uncommitted prefix (3-node)
+PASS  3.5 log: follower matching prev appends after uncommitted prefix (3-node)  2 us
+BEGIN [48/221] 3.5 log: follower missing entries (Figure 3.6 a-b, 3-node)
+PASS  3.5 log: follower missing entries (Figure 3.6 a-b, 3-node)  2 us
+BEGIN [49/221] 3.5 log: follower extra uncommitted entries (Figure 3.6 c-d, 3-node)
+PASS  3.5 log: follower extra uncommitted entries (Figure 3.6 c-d, 3-node)  4 us
+BEGIN [50/221] 3.5 log: 5-node commit via majority (5-node)
+PASS  3.5 log: 5-node commit via majority (5-node)  9 us
+BEGIN [51/221] 3.6 safety: leader stays leader after apply smoke (1-node)
+PASS  3.6 safety: leader stays leader after apply smoke (1-node)  2 us
+BEGIN [52/221] 3.6 safety: apply smoke (1-node)
+PASS  3.6 safety: apply smoke (1-node)  2 us
+BEGIN [53/221] 3.6 safety: checkQuorum step down (3-node)
+PASS  3.6 safety: checkQuorum step down (3-node)  2 us
+BEGIN [54/221] 3.6 safety: append rejection counts as checkQuorum contact (3-node)
+PASS  3.6 safety: append rejection counts as checkQuorum contact (3-node)  4 us
+BEGIN [55/221] 3.6 safety: checkQuorum contact window spans ticks (5-node)
+PASS  3.6 safety: checkQuorum contact window spans ticks (5-node)  2 us
+BEGIN [56/221] 3.6 safety: single-entry commit smoke (1-node)
+PASS  3.6 safety: single-entry commit smoke (1-node)  2 us
+BEGIN [57/221] 3.6 safety: replication round-trip smoke (3-node)
+PASS  3.6 safety: replication round-trip smoke (3-node)  5 us
+BEGIN [58/221] 3.6 safety: single-server apply smoke (1-node)
+PASS  3.6 safety: single-server apply smoke (1-node)  1 us
+BEGIN [59/221] 3.X lifecycle: stop and drain (1-node)
+PASS  3.X lifecycle: stop and drain (1-node)  1 us
+BEGIN [60/221] 3.X create: rejects config excluding self (3-node)
+PASS  3.X create: rejects config excluding self (3-node)  4 us
+BEGIN [61/221] 3.X create: rejects invalid peer id (id<=0)
+PASS  3.X create: rejects invalid peer id (id<=0)  1 us
+BEGIN [62/221] 3.X create: rejects duplicate peer id
+PASS  3.X create: rejects duplicate peer id  1 us
+BEGIN [63/221] persist: restore rejects non-contiguous log index
+PASS  persist: restore rejects non-contiguous log index  3 us
+BEGIN [64/221] persist: restore rejects negative term
+PASS  persist: restore rejects negative term  1 us
+BEGIN [65/221] persist: restore rejects invalid snapshot cfg mask
+PASS  persist: restore rejects invalid snapshot cfg mask  3 us
+BEGIN [66/221] persist: restore rejects invalid log entries
+PASS  persist: restore rejects invalid log entries  6 us
+BEGIN [67/221] 3.X create: rejects zero heartbeat/election timing
+PASS  3.X create: rejects zero heartbeat/election timing  1 us
+BEGIN [68/221] 3.X lifecycle: shutdown flushes pending ReadIndex barrier (3-node)
+PASS  3.X lifecycle: shutdown flushes pending ReadIndex barrier (3-node)  3 us
+BEGIN [69/221] 3.7 crash: follower restart and recover (1-node)
+PASS  3.7 crash: follower restart and recover (1-node)  5 us
+BEGIN [70/221] 3.7 crash: follower restart and rejoin (3-node)
+PASS  3.7 crash: follower restart and rejoin (3-node)  9 us
+BEGIN [71/221] 3.9 timing: heartbeat prevents unnecessary election (3-node)
+PASS  3.9 timing: heartbeat prevents unnecessary election (3-node)  1 us
+BEGIN [72/221] 3.6 deep: Election Safety - at most one leader per term (3-node)
+PASS  3.6 deep: Election Safety - at most one leader per term (3-node)  6 us
+BEGIN [73/221] 3.6 deep: Log Matching - identical AE stream yields identical logs (3-node)
+PASS  3.6 deep: Log Matching - identical AE stream yields identical logs (3-node)  5 us
+BEGIN [74/221] 3.6 deep: Figure 3.6 - follower truncates conflicting suffix (3-node)
+PASS  3.6 deep: Figure 3.6 - follower truncates conflicting suffix (3-node)  2 us
+BEGIN [75/221] 3.6 deep: Leader Append-Only - log prefix never changes (1-node)
+PASS  3.6 deep: Leader Append-Only - log prefix never changes (1-node)  4 us
+BEGIN [76/221] 3.6 deep: Figure 3.7 - previous-term entry not committed by replica count (3-node)
+PASS  3.6 deep: Figure 3.7 - previous-term entry not committed by replica count (3-node)  4 us
+BEGIN [77/221] 3.6.2 commit: leader not durable requires majority of followers (3-node)
+PASS  3.6.2 commit: leader not durable requires majority of followers (3-node)  8 us
+BEGIN [78/221] 3.6 deep: Leader Completeness - committed entry survives leader change (3-node)
+PASS  3.6 deep: Leader Completeness - committed entry survives leader change (3-node)  28 us
+BEGIN [79/221] 3.6 deep: State Machine Safety - all servers apply identical sequences (3-node)
+PASS  3.6 deep: State Machine Safety - all servers apply identical sequences (3-node)  16 us
+BEGIN [80/221] 3.6 deep: Figure 3.7 - stale leader with old-term entry rejected (5-node)
+PASS  3.6 deep: Figure 3.7 - stale leader with old-term entry rejected (5-node)  8 us
+BEGIN [81/221] 3.8 persist: roundtrip (1-node)
+PASS  3.8 persist: roundtrip (1-node)  5 us
+BEGIN [82/221] 3.8 persist: append ACK waits for the durable index (3-node)
+PASS  3.8 persist: append ACK waits for the durable index (3-node)  3 us
+BEGIN [83/221] 3.8 persist: commitIndex reset on restart (1-node)
+PASS  3.8 persist: commitIndex reset on restart (1-node)  5 us
+BEGIN [84/221] 3.8 persist: state machine lastApplied recovery (1-node)
+PASS  3.8 persist: state machine lastApplied recovery (1-node)  4 us
+BEGIN [85/221] 3.8 persist: voted_for prevents double vote after restart (3-node)
+PASS  3.8 persist: voted_for prevents double vote after restart (3-node)  6 us
+BEGIN [86/221] 3.9 partition: single-node leader retains sole quorum (1-node)
+PASS  3.9 partition: single-node leader retains sole quorum (1-node)  2 us
+BEGIN [87/221] 3.10 transfer: initiated (1-node)
+PASS  3.10 transfer: initiated (1-node)  2 us
+BEGIN [88/221] 3.10 transfer: rejects proposals (1-node)
+PASS  3.10 transfer: rejects proposals (1-node)  2 us
+BEGIN [89/221] 3.10 transfer: rejects membership changes during transfer (3-node)
+PASS  3.10 transfer: rejects membership changes during transfer (3-node)  3 us
+BEGIN [90/221] 3.10 transfer: rejects learner target (1-node)
+PASS  3.10 transfer: rejects learner target (1-node)  6 us
+BEGIN [91/221] 3.10 transfer: timeout_now triggers election (3-node)
+PASS  3.10 transfer: timeout_now triggers election (3-node)  2 us
+BEGIN [92/221] 3.10 transfer: abort on timeout (1-node)
+PASS  3.10 transfer: abort on timeout (1-node)  3 us
+BEGIN [93/221] 3.10 transfer: second transfer rejected while one is in progress (1-node)
+PASS  3.10 transfer: second transfer rejected while one is in progress (1-node)  2 us
+BEGIN [94/221] 3.10 transfer: TimeoutNow bypasses heartbeat guard (3-node)
+PASS  3.10 transfer: TimeoutNow bypasses heartbeat guard (3-node)  2 us
+BEGIN [95/221] 3.10 transfer: TimeoutNow ignored when target log lags (3-node)
+PASS  3.10 transfer: TimeoutNow ignored when target log lags (3-node)  1 us
+BEGIN [96/221] 3.10 transfer: TimeoutNow starts a real election (3-node)
+PASS  3.10 transfer: TimeoutNow starts a real election (3-node)  1 us
+BEGIN [97/221] 3.10 transfer: result notification (1-node)
+PASS  3.10 transfer: result notification (1-node)  3 us
+BEGIN [98/221] 3.10 transfer: cookie gets FAILED on shutdown (3-node)
+PASS  3.10 transfer: cookie gets FAILED on shutdown (3-node)  3 us
+BEGIN [99/221] 3.10 transfer: leader syncs target log before TimeoutNow (1-node)
+PASS  3.10 transfer: leader syncs target log before TimeoutNow (1-node)  3 us
+BEGIN [100/221] 3.10 transfer: match_index sync before TimeoutNow (3-node)
+PASS  3.10 transfer: match_index sync before TimeoutNow (3-node)  6 us
+BEGIN [101/221] 3.10 transfer: end-to-end handover to target (3-node)
+PASS  3.10 transfer: end-to-end handover to target (3-node)  8 us
+BEGIN [102/221] 3.10 transfer: end-to-end handover in 5-node cluster (5-node)
+PASS  3.10 transfer: end-to-end handover in 5-node cluster (5-node)  9 us
+BEGIN [103/221] 4.1 membership: 1-node expansion defers for catch-up (1-node)
+PASS  4.1 membership: 1-node expansion defers for catch-up (1-node)  9 us
+BEGIN [104/221] 4.1 membership: reconfig rejected when pending (1-node)
+PASS  4.1 membership: reconfig rejected when pending (1-node)  3 us
+BEGIN [105/221] 4.1 membership: deferred reconfig cookie gets REDIRECT on step-down (3-node)
+PASS  4.1 membership: deferred reconfig cookie gets REDIRECT on step-down (3-node)  5 us
+BEGIN [106/221] 4.1 membership: deferred reconfig cookie gets FAILED on shutdown (3-node)
+PASS  4.1 membership: deferred reconfig cookie gets FAILED on shutdown (3-node)  4 us
+BEGIN [107/221] 4.1 membership: no-op reconfig emits COMMITTED (1-node)
+PASS  4.1 membership: no-op reconfig emits COMMITTED (1-node)  3 us
+BEGIN [108/221] 4.1 membership: truncating last config entry reverts config (3-node)
+PASS  4.1 membership: truncating last config entry reverts config (3-node)  7 us
+BEGIN [109/221] 4.1 membership: config entry without cfg masks does not crash apply (3-node)
+PASS  4.1 membership: config entry without cfg masks does not crash apply (3-node)  3 us
+BEGIN [110/221] 4.1 membership: self-removal step down (1-node)
+PASS  4.1 membership: self-removal step down (1-node)  4 us
+BEGIN [111/221] 4.1 membership: config takes effect immediately (1-node)
+PASS  4.1 membership: config takes effect immediately (1-node)  4 us
+BEGIN [112/221] 4.1 membership: grant vote to candidate not in config (3-node)
+PASS  4.1 membership: grant vote to candidate not in config (3-node)  1 us
+BEGIN [113/221] 4.1 membership: multiple sequential changes (1-node)
+PASS  4.1 membership: multiple sequential changes (1-node)  34 us
+BEGIN [114/221] 4.1 membership: config fallback on leadership change (1-node)
+PASS  4.1 membership: config fallback on leadership change (1-node)  4 us
+BEGIN [115/221] 4.1 membership: removed leader stays until C_new committed (1-node)
+PASS  4.1 membership: removed leader stays until C_new committed (1-node)  4 us
+BEGIN [116/221] 4.2.2 membership: removed leader not counted in majority (3-node)
+PASS  4.2.2 membership: removed leader not counted in majority (3-node)  7 us
+BEGIN [117/221] 4.2.2 membership: removed leader not counted in odd C_new majority (4->3)
+PASS  4.2.2 membership: removed leader not counted in odd C_new majority (4->3)  10 us
+BEGIN [118/221] 4.2.2 membership: self-removal reconfig cookie gets COMMITTED (4-node)
+PASS  4.2.2 membership: self-removal reconfig cookie gets COMMITTED (4-node)  9 us
+BEGIN [119/221] 4.1 membership: add before remove preserves fault tolerance (1-node)
+PASS  4.1 membership: add before remove preserves fault tolerance (1-node)  18 us
+BEGIN [120/221] 4.1 membership: deferred reconfig with catch-up (3-node)
+PASS  4.1 membership: deferred reconfig with catch-up (3-node)  11 us
+BEGIN [121/221] 4.1 membership: catch-up peer not counted toward quorum (3-node)
+PASS  4.1 membership: catch-up peer not counted toward quorum (3-node)  9 us
+BEGIN [122/221] 3.5 log: non-power-of-two log_chunk_size is safe (1-node)
+PASS  3.5 log: non-power-of-two log_chunk_size is safe (1-node)  7 us
+BEGIN [123/221] 4.1 membership: deferred catch-up aborts when new server never catches up (3-node)
+PASS  4.1 membership: deferred catch-up aborts when new server never catches up (3-node)  7 us
+BEGIN [124/221] 4.2 learner: add basic (1-node)
+PASS  4.2 learner: add basic (1-node)  5 us
+BEGIN [125/221] 4.2 learner: reject duplicate (1-node)
+PASS  4.2 learner: reject duplicate (1-node)  4 us
+BEGIN [126/221] 4.2 learner: reject voter (1-node)
+PASS  4.2 learner: reject voter (1-node)  2 us
+BEGIN [127/221] 4.2 learner: remove basic (1-node)
+PASS  4.2 learner: remove basic (1-node)  6 us
+BEGIN [128/221] 4.2 learner: excluded from quorum (3-node)
+PASS  4.2 learner: excluded from quorum (3-node)  8 us
+BEGIN [129/221] 4.2 learner: catchup completes with CATCHUP_READY (1-node)
+PASS  4.2 learner: catchup completes with CATCHUP_READY (1-node)  6 us
+BEGIN [130/221] 4.2 learner: catchup aborts when round 10 exceeds election timeout (1-node)
+PASS  4.2 learner: catchup aborts when round 10 exceeds election timeout (1-node)  7 us
+BEGIN [131/221] 4.2 learner: catchup state tracked (1-node)
+PASS  4.2 learner: catchup state tracked (1-node)  5 us
+BEGIN [132/221] 4.2 learner: promote to voter via reconfig (1-node)
+PASS  4.2 learner: promote to voter via reconfig (1-node)  5 us
+BEGIN [133/221] 4.2 learner: promoted learner counts in quorum (1-node)
+PASS  4.2 learner: promoted learner counts in quorum (1-node)  8 us
+BEGIN [134/221] 4.2 learner: promoted peer is no longer a learner (1-node)
+PASS  4.2 learner: promoted peer is no longer a learner (1-node)  9 us
+BEGIN [135/221] 4.2 learner: promoting a lagging learner defers for catch-up (1-node)
+PASS  4.2 learner: promoting a lagging learner defers for catch-up (1-node)  7 us
+BEGIN [136/221] 4.2 learner: promoted learner's ADD_LEARNER cookie gets CATCHUP_READY (1-node)
+PASS  4.2 learner: promoted learner's ADD_LEARNER cookie gets CATCHUP_READY (1-node)  8 us
+BEGIN [137/221] 4.2 learner: immediate promotion still notifies ADD_LEARNER cookie (1-node)
+PASS  4.2 learner: immediate promotion still notifies ADD_LEARNER cookie (1-node)  5 us
+BEGIN [138/221] 4.2 learner: catchup rounds advance on AE (1-node)
+PASS  4.2 learner: catchup rounds advance on AE (1-node)  5 us
+BEGIN [139/221] 4.2 learner: real 3-node server catches up via AEs (3-node)
+PASS  4.2 learner: real 3-node server catches up via AEs (3-node)  38 us
+BEGIN [140/221] 4.3 joint: second reconfig blocked while joint uncommitted (1-node)
+PASS  4.3 joint: second reconfig blocked while joint uncommitted (1-node)  4 us
+BEGIN [141/221] 4.3 joint: leader survives transition smoke (3-node)
+PASS  4.3 joint: leader survives transition smoke (3-node)  5 us
+BEGIN [142/221] 4.3 deep: joint consensus requires dual majority to commit (3-node)
+PASS  4.3 deep: joint consensus requires dual majority to commit (3-node)  6 us
+BEGIN [143/221] 4.1 membership: 5-node removal needs dual majority (5-node)
+PASS  4.1 membership: 5-node removal needs dual majority (5-node)  9 us
+BEGIN [144/221] 4.3 joint: commit after reconfig (1-node)
+PASS  4.3 joint: commit after reconfig (1-node)  4 us
+BEGIN [145/221] 4.3 joint: client commit during joint consensus (1-node)
+PASS  4.3 joint: client commit during joint consensus (1-node)  4 us
+BEGIN [146/221] 4.3 joint: C_new cannot decide alone (1-node)
+PASS  4.3 joint: C_new cannot decide alone (1-node)  3 us
+BEGIN [147/221] 4.3 joint: rollback on leader change (1-node)
+PASS  4.3 joint: rollback on leader change (1-node)  3 us
+BEGIN [148/221] 4.1 membership: stuck joint reverts after timeout (3-node)
+PASS  4.1 membership: stuck joint reverts after timeout (3-node)  11 us
+BEGIN [149/221] 4.3 joint: C_new appended once joint COMMITS, before apply (3-node)
+PASS  4.3 joint: C_new appended once joint COMMITS, before apply (3-node)  5 us
+BEGIN [150/221] 4.3 apply: CONFIG apply entry reports cfg_old/cfg_new/cfg_learners (3-node)
+PASS  4.3 apply: CONFIG apply entry reports cfg_old/cfg_new/cfg_learners (3-node)  3 us
+BEGIN [151/221] 4.3 joint: leader crash during C_old,new phase (3-node)
+PASS  4.3 joint: leader crash during C_old,new phase (3-node)  2 us
+BEGIN [152/221] 4.2.3 disruptive: removed server stops receiving heartbeats
+PASS  4.2.3 disruptive: removed server stops receiving heartbeats  4 us
+BEGIN [153/221] 4.2.3 disruptive: heartbeat protection (3-node)
+PASS  4.2.3 disruptive: heartbeat protection (3-node)  1 us
+BEGIN [154/221] 4.2.3 disruptive: heartbeat guard for removed server
+PASS  4.2.3 disruptive: heartbeat guard for removed server  3 us
+BEGIN [155/221] 4.2.3 disruptive: heartbeat guard counterexample (3-node)
+PASS  4.2.3 disruptive: heartbeat guard counterexample (3-node)  2 us
+BEGIN [156/221] 5 compaction: snapshot and compact (1-node)
+PASS  5 compaction: snapshot and compact (1-node)  5 us
+BEGIN [157/221] 5 compaction: preserves tail (1-node)
+PASS  5 compaction: preserves tail (1-node)  4 us
+BEGIN [158/221] 5 compaction: truncates log (1-node)
+PASS  5 compaction: truncates log (1-node)  3 us
+BEGIN [159/221] 5 compaction: install snapshot follower (3-node)
+PASS  5 compaction: install snapshot follower (3-node)  2 us
+BEGIN [160/221] 5.1 install: stale-offset chunk does not abort local snapshot (3-node)
+PASS  5.1 install: stale-offset chunk does not abort local snapshot (3-node)  1 us
+BEGIN [161/221] 5 compaction: chunk sequence (3-node)
+PASS  5 compaction: chunk sequence (3-node)  1 us
+BEGIN [162/221] 5 compaction: multiple consecutive snapshots (1-node)
+PASS  5 compaction: multiple consecutive snapshots (1-node)  4 us
+BEGIN [163/221] 5 compaction: leader sends InstallSnapshot (1-node)
+PASS  5 compaction: leader sends InstallSnapshot (1-node)  2 us
+BEGIN [164/221] 5 compaction: leader streams snapshot to lagging follower (3-node)
+PASS  5 compaction: leader streams snapshot to lagging follower (3-node)  6 us
+BEGIN [165/221] 5 compaction: leader streams snapshot to both followers (3-node)
+PASS  5 compaction: leader streams snapshot to both followers (3-node)  9 us
+BEGIN [166/221] 5 compaction: 5-node leader streams snapshot to lagging follower (5-node)
+PASS  5 compaction: 5-node leader streams snapshot to lagging follower (5-node)  8 us
+BEGIN [167/221] 5 compaction: restored leader streams snapshot to lagging follower (3-node)
+PASS  5 compaction: restored leader streams snapshot to lagging follower (3-node)  8 us
+BEGIN [168/221] 5 compaction: snapshot replacement mid-stream restarts follower (3-node)
+PASS  5 compaction: snapshot replacement mid-stream restarts follower (3-node)  5 us
+BEGIN [169/221] 5 compaction: stale snapshot offset echo dropped; chunk relabeled after replacement (3-node)
+PASS  5 compaction: stale snapshot offset echo dropped; chunk relabeled after replacement (3-node)  5 us
+BEGIN [170/221] 5 compaction: follower restarts snapshot from 0 after step-down (3-node)
+PASS  5 compaction: follower restarts snapshot from 0 after step-down (3-node)  2 us
+BEGIN [171/221] 5 compaction: re-elected leader restarts snapshot from offset 0 (3-node)
+PASS  5 compaction: re-elected leader restarts snapshot from offset 0 (3-node)  4 us
+BEGIN [172/221] persist: restore rejects invalid snapshot metadata
+PASS  persist: restore rejects invalid snapshot metadata  1 us
+BEGIN [173/221] 5 compaction: stale snapshot (behind compaction) ignored (3-node)
+PASS  5 compaction: stale snapshot (behind compaction) ignored (3-node)  2 us
+BEGIN [174/221] 5 compaction: install result counts as checkQuorum contact (3-node)
+PASS  5 compaction: install result counts as checkQuorum contact (3-node)  4 us
+BEGIN [175/221] 5 compaction: follower discards log on snapshot (3-node)
+PASS  5 compaction: follower discards log on snapshot (3-node)  2 us
+BEGIN [176/221] 5 compaction: follower retains tail after snapshot prefix (3-node)
+PASS  5 compaction: follower retains tail after snapshot prefix (3-node)  5 us
+BEGIN [177/221] 5 compaction: snapshot captures config change (3-node)
+PASS  5 compaction: snapshot captures config change (3-node)  7 us
+BEGIN [178/221] 5 compaction: InstallSnapshot with config change (3-node)
+PASS  5 compaction: InstallSnapshot with config change (3-node)  2 us
+BEGIN [179/221] 5 compaction: leader detects compacted entry needs snapshot (1-node)
+PASS  5 compaction: leader detects compacted entry needs snapshot (1-node)  4 us
+BEGIN [180/221] 5 compaction: snapshot after many entries (policy is app-side) (1-node)
+PASS  5 compaction: snapshot after many entries (policy is app-side) (1-node)  7 us
+BEGIN [181/221] 5 compaction: concurrent snapshot with ongoing operations (1-node)
+PASS  5 compaction: concurrent snapshot with ongoing operations (1-node)  3 us
+BEGIN [182/221] 6 client: leader discovery via ready.leader_id (3-node)
+PASS  6 client: leader discovery via ready.leader_id (3-node)  3 us
+BEGIN [183/221] 6 client: submit rejected when not leader (3-node)
+PASS  6 client: submit rejected when not leader (3-node)  0 us
+BEGIN [184/221] 6 client: read index barrier (1-node)
+PASS  6 client: read index barrier (1-node)  2 us
+BEGIN [185/221] 6 client: read-index barrier in 3-node cluster (3-node)
+PASS  6 client: read-index barrier in 3-node cluster (3-node)  3 us
+BEGIN [186/221] 6 client: ReadIndex requires 3-of-5 quorum (5-node)
+PASS  6 client: ReadIndex requires 3-of-5 quorum (5-node)  5 us
+BEGIN [187/221] 6 client: redirect on step down (1-node)
+PASS  6 client: redirect on step down (1-node)  2 us
+BEGIN [188/221] 6 client: duplicate submit appends again (at-least-once, no dedup)
+PASS  6 client: duplicate submit appends again (at-least-once, no dedup)  2 us
+BEGIN [189/221] 6 client: cookie acknowledged COMMITTED after apply (1-node)
+PASS  6 client: cookie acknowledged COMMITTED after apply (1-node)  1 us
+BEGIN [190/221] 6 client: stale read protection (1-node)
+PASS  6 client: stale read protection (1-node)  1 us
+BEGIN [191/221] 6 client: read-index full cycle (1-node)
+PASS  6 client: read-index full cycle (1-node)  1 us
+BEGIN [192/221] 6 client: pipeline multiple submits (1-node)
+PASS  6 client: pipeline multiple submits (1-node)  2 us
+BEGIN [193/221] 6 client: barrier waits for heartbeat quorum (3-node)
+PASS  6 client: barrier waits for heartbeat quorum (3-node)  2 us
+BEGIN [194/221] 6 client: leader barrier resolves after fresh quorum (3-node)
+PASS  6 client: leader barrier resolves after fresh quorum (3-node)  3 us
+BEGIN [195/221] 6 client: delayed prior ACK cannot satisfy a fresh read barrier
+PASS  6 client: delayed prior ACK cannot satisfy a fresh read barrier  2 us
+BEGIN [196/221] 6 client: barrier rejected when not leader (3-node)
+PASS  6 client: barrier rejected when not leader (3-node)  0 us
+BEGIN [197/221] 6 client: submit persists a log entry for lifecycle (1-node)
+PASS  6 client: submit persists a log entry for lifecycle (1-node)  2 us
+BEGIN [198/221] 6 client: cookie required for submit (1-node)
+PASS  6 client: cookie required for submit (1-node)  1 us
+BEGIN [199/221] 6 client: pending cookie -> COMMITTED notification (1-node)
+PASS  6 client: pending cookie -> COMMITTED notification (1-node)  1 us
+BEGIN [200/221] 6 client: read barrier requires leadership confirmation (1-node)
+PASS  6 client: read barrier requires leadership confirmation (1-node)  2 us
+BEGIN [201/221] 6 client: submit rejected during leadership transfer (1-node)
+PASS  6 client: submit rejected during leadership transfer (1-node)  1 us
+BEGIN [202/221] 6 client: follower ReadIndex round-trip (3-node)
+PASS  6 client: follower ReadIndex round-trip (3-node)  9 us
+BEGIN [203/221] 6.4 client: follower ReadIndex uses confirmed commit index (3-node)
+PASS  6.4 client: follower ReadIndex uses confirmed commit index (3-node)  4 us
+BEGIN [204/221] 6 client: follower ReadIndex barrier gets REDIRECT on step-down (3-node)
+PASS  6 client: follower ReadIndex barrier gets REDIRECT on step-down (3-node)  2 us
+BEGIN [205/221] 6 client: follower barrier rejected without known leader (3-node)
+PASS  6 client: follower barrier rejected without known leader (3-node)  2 us
+BEGIN [206/221] 6 client: follower amortizes multiple reads over one ReadIndex (3-node)
+PASS  6 client: follower amortizes multiple reads over one ReadIndex (3-node)  1 us
+BEGIN [207/221] 6 client: stale/duplicate ReadIndex result cannot resolve a later barrier (3-node)
+PASS  6 client: stale/duplicate ReadIndex result cannot resolve a later barrier (3-node)  2 us
+BEGIN [208/221] 6 client: ReadIndex waits for fresh heartbeat ack (3-node)
+PASS  6 client: ReadIndex waits for fresh heartbeat ack (3-node)  3 us
+BEGIN [209/221] 6 client: ReadIndex captures commit index at flush (3-node)
+PASS  6 client: ReadIndex captures commit index at flush (3-node)  3 us
+BEGIN [210/221] 9.6 pre-vote: self-grant in 1-node cluster (1-node)
+PASS  9.6 pre-vote: self-grant in 1-node cluster (1-node)  1 us
+BEGIN [211/221] 9.6 pre-vote: granted to up-to-date candidate (3-node)
+PASS  9.6 pre-vote: granted to up-to-date candidate (3-node)  1 us
+BEGIN [212/221] 9.6 pre-vote: not blocked by voted_for (3-node)
+PASS  9.6 pre-vote: not blocked by voted_for (3-node)  0 us
+BEGIN [213/221] 9.6 pre-vote: full election cycle (3-node)
+PASS  9.6 pre-vote: full election cycle (3-node)  3 us
+BEGIN [214/221] 9.6 pre-vote: rejected for stale log (3-node)
+PASS  9.6 pre-vote: rejected for stale log (3-node)  2 us
+BEGIN [215/221] 9.6 pre-vote: failed pre-vote retries, does not escalate (3-node)
+PASS  9.6 pre-vote: failed pre-vote retries, does not escalate (3-node)  0 us
+BEGIN [216/221] 9.6 pre-vote: same-term AE aborts in-flight pre-vote (3-node)
+PASS  9.6 pre-vote: same-term AE aborts in-flight pre-vote (3-node)  1 us
+BEGIN [217/221] 9.6 pre-vote: candidate re-election does not escalate without pre-vote quorum (3-node)
+PASS  9.6 pre-vote: candidate re-election does not escalate without pre-vote quorum (3-node)  1 us
+BEGIN [218/221] 10 impl: leader emits persist + replication in one Ready (3-node)
+PASS  10 impl: leader emits persist + replication in one Ready (3-node)  1 us
+BEGIN [219/221] 10 impl: leader batches multiple entries into one AppendEntries (3-node)
+PASS  10 impl: leader batches multiple entries into one AppendEntries (3-node)  2 us
+BEGIN [220/221] 10 impl: leader commits via follower majority before own disk write (3-node)
+PASS  10 impl: leader commits via follower majority before own disk write (3-node)  2 us
+BEGIN [221/221] 10 impl: single node self-commits without durability (1-node)
+PASS  10 impl: single node self-commits without durability (1-node)  1 us
+SUMMARY: 221/221 passed  940 us

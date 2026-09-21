@@ -1,0 +1,16 @@
+seed 1
+fatal: server drive failed; stopping (admission closed, clients see "server stopping")
+fatal: server drive failed; stopping (admission closed, clients see "server stopping")
+fatal: server drive failed; stopping (admission closed, clients see "server stopping")
+fatal: server drive failed; stopping (admission closed, clients see "server stopping")
+fatal: server drive failed; stopping (admission closed, clients see "server stopping")
+fatal: server drive failed; stopping (admission closed, clients see "server stopping")
+fatal: server drive failed; stopping (admission closed, clients see "server stopping")
+fatal: server drive failed; stopping (admission closed, clients see "server stopping")
+fatal: server drive failed; stopping (admission closed, clients see "server stopping")
+fatal: server drive failed; stopping (admission closed, clients see "server stopping")
+fatal: server drive failed; stopping (admission closed, clients see "server stopping")
+fatal: server drive failed; stopping (admission closed, clients see "server stopping")
+snapshot: verified 64 (1149 bytes)
+done: 1/1 clusters consistent (OOM stopped nodes in 1 runs)
+linearizability: 4 histories / 253 ops decided by the checker, 0 inconclusive

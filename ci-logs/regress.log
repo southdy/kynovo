@@ -1,0 +1,30 @@
+warning: expected gcc 15.2.0 under /d/MinW64-15.2.0/bin, found 16.2.0; older mingw headers may lack LPFN_ACCEPTEX
+=== regress (fuzz) - verdict lines follow; full logs in build/regress/ ===
+GATE|build|ok|rc=0 diagnostics=0 binaries=yes [foreign toolchain, warnings reported not enforced]|50s
+GATE|principles|FAIL|rc=1 verdict=<no verdict line>|6s
+  log: build/regress/principles.log
+  |   ok   every 64-bit header has __int64 and long long forms under _MSC_VER
+  |   ok   no literal %lld/%llu in code/ (use the header format macro)
+  |   ok   app layer reads no raft config fields (budget 0, card t_972b67e8)
+  |   ok   raft_inspect only in the diagnostics path (budget 1): allowed=['code/kserver.h:3825: if(reader.off!=reader.len||raft_inspect(server->raft,&info)!=0||treap_inspect(server->tree,&tree_info)!=0) ret']
+  |   ok   no new bare sprintf in code/ (measured 10, budget 10, use k_text_append/k_snprintf)
+  |   ok   no new C99 64-bit spellings in tests/ (measured 7, budget 7 = the sanctioned per-compiler blocks, use the project macros or a local layer)
+  |   ok   raft.h/treap.h untouched in this change
+  |   ok   every request type is accounted for in the files that must know it (21 types)
+  |   ok   every git-derived file list is non-empty, so no rule is green for want of a file to look at (tests/ has 14 C/H files)
+  |   FAIL every git command the rules rely on exited 0 (a failed git used to look like an empty list)
+  |         | git diff --name-only HEAD~1 HEAD -> rc=128 fatal: ambiguous argument 'HEAD~1': unknown revision or path not in th
+  | PRINCIPLES|FAIL|rules=20 fail=1
+GATE|regress_selftest|ok|SELFTEST|PASS|the detector FAILs a silent layer, a crashing layer and a hanging one and passes a verdict line (4/4)|12s
+GATE|raft_test|ok|SUMMARY: 221/221 passed  940 us|1s
+GATE|kserver_test|ok|SUMMARY: 41/41 passed  12405 us|1s
+GATE|kclient_test|ok|SUMMARY: 19/19 passed  52 us|1s
+GATE|cemon_test|ok|SUMMARY: 5/5 passed  2002101 us|3s
+GATE|vfs_fault_test|ok|SUMMARY: 5/5 passed  53958 us|1s
+GATE|selftest|ok|selftest: PASS|26s
+GATE|selftest_cleanup|ok|selftest-cleanup: 0 leftover file(s) |1s
+GATE|cli_smoke|ok|cli_smoke: PASS|32s
+GATE|raft_fuzz|ok|done: 2000 iterations|1s
+GATE|raft_cluster_fuzz|ok|done: 200 iterations|1s
+GATE|kserver_cluster_fuzz|ok|linearizability: 4 histories / 253 ops decided by the checker, 0 inconclusive|1s
+REGRESS|fuzz|pass=13 fail=1 duration=138s

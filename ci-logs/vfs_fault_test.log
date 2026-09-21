@@ -1,0 +1,22 @@
+BEGIN [1/5] vfs fault backend: no fault injected => the wrapper is in the path and harmless
+    backend: opens=9 writes=7 syncs=5 reads=7 injected=0 fatal=0
+PASS  vfs fault backend: no fault injected => the wrapper is in the path and harmless  186 us
+BEGIN [2/5] vfs fault backend: every fsync fails from now on => fail-stop
+fatal: server drive failed; stopping (admission closed, clients see "server stopping")
+fatal: server drive failed; stopping (admission closed, clients see "server stopping")
+fatal: WAL write failed
+    backend: writes=7 syncs=5 injected=1 fatal=1
+PASS  vfs fault backend: every fsync fails from now on => fail-stop  113 us
+BEGIN [3/5] vfs fault backend: every write fails from now on => fail-stop
+fatal: server drive failed; stopping (admission closed, clients see "server stopping")
+fatal: server drive failed; stopping (admission closed, clients see "server stopping")
+fatal: WAL write failed
+    backend: writes=6 syncs=4 injected=1 fatal=1
+PASS  vfs fault backend: every write fails from now on => fail-stop  95 us
+BEGIN [4/5] vfs fault backend: storage failure while opening => the server refuses to start
+fatal: cannot start server: config open failed (unreadable or invalid config) at mem://vfault-open-3
+    backend: opens=2 writes=1 syncs=1 injected=1 open_rc=-1
+PASS  vfs fault backend: storage failure while opening => the server refuses to start  22 us
+BEGIN [5/5] vfs mem backend: two threads, two paths in one hash bucket
+PASS  vfs mem backend: two threads, two paths in one hash bucket  53542 us
+SUMMARY: 5/5 passed  53958 us
