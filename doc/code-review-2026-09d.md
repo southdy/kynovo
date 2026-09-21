@@ -405,10 +405,36 @@ shows the failure and the count (`FAIL ... (tests/ has 0 C/H files)`, `PRINCIPLE
 would have failed before this change too, because the `*.sh` list is built before the old report, so it is not a
 differential test for this line - the differential evidence is the call order above plus the merged rule.
 
-### E4 `[audit]` MEDIUM: `is_char_literal` cannot lex escaped literals; two demonstrable false negatives in the `//` rule
+### E4 `[FIXED]`: `is_char_literal` could not lex escapes; two demonstrable false negatives in the `//` rule
 
-Executed by the auditor: `is_char_literal("'\n'")` is False, so escaped literals are treated as code; and
-`rule('x=1;//')` / `rule('case 3://note')` are False (the `[^/]` and `[^:]` guards).  No live occurrences today.
+Both halves were confirmed by execution and are now fixed.
+
+**The lexer.** `is_char_literal("'\n'")` was False: after a backslash the old code expected the closing quote
+*immediately*, so every two-character escape was treated as code.  It now consumes the escape it actually finds -
+hex (`\x41`), octal (`\0`, `\012`) or a single character - and then expects the quote.  `'\n'`, `'\x41'`,
+`'\012'` and `'\0'` went from False to True; `'a'`, `'\'` are unchanged and prose like `don't` is still not a
+literal.
+
+**The comment rule.** `scan_raw(r'(^|[^:])//[^/]')` had two false negatives: `[^:]` hid `case 3://note`, and the
+trailing `[^/]` hid a `//` with nothing after it (`int a;//` at end of file).  Dropping the `:` guard outright was
+tried first and *failed loudly* - the checker went red on `mem://`/`disk://` prose inside block comments, which are
+not `//` comments at all, because `strip_literals` blanks string contents but leaves comments.  The guard is
+therefore narrowed, not removed: `scan_raw` gained an `allow(line, match)` predicate, and the rule excuses only a
+`//` that belongs to a URI scheme (a letter-initial `<scheme>://`).  A scheme starts with a letter, so `3://` in
+`case 3://note` is not one.
+
+Measured truth table, five cases, old pattern vs new rule:
+
+| case | old | new | wanted |
+|---|---|---|---|
+| `int a;//` (nothing after it) | missed | caught | caught |
+| `switch(c){case 3://note` | missed | caught | caught |
+| `/* mem:// runs like disk:// */` | not caught | not caught | not caught |
+| `const char *u="disk://x";` | not caught | not caught | not caught |
+| `x=1; // hello` | caught | caught | caught |
+
+`PRINCIPLES|OK|rules=19 fail=0` on the tree (no live occurrences, as the audit said), and
+`REGRESS|quick|pass=10 fail=0 duration=269s`.
 
 ### E5 `[audit]` MEDIUM: `watch_counters.sh` greps field names the server never emits; several harnesses advertise gates they do not enforce
 
@@ -491,6 +517,7 @@ Every item in this round is closed one way or the other - fixed, or refuted with
 | E1, E3 | fixed (`d1031bb`) - every gate layer runs under a watchdog, and the git-list emptiness report sits after every list is built |
 | F (doc numbers) | fixed (`c018ed3`), with two of the flagged numbers refuted rather than changed |
 | E2 | fixed - the tautological assert now measures the bounded return, and fails when the bound is tightened |
+| E4 | fixed - the char-literal lexer understands escapes, and the comment rule catches `case 3://note` and a trailing `//` without firing on `mem://` prose (5-case truth table) |
 | A4, A7, C3-C8, E4-E7 | **open** - recorded in `doc/gaps-audit.md`, not silently dropped |
 
 Evidence for the round as a whole: `REGRESS|full|pass=14 fail=0 duration=267s`, CI green on every push, and the XP

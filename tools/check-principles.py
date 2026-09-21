@@ -89,9 +89,17 @@ def is_char_literal(text, i):
     one character or an escape, then a closing quote (a wide/multi-char literal still starts that way)."""
     if i + 1 >= len(text):
         return False
-    if text[i+1] == '\\':                       # '\n', '\x41', '\'' ...
+    if text[i+1] == '\\':                       # '\n', '\x41', '\012', '\'' ...
         j = i + 2
-        if j < len(text) and text[j] == '\\':
+        if j < len(text) and text[j] in 'xX':    # hex escape: \x41
+            j += 1
+            while j < len(text) and (text[j].isdigit() or text[j] in 'abcdefABCDEF'):
+                j += 1
+        elif j < len(text) and text[j].isdigit():  # octal escape: \0, \012
+            j += 1
+            while j < len(text) and text[j].isdigit():
+                j += 1
+        else:                                    # a simple escape is exactly one character: \n \t \\ \'
             j += 1
         return j < len(text) and text[j] == "'"
     return i + 2 < len(text) and text[i+2] == "'"
@@ -130,16 +138,21 @@ def code_text(path):
     with open(path, 'r', encoding='utf-8', errors='replace', newline='') as fh:
         return strip_comments(fh.read())
 
-def scan_raw(pattern, files=None):
-    """Like scan(), but strips literals instead of comments - for rules that are ABOUT comments."""
+def scan_raw(pattern, files=None, allow=None):
+    """Like scan(), but strips literals instead of comments - for rules that are ABOUT comments.  `allow(line, match)`
+    returning True excuses a match: a rule about comments needs to be able to say "not this one" without weakening
+    its pattern for everyone (the // rule and URI schemes)."""
     rx = re.compile(pattern)
     hits = []
     for path in (SRC if files is None else files):
         with open(path, 'r', encoding='utf-8', errors='replace', newline='') as fh:
             txt = strip_literals(fh.read())
         for ln, line in enumerate(txt.split('\n'), 1):
-            if rx.search(line):
+            for mt in rx.finditer(line):
+                if allow and allow(line, mt):
+                    continue
                 hits.append('%s:%d: %s' % (path, ln, line.strip()[:110]))
+                break
     return hits
 
 
@@ -200,7 +213,23 @@ report('no ULL literals in the shipped library (code/)', scan(r'[0-9]+ULL', LIB)
 # "disk://x" URI inside a string is not.  Previously this rule ran on comment-stripped text and therefore
 # could never match anything - a permanently green rule.
 
-report('no // comments in C sources', [h for h in scan_raw(r'(^|[^:])//[^/]')])
+def uri_scheme(line, mt):
+    """True for the `//` of a URI scheme (`mem://`, `disk://`...), which is not a comment.  The old rule excluded
+    every `://` with a `[^:]` guard, which had two demonstrable false negatives (fourth review round E4):
+    `case 3://note` was invisible, and a `//` with nothing after it (`x=1;//` at end of file) was too.  A scheme
+    starts with a LETTER, so `3://` is not one - the guard is narrowed instead of dropped.  Block comments keep
+    their `mem://` prose: strip_literals() blanks string contents but not comments."""
+    i = mt.end() - 2
+    if i < 1 or line[i-1] != ':':
+        return False
+    k = i - 2
+    while k >= 0 and (line[k].isalnum() or line[k] in '+.-'):
+        k -= 1
+    scheme = line[k+1:i-1]
+    return len(scheme) > 0 and scheme[0].isalpha()
+
+
+report('no // comments in C sources', scan_raw(r'(^|[^/])//', allow=uri_scheme))
 
 # 5. Windows XP+ only
 report('no post-XP Windows APIs', scan(r'GetQueuedCompletionStatusEx|GetTickCount64|CreateFile2|'
