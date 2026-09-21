@@ -361,22 +361,37 @@ never read, and `PIPE` is advertised (`:490`) but absent from the command table.
 
 ## E. Tests, gates, harnesses
 
-### E1 `[me]` HIGH: the gate has no per-layer timeout, so a hang is neither a pass nor a failure
+### E1 `[me]` **[FIXED]** HIGH: the gate has no per-layer timeout, so a hang is neither a pass nor a failure
 
 `grep -c timeout build.sh` = 0, while `build.sh:330` states the contract - every layer must produce a verdict line,
 no verdict is a failure - which can never be evaluated if the layer never returns.  With E2 this turns a bug into a
 stalled gate.
+
+**Fix, with a red device.** `reg_gate` now runs each layer in the background under a bash-native watchdog
+(`REG_LAYER_TIMEOUT_S`, default 1800 s; per layer: `REG_LAYER_TIMEOUT_S=3600 reg_gate ...`).  A bash built-in is
+used deliberately: `timeout(1)` is not present on every platform this script must run on (macOS).  Evidence: the
+`reg_report`/`reg_gate` bodies extracted verbatim from `build.sh` and fed a layer that sleeps 30 s with a 3 s limit
+produce `GATE|hang_probe|FAIL|rc=124 [layer timeout 3s] verdict=<no verdict line>|6s` in ~7 s, where the old code
+would still be waiting.  Both gates then ran green with all 10 and 13 layers under the watchdog.
 
 ### E2 `[audit]` HIGH: `tests/cemon_test.c:242` is a tautology
 
 `TEST_ASSERT(1,"destroy returned");` in `test_destroy_bounded_drain`; the property is only observable as a hang, so
 reverting the fix produces a stall (E1), not a red layer.
 
-### E3 `[me]` MEDIUM: the new "git-derived lists are non-empty" rule reports before the tests list exists
+### E3 `[me]` **[FIXED]** MEDIUM: the new "git-derived lists are non-empty" rule reports before the tests list exists
 
 `tools/check-principles.py:202` `report('git-derived file lists are non-empty …', GIT_LIST_PROBLEMS)` while `:255`
 `TESTS_C = git_files('tests/*.c','tests/*.h')` builds that list afterwards - an empty tests list still leaves the
 C99 ratchet green.
+
+**Fix, and a correction of the finding's wording.** One rule now reports emptiness after EVERY `git_files` call and
+prints how many files it saw.  Precise position, verified: `git_files` is called at `:156` (`*.sh`) and `:254`
+(`TESTS_C`), and the previous report sat at `:202` - between them - so the `tests/*` list was indeed the one whose
+emptiness was invisible, exactly as the finding said.  Running the checker in a copy of the tree with no `.git`
+shows the failure and the count (`FAIL ... (tests/ has 0 C/H files)`, `PRINCIPLES|FAIL|rules=19 fail=1`); that run
+would have failed before this change too, because the `*.sh` list is built before the old report, so it is not a
+differential test for this line - the differential evidence is the call order above plus the merged rule.
 
 ### E4 `[audit]` MEDIUM: `is_char_literal` cannot lex escaped literals; two demonstrable false negatives in the `//` rule
 

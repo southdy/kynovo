@@ -198,6 +198,10 @@ command lists):
 ./build.sh regress full      # fuzz with release-sized parameters (20k/2000/10) plus a 24-round release soak              ~20 min (nightly)
 ```
 
+- Every layer runs under a watchdog (`REG_LAYER_TIMEOUT_S`, default 1800 s; a slower layer can set its own with
+  `REG_LAYER_TIMEOUT_S=3600 reg_gate ...`): a layer that hangs is reported FAIL with `rc=124` instead of wedging the
+  gate forever, which is what "no verdict line = FAIL" requires.  bash-native on purpose - `timeout(1)` is not on
+  every platform this runs on.
 - Every layer prints one line `GATE|<layer>|pass|FAIL|<verdict line>|<seconds>`; **the verdict line must
   appear** — a silent run (exit 0 but no verdict line) is judged **FAIL**; this is where "0 failures does
   not mean 0 data" is made concrete;

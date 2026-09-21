@@ -199,7 +199,6 @@ report('no ULL literals in the shipped library (code/)', scan(r'[0-9]+ULL', LIB)
 # Scans text with LITERALS stripped (not comments stripped): a real // comment is a violation, a
 # "disk://x" URI inside a string is not.  Previously this rule ran on comment-stripped text and therefore
 # could never match anything - a permanently green rule.
-report('git-derived file lists are non-empty (a rule with no file to look at is not a pass)', GIT_LIST_PROBLEMS)
 
 report('no // comments in C sources', [h for h in scan_raw(r'(^|[^:])//[^/]')])
 
@@ -317,6 +316,13 @@ for cmd in sorted(REQ_PLACES):
             req_problems.append('%s is expected in %s but does not appear there' % (cmd, REQ_FILES[place]))
 report('every request type is accounted for in the files that must know it (%d types)' % len(REQ_PLACES),
        req_problems)
+
+# A rule fed by a git-derived file list is only as good as that list.  `git ls-files tests/*.c` matching nothing
+# (git missing, run from the wrong directory, a pattern typo) left every such rule green - including the C99
+# budget one, whose "measured 0" would then read as a clean tree (fourth-round review E3).  The emptiness is
+# recorded when the list is built; this is where it becomes a failure, and the count is printed so a list that
+# shrank to near-nothing is visible in the ok line too.
+report('every git-derived file list is non-empty, so no rule is green for want of a file to look at (tests/ has %d C/H files)' % len(TESTS_C), GIT_LIST_PROBLEMS)
 
 print('PRINCIPLES|%s|rules=%d fail=%d' % ('OK' if not fails else 'FAIL', rules, fails))
 sys.exit(1 if fails else 0)

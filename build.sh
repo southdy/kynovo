@@ -342,15 +342,37 @@ reg_report(){ # reg_report <name> <ok|FAIL> <detail> <t0>
     printf 'GATE|%s|%s|%s|%ss\n' "$1" "$2" "$3" "$((t1-$4))"
 }
 reg_gate(){ # reg_gate <name> <verdict-egrep> <cmd...>
-    local name="$1" pat="$2" log t0 rc got
+    local name="$1" pat="$2" log t0 rc got pid waited=0 timed_out=0
+    local limit="${REG_LAYER_TIMEOUT_S:-1800}"
     shift 2
     log="$REG_DIR/$name.log"; t0="$(date +%s)"
-    "$@" >"$log" 2>&1; rc=$?
+    # A layer that HANGS must FAIL, not wedge the gate forever: the contract is "no verdict line = FAIL", and
+    # before this watchdog the only thing that ended a hung layer was a human (fourth-round review E1).  bash
+    # has no built-in timeout and timeout(1) is not present everywhere this script runs (macOS), so the layer
+    # runs in the background and is polled.  Override per layer with `REG_LAYER_TIMEOUT_S=<s> reg_gate ...`.
+    "$@" >"$log" 2>&1 &
+    pid=$!
+    while kill -0 "$pid" 2>/dev/null; do
+        if [ "$waited" -ge "$limit" ]; then
+            kill "$pid" 2>/dev/null
+            sleep 2
+            kill -9 "$pid" 2>/dev/null
+            timed_out=1
+            break
+        fi
+        sleep 1
+        waited=$((waited+1))
+    done
+    if [ "$timed_out" = 1 ]; then
+        rc=124
+    else
+        wait "$pid"; rc=$?
+    fi
     got="$(grep -E "$pat" "$log" | tail -1)"
     if [ "$rc" = 0 ] && [ -n "$got" ]; then
         reg_report "$name" ok "$got" "$t0"
     else
-        reg_report "$name" FAIL "rc=$rc verdict=${got:-<no verdict line>}" "$t0"
+        reg_report "$name" FAIL "rc=$rc${timed_out:+ [layer timeout ${limit}s]} verdict=${got:-<no verdict line>}" "$t0"
         echo "  log: $log"; tail -12 "$log" | sed 's/^/  | /'
     fi
 }
