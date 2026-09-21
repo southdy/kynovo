@@ -2229,6 +2229,33 @@ static int forge_last_record_base(const char *base,k_u64 seg,raft_i64 new_base){
   return 0;
 }
 
+/* A7: a store whose newest record carries a base of 0 while an earlier one carried a real base is the observed
+   restart shape ("the newest record said 0 while its own entries started above the snapshot index").  Bases only
+   advance, so the load raises the base back to the previous one - and the snapshot metadata must then come from
+   the FIRST record that carried that base.  The newest record, after the raise, carries the older base instead,
+   so decoding from it refuses a recovery the rollback message already reported as successful. */
+static void test_wal_recovery_decodes_the_record_that_first_carried_the_base(void){
+  k_server s;
+  char base[64];
+  const unsigned char *val=0;
+  unsigned int vlen=0;
+  int rc;
+  TEST_BEGIN("server WAL recovery decodes the first record that carried the base, not the newest");
+  sprintf(base,"mem://kstest-basepick-%u",g_snapcase_seq++);
+  TEST_ASSERT(drive_store(&s,base,900u,K_WAL_SCAN_EMPTY_PREFIX_MAX+1u)==0,"a store with a snapshot base and a tail");
+  TEST_ASSERT(s.snapshot.index>0,"a snapshot was taken on the way");
+  k_server_release(&s);
+  setup(&s,1,base);
+  rc=k_server_open(&s);
+  if(rc==0){
+    TEST_ASSERT(elect(&s)==0,"leader");
+    TEST_ASSERT(treap_get(s.tree,(const unsigned char*)"k0",2u,&val,&vlen)==1,"the state came back");
+    k_server_release(&s);
+  }
+  TEST_ASSERT(rc==0,"a base that was forced back up must still recover");
+  TEST_END();
+}
+
 /* A5: base 0 is not a verified snapshot.  The newest record claims a base whose snapshot file was never written,
    so the load rolls back to the previous distinct base - and for a store that never snapshotted that is 0.  The
    rollback must refuse rather than start from a state no snapshot ever certified. */
@@ -2316,7 +2343,7 @@ static void test_wal_recovery_keeps_a_snapshot_base_past_the_ceiling(void){
 
 int main(int argc,char **argv){
   if(argc>=3&&strcmp(argv[1],"--apply-stress")==0) return apply_stress(test_strtoull(argv[2]),argc>=4?test_strtoull(argv[3]):TEST_U64_C(4096),argc>=5&&strcmp(argv[4],"thread")==0,argc>=6&&strcmp(argv[5],"nosnap")==0);
-  TEST_PLAN(49);
+  TEST_PLAN(50);
   g_run_tag=0;
   if(k_monotonic_us(&g_run_tag)!=0) g_run_tag=(k_u64)time(0);
   test_fcall_gate_reopens_when_its_request_dies();
@@ -2367,6 +2394,7 @@ int main(int argc,char **argv){
   test_wal_recovery_continues_a_torn_tail_by_generation();
   test_wal_recovery_keeps_a_snapshot_base_past_the_ceiling();
   test_wal_recovery_refuses_a_rollback_to_base_zero();
+  test_wal_recovery_decodes_the_record_that_first_carried_the_base();
   test_mem_store_accepts_worker_threads();
   TEST_SUMMARY();
   return TEST_EXIT_CODE();

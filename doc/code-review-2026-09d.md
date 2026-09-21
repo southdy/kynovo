@@ -184,9 +184,10 @@ recovery.  `:1547` `file=vfs_open(path);` in the verify helper creates a missing
   being decoded.  The decode then failed and recovery refused, exactly where the rollback message it had just
   printed promised a successful recovery.  The first record that carried the base in use is now remembered
   (`base_rec_*`) and decoded from; the older-base path (`vseg/voff/vsize`) was already correct.  No case: staging it
-  needs a store with two bases and a forced-high base on top.  That harness now exists (`drive_store`), so this is a
-  case waiting to be written rather than a capability that is missing - still recorded as unred-proofed, not as
-  covered.
+  needs a store with two bases and a forced-high base on top - and no forging: a store whose newest record carries
+  base 0 while an earlier one carried the real base is the observed restart shape, so `drive_store` builds it.
+  **Covered** by `server WAL recovery decodes the first record that carried the base, not the newest`; red proof:
+  using the newest record again fails it and A1's case together (48/50).
 - *The verify helper.*  `k_snapshot_verify_file` opened the path with `vfs_open`, which CREATES a missing file, so
   asking whether `.snap.<index>` verifies left a zero-length file behind - a question that manufactured its own
   answer.  It now probes one byte and unlinks what it would have created, the same rule the WAL scan applies to the

@@ -1294,8 +1294,8 @@ five unit suites, so those numbers were right all along.
   **快照基址**、且 WAL 已越过扫描 ceiling"的存储（每阶段都自证：`snapshot.index>0` 且快照文件校验通过 ✓、unlink 返回 0 才算"前缀确已释放" ✓）；
   首个用例 `server WAL recovery keeps a snapshot base behind a released prefix past the scan ceiling` 用 `treap_get` 断言恢复出的状态 ✓，
   **红证成立**（停掉 A1 的尾部跳转 ⇒ 47/48 ✓）。过程中实测到两条机制：`k_server_open` 会以持久化配置覆盖 open 前设置的 cfg 字段；
-  mem 后端 `vfs_open` 对已 unlink 的路径会**新建**文件（存在性探测会复活被测前缀）。**A5 已覆盖**（伪造载荷 + 红证 ✓ 见下）。**仍未覆盖**：A7 的强制抬高回滚（载具已有、用例未写 ✓）、
-  C3（需"变更在飞行中"的集群 harness ✓）。
+  mem 后端 `vfs_open` 对已 unlink 的路径会**新建**文件（存在性探测会复活被测前缀）。**A5 / A7 均以覆盖**（A5 用伪造载荷 ✓、A7 无需伪造：快照记录带真实基址、其后普通记录带 0 ✓ 即是"强制抬高"现场 ✓；两者红证成立 ✓）。
+  **仍未覆盖**：仅剩 C3（需"变更在飞行中"的集群 harness ✓）。
 - **XP 客人机验证（C3-C8 + A4/A7 批，2026-09-22）**：`[kynovo_step.bat] size=4672 ver=H`、`[xp_tests.bat]
   size=5996 ver=G`、`build_exit=0 run_exit=0 tests_exit=0`、`error C`=0、`LNK`=0、17 条 `C4761`（与历次同数、同类别）；
   `SUMMARY: 5/5 · 19/19 · 221/221 · 47/47 · 5/5`。六条新用例逐字 PASS（41–46 号），含 A4 的
@@ -1384,8 +1384,10 @@ neutralising the tail jump so the walk falls through to the pre-fix `break` fail
 whatever the caller set before `k_server_open`, and on the mem backend `vfs_open` creates an unlinked path, so an
 existence probe resurrects the prefix it is checking (the unlink return value is what certifies a release).
 
-**What still has no case.**  A7's forced-high rollback now has a vehicle - the harness can build the two-base
-store - but the case itself is not written yet.  A5's `prev_base>0` guard is **now covered**: `forge_last_record_base`
+**What still has no case.**  A7's forced-high rollback is now covered - and it needed no forging: a store whose
+newest record carries base 0 while an earlier one carried the real base is the observed restart shape, so the
+harness builds it directly.  Red proof: making the decode use the newest record again fails both this case and
+A1's (48/50), since they share that path.  A5's `prev_base>0` guard is **now covered**: `forge_last_record_base`
 rewrites the last complete record so it names a base with no snapshot file (CRC recomputed and stored back), and
 the case requires the load to refuse rather than roll back to base 0 - red proof: without the guard the store
 opens (48/49 at `rc!=0`), i.e. the silent empty start the guard exists to stop.  The verify helper's failure mode is only observable on a filesystem - and without a vfs existence probe,

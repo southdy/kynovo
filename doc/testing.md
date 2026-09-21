@@ -46,7 +46,7 @@ and their `run-*` versions, `selftest`, `kdbsvr`, `kdbctl`, `bench*`, `cemon-ben
 |---|---|---|---|---|
 | L0 | compile gate | `./build.sh` | rc=0 and 0 warnings in `build.log` | ~90s |
 | L1a | raft unit | `./build/raft_test.exe` | `SUMMARY: 221/221 passed` | ~1s |
-| L1b | server unit (with stress mode) | `./build/kserver_test.exe` | `SUMMARY: 49/49 passed` | ~45s |
+| L1b | server unit (with stress mode) | `./build/kserver_test.exe` | `SUMMARY: 50/50 passed` | ~45s |
 | L1c | client unit | `./build/kclient_test.exe` | `SUMMARY: 19/19 passed` | ~0.1s |
 | L1d | cemon event-loop unit | `./build/cemon_test.exe` | `SUMMARY: 5/5 passed` | ~2s (includes a 2s long wait) |
 | L1e | end-to-end self-test (single process, with membership change/bootstrap/election) | `./build/selftest.exe` | `selftest: PASS` | ~1–3s |
@@ -353,7 +353,12 @@ is checking.  This case has not been run on the guest yet; it is in the plan the
   payload CRC it stores back, and `server WAL recovery refuses a rollback to base 0 (it never certified a state)`
   requires the load to refuse instead of rolling back to base 0 and replaying from an empty tree.  Red proof:
   removing the `prev_base>0` guard makes the store OPEN (48/49, at `rc!=0`) - which is exactly the silent
-  empty start that guard exists to stop.
+  empty start that guard exists to stop.  A third case covers **A7** from the same harness, and needs no forging at all: a store whose newest record
+  carries base 0 while an earlier one carried the real base is the observed restart shape, so
+  `server WAL recovery decodes the first record that carried the base, not the newest` requires the load to raise
+  the base back and decode the snapshot metadata from the record that FIRST carried it.  Red proof: making it use
+  the newest record again fails BOTH this case and the A1 one (48/50) - they share the decode path.
+
 
 
 **Two guest runs were void, and why.**  The staging area has `code/` and `tests/` subdirectories because
