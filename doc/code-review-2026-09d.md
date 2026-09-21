@@ -374,10 +374,22 @@ used deliberately: `timeout(1)` is not present on every platform this script mus
 produce `GATE|hang_probe|FAIL|rc=124 [layer timeout 3s] verdict=<no verdict line>|6s` in ~7 s, where the old code
 would still be waiting.  Both gates then ran green with all 10 and 13 layers under the watchdog.
 
-### E2 `[audit]` HIGH: `tests/cemon_test.c:242` is a tautology
+### E2 `[FIXED]`: `tests/cemon_test.c:242` was a tautology
 
-`TEST_ASSERT(1,"destroy returned");` in `test_destroy_bounded_drain`; the property is only observable as a hang, so
-reverting the fix produces a stall (E1), not a red layer.
+`TEST_ASSERT(1,"destroy returned");` in `test_destroy_bounded_drain` - an assertion that cannot fail, so the case's
+only evidence was the *absence* of a hang, and a hang would have wedged `cemon_test` instead of failing it.
+
+Fixed by asserting what the case actually claims: the call returns inside a bound.  `t0=_test_now_us()` before
+`cemon_destroy(loop)`, and `TEST_ASSERT(elapsed<CEMON_DESTROY_BOUND_US, ...)` after, where the bound is 10 s - 5x the
+measured drain (`PASS ... 2000151 us`, i.e. 2.0 s) so a finite-but-absurd "just wait longer" regression fails it.
+The comment says where the remaining case is caught, so the bound is not mistaken for the whole guard: an INFINITE
+wait never returns, and *that* is the gate's per-layer watchdog (E1), which reports a layer that outlives its budget
+as `FAIL rc=124` rather than letting the gate block forever.
+
+**Red proof.** With the bound set to `0ul`: `SUMMARY: 4/5 passed` and
+`-- FAIL cemon_destroy returns with a never-completing socket ref (bounded drain)` - the assertion really can fail,
+which is exactly what could not be said of the line it replaced.  Restored to 10 s: `5/5`, 0 warnings,
+`REGRESS|quick|pass=10 fail=0 duration=192s`.
 
 ### E3 `[me]` **[FIXED]** MEDIUM: the new "git-derived lists are non-empty" rule reports before the tests list exists
 
@@ -478,7 +490,8 @@ Every item in this round is closed one way or the other - fixed, or refuted with
 | D1-D4 | fixed (`f5caeef`) - the CLI's exit status stops reporting refusals, redirects, conflicts and truncated runs as success |
 | E1, E3 | fixed (`d1031bb`) - every gate layer runs under a watchdog, and the git-list emptiness report sits after every list is built |
 | F (doc numbers) | fixed (`c018ed3`), with two of the flagged numbers refuted rather than changed |
-| A4, A7, C3-C8, E2, E4-E7 | **open** - recorded in `doc/gaps-audit.md`, not silently dropped |
+| E2 | fixed - the tautological assert now measures the bounded return, and fails when the bound is tightened |
+| A4, A7, C3-C8, E4-E7 | **open** - recorded in `doc/gaps-audit.md`, not silently dropped |
 
 Evidence for the round as a whole: `REGRESS|full|pass=14 fail=0 duration=267s`, CI green on every push, and the XP
 guest run recorded in `doc/testing.md` section 7 (`cemon 5/5`, `kclient 19/19`, `raft 221/221`, `kserver 41/41`,

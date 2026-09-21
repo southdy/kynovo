@@ -225,10 +225,16 @@ static void test_shutdown_write_closed(void){
    completion can arrive for it, so the IOCP drain must be bounded: with the old
    INFINITE wait destroy blocked forever.  Hold the reference by hand to model
    that state deterministically. */
+/* The drain must be bounded.  The assertion's point is that the call RETURNS in finite time: a regression to an
+   INFINITE wait would hang the suite, which the gate's per-layer watchdog reports (E1).  The bound itself is 5x the
+   measured 2.0 s drain, so a finite-but-absurd increase - the shape a "just wait longer" fix takes - fails it. */
+#define CEMON_DESTROY_BOUND_US 10000000ul   /* 5x the measured 2.0 s drain */
+
 static void test_destroy_bounded_drain(void){
   cemon *loop;
   cemon_socket *sock;
   probe_fd fd;
+  unsigned long t0,elapsed;
   TEST_BEGIN("cemon_destroy returns with a never-completing socket ref (bounded drain)");
   loop=cemon_create();
   TEST_ASSERT(loop!=0,"loop created");
@@ -238,8 +244,16 @@ static void test_destroy_bounded_drain(void){
   TEST_ASSERT(sock!=0,"socket created");
   cemon_sock_hold(sock);                      /* the "holder that never completes" */
   cemon_socket_die(sock,0,0);                 /* unlinked + fd closed, but not freed */
+  /* `TEST_ASSERT(1, "destroy returned")` used to sit here: an assertion that cannot fail, so the case only had
+     the *absence* of a hang as evidence, and a hang would have wedged cemon_test rather than failing it (fourth
+     review round E2).  Measure the return instead - and say where a true hang is caught, so the bound is not
+     mistaken for the whole guard. */
+  t0=_test_now_us();
   cemon_destroy(loop);                        /* must return instead of hanging */
-  TEST_ASSERT(1,"destroy returned");
+  elapsed=_test_now_us()-t0;
+  TEST_ASSERT(elapsed<CEMON_DESTROY_BOUND_US,
+              "destroy returned inside the bound (a hang that never returns is reported by the gate's per-layer "
+              "watchdog, not by this thread)");
   TEST_END();
 }
 
