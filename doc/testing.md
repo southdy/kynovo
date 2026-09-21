@@ -298,11 +298,22 @@ against the repository before transfer:
 - crash contract: after an abrupt `taskkill` and a restart on the same store, the key written before
   the kill reads back, and a key that was never written reads `(not found)` - the negative control
   that keeps the check from being unable to fail;
-- unit suites at that guest run: `cemon_test 5/5`, `kclient_test 18/18` (the rx-buffer case made it 19), `raft_test 221/221`, `kserver_test 37/37` (the ceiling, middle-cut, install and membership-note cases landed afterwards: 41/41 in the tree),
-  `vfs_fault_test 5/5` - identical to the local gate, including the storage injection seam, whose five
-  cases (transparent wrapper / fsync failure / write failure / failure during open / two threads on two
-  paths that share one mem hash bucket, which needs real worker threads and therefore real linking) build
-  and pass under cl 12.00.8804 with the Platform SDK;
+- the run identifies itself before anything else: `[kynovo_step.bat] size=4672 ver=H` and `[xp_tests.bat]
+  size=5996 ver=G`, matching the staging area's sizes, and the three phase codes are `build_exit=0 run_exit=0
+  tests_exit=0`, with `error C` and `LNK` counts of **0** in both logs.  MSVC 6 reports 17 `C4761` warnings on the
+  same code it always did - the documented class below, not a regression: those lines are unchanged since before
+  this round;
+- unit suites at that guest run: `cemon_test 5/5`, `kclient_test 19/19`, `raft_test 221/221`,
+  `kserver_test 41/41`, `vfs_fault_test 5/5` - the same counts the local gate reports.  Every case the fourth
+  review round added passes verbatim on the guest:
+  `PASS proto: a handler that frees the rx buffer cannot be parsed through in the same feed  38 us` (the case that
+  segfaults inside `kclient_test` when its guard is removed),
+  `PASS server InstallSnapshot replaces a stale longer file instead of keeping its tail  999 us`,
+  `PASS server WAL recovery refuses a cut in the middle of the log (fail-stop)  5057 us`,
+  `PASS server WAL recovery refuses to start empty behind a released prefix past the scan ceiling  32880 us`,
+  `PASS membership: the note is bound to the request that submitted the change, not to the server  961 us`;
+  the storage seam's real-thread case still holds there too (`PASS vfs mem backend: two threads, two paths in one
+  hash bucket  202747 us`), and all five of its cases build and pass under cl 12.00.8804 with the Platform SDK;
 
 The fuzz drivers were added to that evidence afterwards.  With the seam test included, every one of the
 twenty-four compile/link/run exit codes is zero as well (`cl` and `link` for eight drivers, then eight runs):
@@ -311,6 +322,12 @@ twenty-four compile/link/run exit codes is zero as well (`cl` and `link` for eig
   iterations`, and `kserver_cluster_fuzz 1 1` -> `done: 1/1 clusters consistent` with
   `linearizability: 4 histories / 253 ops decided by the checker, 0 inconclusive` (non-zero, so the
   checker can be seen to have decided something - its own `lincheck_selftest` runs inside that binary).
+
+**What the guest does NOT cover.** `tests/cli_smoke.sh` is a shell script and the guest has no shell, so the CLI's
+exit-status semantics (the D-series above: a script against an unreachable host fails instead of hanging, a command
+the server rejects fails the script, a CAS conflict exits 2, a PIPE run that was cut short is not a pass) are
+covered on the host and in CI only.  `piped.bat` on the guest drives the piped CLI's happy path (`piped_rc=0`,
+`ok`, `v1`) and nothing else.
 
 So the XP verification now covers build (seven test programs plus the two applications), the end-to-end
 run, the crash contract, the four unit suites and the deterministic fuzz drivers including the

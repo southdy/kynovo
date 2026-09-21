@@ -959,8 +959,9 @@ Four cases, all asserted on content rather than chatter:
   loud signal at that stage; asserting a flag the product does not set would be testing the test.
 
 Wired as gate layer L1g (`reg_gate vfs_fault_test`), so `quick` is 10 layers and `full` 14; docs updated.
-The new test has NOT been run on the XP guest yet - the guest list in doc/testing.md section 7 was left
-alone rather than quietly extended with a claim that would be false.
+**Update (same round, later):** that test HAS now run on the XP guest - it is one of the five new cases in the
+41/41 `kserver_test` line recorded in `doc/testing.md` section 7, so the deferral above is closed rather than
+forgotten.
 
 ### Linux gate (4) - first real run found a rule that was wrong, not a port
 
@@ -1287,19 +1288,23 @@ five unit suites, so those numbers were right all along.
 - **顺带量了一条基线**：干净服务端上，**第一条**一次性请求约 **1.0 s**（其后约 0.68 s）⇒ 不是 5 s 超时；先前两次
   探针里出现的首条超时在干净服务端上**不可复现**（那两次打的是被反复 kill/重启的服务端），记在此处以免被当成
   缺陷复现步骤。
-- **XP 客人机验证（已跑完）**：暂存刷新后由客人机执行 `go.bat`（`kynovo_step.bat` ver=**H**、
-  `xp_tests.bat` ver=**G**，脚本自身打印尺寸+版本 ⇒ 可证明跑的是新脚本），`build_exit=0 / run_exit=0 /
-  tests_exit=0`，编译 **0 个 error**（MSVC 6 的既有 C4244/C4133 警告是 IOCP 的那几条，与本次改动无关）。逐条：
-  `cemon 5/5`、**`kclient 18/18`**、`raft 221/221`、**`kserver 37/37`**、**`vfs_fault 5/5`**，
-  其中两个新用例逐字打印：
-  `PASS  client: a request queued before the connection is sent once it comes up  21 us`、
-  `PASS  vfs mem backend: two threads, two paths in one hash bucket  203641 us`
-  ⇒ **真线程的并发用例与新的客户端用例都已在 MSVC 6 + XP 上编译、链接、运行、通过**（203 ms 对主机上的 93 ms，
+- **XP 客人机验证（已跑完，第四轮收口复跑）**：暂存刷新后由客人机执行 `go.bat`（`kynovo_step.bat` size=4672
+  ver=**H**、`xp_tests.bat` size=5996 ver=**G**，脚本自报尺寸+版本、且与暂存区一致 ⇒ 可证明跑的是新脚本），
+  `build_exit=0 / run_exit=0 / tests_exit=0`，两份日志里 `error C` 与 `LNK` 均为 **0**；MSVC 6 的 17 条 `C4761`
+  在同样这些行上一直都有（`git blame` 显示本轮未改动那些行，`doc/testing.md` 也把该类列为已知），不是回归。
+  五套：`cemon 5/5`、**`kclient 19/19`**、`raft 221/221`、**`kserver 41/41`**、`vfs_fault 5/5`，与本机门同数；
+  本轮新增的五条用例逐字通过：
+  `PASS  proto: a handler that frees the rx buffer cannot be parsed through in the same feed  38 us`（去掉守卫时该用例会段错误）、
+  `PASS  server InstallSnapshot replaces a stale longer file instead of keeping its tail  999 us`、
+  `PASS  server WAL recovery refuses a cut in the middle of the log (fail-stop)  5057 us`、
+  `PASS  server WAL recovery refuses to start empty behind a released prefix past the scan ceiling  32880 us`、
+  `PASS  membership: the note is bound to the request that submitted the change, not to the server  961 us`；
+  真线程用例仍在（`PASS vfs mem backend: two threads, two paths in one hash bucket  202747 us`，主机同项为 93 ms，
   同量级）。fuzz：`done: 200 iterations`、`done: 2 iterations`、`1/1 clusters consistent`、
-  `linearizability: 4 histories / 253 ops decided, 0 inconclusive`；崩溃契约 `survive-me` 复现。
-  **管道输入的 CLI 修复（5.1）也已在 XP 上验证**：`piped.bat`（ver=B，二进制目录依次试探并写入日志）
-  在客人机上 `piped_init_rc=0`、**`piped_rc=0`**（修复前是 rc=124 + 挂死，且一条命令都不执行），输出为
-  `connected to 127.0.0.1:9601` / **`ok`** / **`v1`** ⇒ 管道里的 `SET` 真的执行了、`GET` 读回了值。
+  `linearizability: 4 histories / 253 ops decided by the checker, 0 inconclusive`；崩溃契约 `survive-me` 复现。
+  **客人机不覆盖的**：`tests/cli_smoke.sh` 是 shell 脚本、XP 无 shell ⇒ D 系列的退出码语义（死主机脚本必须失败、
+  服务端拒绝的命令必须让脚本失败、CAS 冲突退出码 2、被截断的 PIPE 不是通过）只有本机门与 CI 覆盖；客人机的
+  `piped.bat` 只走管道 CLI 的正常路径（`piped_rc=0`、`ok`、`v1`）。
 
 ## U. Round-4 review: findings and their terminal state
 

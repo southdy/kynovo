@@ -462,3 +462,25 @@ instance, and a green local gate is not a green gate - read the pushed run and l
 6. **D1-D4** - the CLI's exits and statistics: the operator's and the agent's view of what happened.
 7. **E1-E5** - the gate's own blind spots: the fixes above need a gate that can fail, time out and be checked.
 8. **F1/F2** - the docs last, so the correction is the final state and not a guess.
+
+## Closing state
+
+Every item in this round is closed one way or the other - fixed, or refuted with the experiment that refuted it:
+
+| item | outcome |
+|---|---|
+| A1 | fixed (`1393b75`) - the scan ceiling no longer reports a released prefix as an empty store |
+| A2, A3 | **refuted** - a middle-segment cut is caught by the acknowledged-position check, measured; the misleading slot comment was rewritten and the property is now pinned by a test |
+| A5, A6 | fixed (`a0ae3ae`) - base 0 is no longer a "verified snapshot", and an install may not inherit a stale tail; the fuzz refuted the first version of the second fix 5/5 |
+| B1, B2 | fixed (`fc0f366`) - a worker that outlives its wait is left alone instead of being freed under; defensive, no red case, labelled as such |
+| B4 | fixed (`fc0f366`) with a red case - the feed stops when a handler frees its buffer; the suite segfaults inside that case without the guard |
+| C1, C2 | fixed (`c6a8026`) - the membership note travels with its request; a note that would not fit says so |
+| D1-D4 | fixed (`f5caeef`) - the CLI's exit status stops reporting refusals, redirects, conflicts and truncated runs as success |
+| E1, E3 | fixed (`d1031bb`) - every gate layer runs under a watchdog, and the git-list emptiness report sits after every list is built |
+| F (doc numbers) | fixed (`c018ed3`), with two of the flagged numbers refuted rather than changed |
+| A4, A7, C3-C8, E2, E4-E7 | **open** - recorded in `doc/gaps-audit.md`, not silently dropped |
+
+Evidence for the round as a whole: `REGRESS|full|pass=14 fail=0 duration=267s`, CI green on every push, and the XP
+guest run recorded in `doc/testing.md` section 7 (`cemon 5/5`, `kclient 19/19`, `raft 221/221`, `kserver 41/41`,
+`vfs_fault 5/5`, `error C`/`LNK` = 0, fuzz and the crash contract included).  The one thing the guest cannot cover
+is `cli_smoke.sh`, which needs a shell - said out loud there rather than implied.
