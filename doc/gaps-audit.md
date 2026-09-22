@@ -1290,12 +1290,15 @@ five unit suites, so those numbers were right all along.
 - **顺带量了一条基线**：干净服务端上，**第一条**一次性请求约 **1.0 s**（其后约 0.68 s）⇒ 不是 5 s 超时；先前两次
   探针里出现的首条超时在干净服务端上**不可复现**（那两次打的是被反复 kill/重启的服务端），记在此处以免被当成
   缺陷复现步骤。
-- **store 级快照 harness（第四轮残余项，已开始收口）**：`tests/kserver_test.c` 的 `drive_store` 分三阶段造出"记录带
+- **store 级快照 harness + 在飞变更载具（第四轮残余项，已收口）**：`tests/kserver_test.c` 的 `drive_store` 分三阶段造出"记录带
   **快照基址**、且 WAL 已越过扫描 ceiling"的存储（每阶段都自证：`snapshot.index>0` 且快照文件校验通过 ✓、unlink 返回 0 才算"前缀确已释放" ✓）；
   首个用例 `server WAL recovery keeps a snapshot base behind a released prefix past the scan ceiling` 用 `treap_get` 断言恢复出的状态 ✓，
   **红证成立**（停掉 A1 的尾部跳转 ⇒ 47/48 ✓）。过程中实测到两条机制：`k_server_open` 会以持久化配置覆盖 open 前设置的 cfg 字段；
-  mem 后端 `vfs_open` 对已 unlink 的路径会**新建**文件（存在性探测会复活被测前缀）。**A5 / A7 均以覆盖**（A5 用伪造载荷 ✓、A7 无需伪造：快照记录带真实基址、其后普通记录带 0 ✓ 即是"强制抬高"现场 ✓；两者红证成立 ✓）。
-  **仍未覆盖**：仅剩 C3（需"变更在飞行中"的集群 harness ✓）。
+  mem 后端 `vfs_open` 对已 unlink 的路径会**新建**文件（存在性探测会复活被测前缀）。**A5 / A7 / C3 均以覆盖**：A5 用伪造载荷（重写载荷基址 + 重算 CRC ✓）、A7 无需伪造（快照记录带真实基址、其后普通记录带 0 ✓ 即"强制抬高"现场 ✓）、
+  C3 用**真正在飞的成员变更**（节点 2 预列地址簿但不投票、capture transport 不投递任何东西 ⇒ `MEMBER_ADD 2` 被接受并 deferred ✓、单投票人集群保持健康 ✓；
+  随后第二个变更撞上 §4.1"至多一个未提交配置"被 raft 拒绝 ✓；先把 `election_min_ms` 调大，否则默认 250ms 下领导人会失去与节点 2 的 quorum 接触而 step down ✓，
+  而 step-down 的应用层拒绝又发生在读时钟之前 ✓）。**三者的红证全部成立** ✓ ⇒ 第四轮"已修但无红证"的条目**已清空** ✓。
+  **仍未覆盖**：无（本轮残余项收口完毕 ✓）。
 - **XP 客人机验证（C3-C8 + A4/A7 批，2026-09-22）**：`[kynovo_step.bat] size=4672 ver=H`、`[xp_tests.bat]
   size=5996 ver=G`、`build_exit=0 run_exit=0 tests_exit=0`、`error C`=0、`LNK`=0、17 条 `C4761`（与历次同数、同类别）；
   `SUMMARY: 5/5 · 19/19 · 221/221 · 47/47 · 5/5`。六条新用例逐字 PASS（41–46 号），含 A4 的
@@ -1409,16 +1412,17 @@ suite's own verdict:
   got 0).  The `SHUTDOWN` half of C8 is red-proofed by the same revert: with `if(send(...)!=0) return -1` restored it
   reports no shutdown.
 
-**C3 is the exception, and it must not be read as covered.**  The fix guards the clock clear with
-`k_server_membership_own_pending(server)==0`.  The unit harness cannot stage the refusal the audit describes: the
-only refusal shape reachable there is the *address-log* submit failing before the reconfig is attempted (a stale
-leadership view), where nothing touches the clock - so removing the guard leaves the new case green.  Staging the
-reconfig refusal needs a real in-flight change, and the harness cannot keep that change's catch-up target from
-graduating into the desired config, which legitimately ends the wait.  The guard is therefore a defensive fix with
-the audit's reasoning accepted on the code, and the case pins only what it can: a refusal answers an error and
-leaves a running wait's clock and notice budget alone.  Covering it properly needs a harness that can hold a config
-change in flight across an advance.  The store-level snapshot harness added for A1 does not provide that: it drives
-recovery from a written store, not a live change, so C3's guard still has no case.
+**C3: retracted conclusion.**  This paragraph used to read "C3 is the exception, and it must not be read as
+covered" - the stub below stands, but the conclusion that the unit harness cannot stage the refusal is now
+**refuted**: it could not keep a catch-up target from graduating when the target was a node the harness delivered
+to, but a node the harness cannot deliver to at all never catches up, so the change stays in flight indefinitely
+and Raft refuses the next one.  The stale-view case is kept for what it does prove (a refusal answers an error and
+leaves a running wait's clock and notice budget alone) and is recorded as unable to go red.  **Now covered**: the case holds a config change in flight - node 2 is pre-listed in
+the address book but is not a voter and the capture transport delivers nothing to it, so its change is accepted and
+deferred while the cluster stays healthy, and a second change is refused by Raft (§4.1).  Red proof: with the clear
+unconditional again the still-running wait's clock reads 100 ms instead of 1100.  The election timeout is raised
+first, because with the default 250 ms the leader loses quorum contact with node 2 and steps down - and a step-down
+refuses at the app layer, which is again before the clock is read.
 
 One further defect was found **while** fixing C5 and is recorded here because no audit found it: the `STATS` format
 string printed `membership_targets_gompleted`.  Any external scraper reading that field by name would have missed

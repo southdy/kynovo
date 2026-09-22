@@ -170,7 +170,7 @@ the file and returns an error.  Measured after that change: `kserver_test` 40/40
 `test_install_snapshot_discards_a_stale_longer_file` asserts the honest behaviour (refused and the old bytes gone)
 rather than a silent trim; with the guard neutered it fails.
 
-### A7 **[FIXED; one part unred-proofed, one third moot]** MEDIUM/LOW: the forced-high base decodes the wrong record; the verify helper creates the file it verifies; `skipped_prefix` is dead state
+### A7 **[FIXED; both reachable parts now red-proven, one third moot]** MEDIUM/LOW: the forced-high base decodes the wrong record; the verify helper creates the file it verifies; `skipped_prefix` is dead state
 
 `:1802` `if(n_base<prev_base) n_base=prev_base;` but the decode at `:1822` uses `pick_base`'s segment/offset - the
 *newest* record, carrying the lower base - so `:1847` refuses: fail-stop where the comment promises a successful
@@ -301,14 +301,23 @@ asserts the note fits and that the stored length excludes the terminator; it exe
 pending entry may be alive (layering is explicitly supported).  After 20 s waiting on change A, a refused change B
 resets A's reported age to 0 and re-arms the notice budget.  The count rollback itself is correct.
 
-**Outcome: fixed, defensive, no red proof - and that is recorded, not hidden.**  The three resets are now guarded
+**Outcome: fixed, and now red-proven.**  (It was recorded for a while as "defensive, no red proof" - that
+sentence is retracted by the case below, not quietly dropped.)  The three resets are now guarded
 by `k_server_membership_own_pending(server)==0`: only a refusal that leaves no wait of this node's own standing may
 clear the clock.  The red proof could not be obtained because the only refusal shape the unit harness can stage is
 the *address-log* submit failing before the reconfig is even attempted (a stale leadership view), where the clock is
 untouched by construction; the reconfig refusal itself needs a real in-flight change, and the harness cannot keep a
-catch-up target from graduating into the desired config.  The new case therefore pins what it can: the refusal
-answers an error and leaves the running wait's clock and notice budget alone.  With the guard removed the case still
-passes - stated here so nobody reads it as a covered fix.
+catch-up target from graduating into the desired config.  The case that pins the stale-view shape is kept for what it
+proves - the refusal answers an error and leaves the running wait's clock and notice budget alone - but it cannot go
+red, and with the guard removed it still passes: it is recorded as such so nobody reads it as coverage of this fix.
+What DOES cover it is `membership: a refusal by Raft leaves the clock of the change that is in flight`: node 2 is
+pre-listed in the address book but is not a voter, the capture transport delivers nothing to it, so its change is
+accepted and deferred (the cluster stays healthy on its one voter) - a change genuinely in flight - and a second
+change is then refused by Raft itself (§4.1: at most one uncommitted config), which is the only refusal shape that
+reaches the audited lines.  Red proof: with the clear unconditional again, the still-running wait's clock reads 100
+ms instead of 1100 (50/51).  The election timeout is raised before the change, because at the default 250 ms the
+leader would lose quorum contact with node 2 and step down, and a step-down refuses at the app layer - again before
+the clock is read.
 
 ### C4 **[FIXED]** MEDIUM: `age_ms` is one server-global accumulator reported per entry, and `pending[]` is a bag
 
@@ -683,7 +692,7 @@ Every item in this round is closed one way or the other - fixed, or refuted with
 | E4 | fixed - the char-literal lexer understands escapes, and the comment rule catches `case 3://note` and a trailing `//` without firing on `mem://` prose (5-case truth table) |
 | E5 | fixed - the counters harness greps the fields the server emits and certifies it measured something; `regress_selftest` extracts the real detector and runs as a gate layer (it found a false "layer timeout" claim in `reg_gate`); 11 report-only harnesses now say so |
 | E7 | fixed - the `sprintf` ratchet sees column 0, the `raft_inspect` rule names its sanctioned site, `git_out` records non-zero exits (rule 20), and `cli_smoke`'s piped needles are the values it stored |
-| C3 | fixed - the wait clock is only cleared by a refusal that leaves no wait of this node's own; **defensive, no red proof, and the section above says why** |
+| C3 | fixed - the wait clock is only cleared by a refusal that leaves no wait of this node's own; **red-proven** by `membership: a refusal by Raft leaves the clock of the change that is in flight` (unconditional clear leaves 100 ms instead of 1100) |
 | C4 | fixed - every pending entry carries its own age from the server's internal clock (red case: 15 s vs 5 s) |
 | C5 | fixed - the counter is named for what it counts; the `STATS` label it was printed under was misspelled and is fixed |
 | C6 | fixed - TOPOLOGY is answered locally instead of through the barrier it is exempt from (red case: pre-fix it answers REDIRECT to itself) |

@@ -1876,6 +1876,73 @@ static void test_membership_refusal_keeps_a_live_wait_clock(void){
   TEST_END();
 }
 
+/* C3's red case.  The audited clear sits on the refusal path of k_server_submit_member, and the only refusal
+   shape that reaches it is one Raft makes itself: a stale leadership view fails at the ADDRESS submit, which
+   returns before the clock is even read - which is why the case above pins that shape and cannot go red.
+
+   So this one puts a change genuinely IN FLIGHT and has Raft refuse the next one.  Node 2 is pre-listed in the
+   address book but is not a voter, and the capture transport delivers nothing to it, so MEMBER_ADD 2 is accepted
+   and then either deferred (it never catches up) or left uncommitted in a joint config - either way §4.1's "at
+   most one uncommitted config" holds and a second change is refused.  Node 3 is that second change's target.
+
+   The election timeout is raised first: with the default 250 ms the leader would lose quorum contact with node 2
+   and step down, and a step-down refuses at the app layer (a redirect), which is again before the clock.  Raising
+   it also stretches Raft's catch-up window (election_min_ms * 10), so everything below fits inside it. */
+static void test_membership_refusal_keeps_the_clock_of_a_change_in_flight(void){
+  k_server s;
+  k_cluster c;
+  k_conn *conn;
+  k_response_data resp;
+  int ids[1];
+  int i,own_before;
+  TEST_BEGIN("membership: a refusal by Raft leaves the clock of the change that is in flight");
+  memset(&s,0,sizeof(s)); memset(&c,0,sizeof(c));
+  c.count=1;   /* one voter, so a single node can elect itself; nodes 2 and 3 go into the ADDRESS BOOK below */
+  c.nodes[0].id=1; c.nodes[0].client_port=7400; c.nodes[0].peer_port=7401; strcpy(c.nodes[0].host,"127.0.0.1");
+  k_server_init(&s,1,7400,7401,"mem://kstest-cinflight-1",&c);
+  s.runtime_backend="sync";
+  s.transport=&cap_transport;
+  s.admission=1;
+  cap_reset();
+  TEST_ASSERT(k_server_open(&s)==0,"open");
+  TEST_ASSERT(elect(&s)==0,"leader");
+  k_server_client_accepted(&s,(void*)(size_t)1);
+  conn=s.connections;
+  TEST_ASSERT(conn!=0,"a client connection");
+  s.cluster.count=3;
+  s.cluster.nodes[1].id=2; s.cluster.nodes[1].client_port=7402; s.cluster.nodes[1].peer_port=7403; strcpy(s.cluster.nodes[1].host,"127.0.0.1");
+  s.cluster.nodes[2].id=3; s.cluster.nodes[2].client_port=7404; s.cluster.nodes[2].peer_port=7405; strcpy(s.cluster.nodes[2].host,"127.0.0.1");
+  /* Long enough that neither the leader's own quorum check nor Raft's catch-up window closes during the case. */
+  s.raft->cfg.election_min_ms=60000u;
+  s.raft->cfg.election_max_ms=120000u;
+  /* 1. A change of this node's own: accepted (a target of its own is now pending), not refused. */
+  ids[0]=2;
+  k_server_submit_member(&s,conn,30,K_MEMBER_ADD,ids,1);
+  TEST_ASSERT(k_server_membership_own_pending(&s)==1,"a change of this node's own is now in flight");
+  for(i=0;i<4;i++) turn(&s,250u);
+  TEST_ASSERT_I64_EQ((raft_i64)s.membership_pending_ms,1000,"the in-flight wait has accumulated a clock");
+  own_before=k_server_membership_own_pending(&s);
+  /* 2. A second change: its address entry goes through (Raft is still leader and raft_submit does not refuse
+        during catch-up), and then Raft refuses the change itself. */
+  ids[0]=3;
+  gcap.send_count=0;
+  k_server_submit_member(&s,conn,31,K_MEMBER_ADD,ids,1);
+  for(i=0;i<20&&gcap.send_count==0;i++) turn(&s,10u);
+  TEST_ASSERT(gcap.send_count>=1,"the second change was answered");
+  TEST_ASSERT(k_response_decode(&resp,gcap.last_payload,gcap.last_size)==0,"its ack decodes");
+  TEST_ASSERT_I64_EQ(resp.status,K_STATUS_ERROR,"Raft refused it");
+  k_response_data_free(&resp);
+  TEST_ASSERT(s.refused_count>0,"the refusal came from the reconfig path, not from the id white list");
+  /* 3. The clock belongs to the change that is STILL in flight.  Clearing it (the bug) leaves 0100 here. */
+  turn(&s,100u);
+  TEST_ASSERT_I64_EQ((raft_i64)s.membership_pending_ms,1100,"the change that is in flight kept its clock");
+  TEST_ASSERT(s.membership_notice_count>0,"and its reminder budget was not re-armed from zero");
+  TEST_ASSERT(k_server_membership_own_pending(&s)==own_before,"the refused change added no target of its own");
+  TEST_ASSERT(k_server_membership_own_pending(&s)>=1,"and the wait it belongs to is still running");
+  k_server_release(&s);
+  TEST_END();
+}
+
 /* C4: age_ms was one server-wide accumulator printed on every pending entry, so a young entry could be reported
    with an old entry's age. */
 static void test_topology_reports_per_entry_ages(void){
@@ -2343,7 +2410,7 @@ static void test_wal_recovery_keeps_a_snapshot_base_past_the_ceiling(void){
 
 int main(int argc,char **argv){
   if(argc>=3&&strcmp(argv[1],"--apply-stress")==0) return apply_stress(test_strtoull(argv[2]),argc>=4?test_strtoull(argv[3]):TEST_U64_C(4096),argc>=5&&strcmp(argv[4],"thread")==0,argc>=6&&strcmp(argv[5],"nosnap")==0);
-  TEST_PLAN(50);
+  TEST_PLAN(51);
   g_run_tag=0;
   if(k_monotonic_us(&g_run_tag)!=0) g_run_tag=(k_u64)time(0);
   test_fcall_gate_reopens_when_its_request_dies();
@@ -2387,6 +2454,7 @@ int main(int argc,char **argv){
   test_membership_wait_reporting();
   test_membership_note_is_bound_to_its_request();
   test_membership_refusal_keeps_a_live_wait_clock();
+  test_membership_refusal_keeps_the_clock_of_a_change_in_flight();
   test_topology_reports_per_entry_ages();
   test_topology_names_a_refused_changes_leftover();
   test_topology_is_answered_locally();

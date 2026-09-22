@@ -46,7 +46,7 @@ and their `run-*` versions, `selftest`, `kdbsvr`, `kdbctl`, `bench*`, `cemon-ben
 |---|---|---|---|---|
 | L0 | compile gate | `./build.sh` | rc=0 and 0 warnings in `build.log` | ~90s |
 | L1a | raft unit | `./build/raft_test.exe` | `SUMMARY: 221/221 passed` | ~1s |
-| L1b | server unit (with stress mode) | `./build/kserver_test.exe` | `SUMMARY: 50/50 passed` | ~45s |
+| L1b | server unit (with stress mode) | `./build/kserver_test.exe` | `SUMMARY: 51/51 passed` | ~45s |
 | L1c | client unit | `./build/kclient_test.exe` | `SUMMARY: 19/19 passed` | ~0.1s |
 | L1d | cemon event-loop unit | `./build/cemon_test.exe` | `SUMMARY: 5/5 passed` | ~2s (includes a 2s long wait) |
 | L1e | end-to-end self-test (single process, with membership change/bootstrap/election) | `./build/selftest.exe` | `selftest: PASS` | ~1–3s |
@@ -357,7 +357,17 @@ is checking.  This case has not been run on the guest yet; it is in the plan the
   carries base 0 while an earlier one carried the real base is the observed restart shape, so
   `server WAL recovery decodes the first record that carried the base, not the newest` requires the load to raise
   the base back and decode the snapshot metadata from the record that FIRST carried it.  Red proof: making it use
-  the newest record again fails BOTH this case and the A1 one (48/50) - they share the decode path.
+  the newest record again fails BOTH this case and the A1 one (48/50) - they share the decode path.  A fourth case covers **C3**, and it needed the other kind of vehicle: the audited clear sits on the refusal path
+  of `k_server_submit_member`, and the only refusal shape that reaches it is one Raft makes itself - a stale
+  leadership view fails at the ADDRESS submit, which returns before the clock is even read, which is why the case
+  that pins that shape can never go red.  So the case puts a change genuinely in flight: node 2 is pre-listed in
+  the address book but is not a voter, and the capture transport delivers nothing to it, so `MEMBER_ADD 2` is
+  accepted and then deferred (it never catches up) while the single-voter cluster stays healthy; a second change
+  then hits §4.1's "at most one uncommitted config" and is refused.  The election timeout is raised first, because
+  with the default 250 ms the leader would lose quorum contact with node 2 and step down - and a step-down refuses
+  at the app layer, again before the clock.  Red proof: making the clear unconditional again leaves the still
+  running wait's clock at 100 ms instead of 1100 (50/51) - the audited defect, reproduced.
+
 
 
 
