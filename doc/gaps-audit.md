@@ -920,6 +920,25 @@ then nothing.  Named cause: the replacement must catch up before the ADD commits
 not running stalls the swap.  Fixing that needs a rate-limited reminder (a new field), so it is recorded
 here rather than half-done.
 
+**RESOLVED (`eacb10e`) - this paragraph described the gap before the fix landed, and it is kept as the state of
+that round rather than edited away.**  The reminder exists now, and the shape is the one this paragraph asked
+for: `k_server_membership_tick()` (`code/kserver.h`, driven every round from `k_server_advance`) prints an
+opening line once per wait (`membership: waiting for node <id> to catch up before the change commits
+(<source>; voters=<n>, link=<state>)`) and then repeats every `K_MEMBERSHIP_NOTICE_MS` (10 s) as
+`membership: still waiting for node <id> after <n>s (link=<state>; voters=<n>)`, rate-limited through the
+`membership_pending_notice_ms` field this paragraph anticipated.  Only the node that SUBMITTED the change
+speaks (`k_server_membership_own_pending`), the wait ends audibly either way - graduation
+(`node <id> graduated into the config after <n>ms; the catch-up wait is over`) or leadership loss
+(`the catch-up wait was abandoned after <n>ms: this node is no longer the leader`) - and `STATS` carries
+`membership_pending`, `membership_pending_ms`, `membership_change_started`, `membership_targets_graduated` and
+`membership_notices`, with `TOPOLOGY` showing `role=pending age_ms=<n> state=<s> source=<s>`.
+
+What is still open from (3b), and it is a decision rather than an edit: the reminder is rate-limited but not
+capped (10 s apart, for as long as the wait lasts), `K_MEMBERSHIP_NOTICE_MS` is a constant rather than a
+measured value, and the wish for "a voter has been unreachable for X" is still only the one-off `missed N
+rounds` at the decision - the reminder reports the WAIT's age and the link state, not the failed voter's own
+elapsed time.
+
 ### (4) Unverified platforms (C4) - Linux added to CI, macOS deliberately not added
 
 CI only ever compiled the Windows/MSYS2 path, so the POSIX branches of `runtime.h` (including the
@@ -1049,6 +1068,12 @@ that node 4 does not exist yet), no line while it lasts, no reason/age/progress,
 that says "a voter has been unreachable for X while a replacement is pending".  The wait is unbounded on
 purpose (a config change that is not committed must not simply be abandoned - Ongaro Sec 4.1), so the fix
 is observability, not a give-up timer.
+
+**Status (re-read 2026-09-22, after `eacb10e`):** the start line, the line while it lasts, and the
+reason/age/source are all implemented now - see the RESOLVED note in item (3) below, which lists the exact
+lines and fields.  The one item from this paragraph that no code carries is the last: there is no counter for
+"a voter has been unreachable for X while a replacement is pending" - the decision line prints `missed N
+rounds` once, and the reminders report the wait's own age (`STILL waiting after Ns`) plus the link state.
 
 ### (5b) The storage injection seam ran on the XP guest
 
