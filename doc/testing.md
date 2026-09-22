@@ -308,22 +308,27 @@ against the repository before transfer:
   tests_exit=0`, with `error C` and `LNK` counts of **0** in both logs.  MSVC 6 reports 17 `C4761` warnings on the
   same code it always did - the documented class below, not a regression: those lines are unchanged since before
   this round;
-- unit suites, **latest guest run** (2026-09-22, the `cc05159` sources): `cemon_test 5/5`, `kclient_test 19/19`,
-  `raft_test 221/221`, `kserver_test 47/47`, `vfs_fault_test 5/5`, with `error C` and `LNK` counts of **0**;
-  MSVC 6 reports 17 `C4761` warnings - the same class and the same count as every earlier run (see the note
-  below), not a regression.  The six cases the C3-C8 and A4/A7 batches added build and pass verbatim here:
+- unit suites, **latest guest run** (2026-09-22, the `4339f87` sources): `cemon_test 5/5`, `kclient_test 19/19`,
+  `raft_test 221/221`, `kserver_test 51/51`, `vfs_fault_test 5/5`, with `error C` and `LNK` counts of **0** and
+  17 `C4761` (the pre-existing MSVC 6 class, unchanged in count, so nothing here added a warning of it either).
+  The four cases the snapshot harness and the in-flight vehicle added ran verbatim, numbered `[48/51]`..`[50/51]`:
+  `PASS membership: a refusal by Raft leaves the clock of the change that is in flight  2518 us`,
+  `PASS server WAL recovery keeps a snapshot base behind a released prefix past the scan ceiling  459398 us`,
+  `PASS server WAL recovery refuses a rollback to base 0 (it never certified a state)  2752 us`,
+  `PASS server WAL recovery decodes the first record that carried the base, not the newest  450095 us`
+  (the 51st case is the older mem one).  The six cases the C3-C8 and A4/A7 batches added had already run on the
+  guest in the previous run, where the plan was 47/47 - they still pass, and their timings there were:
   `PASS membership: a refused change answers an error and leaves a running wait's clock alone  711 us`,
   `PASS TOPOLOGY: each pending entry carries its own age, not one server-wide accumulator  17 us`,
   `PASS TOPOLOGY: a refused change's leftover pending entry says where it came from  435 us`,
   `PASS TOPOLOGY is answered locally, even when a request through the barrier would be refused  666 us`,
   `PASS SHUTDOWN stops the server even when the ack cannot be sent  489 us`,
-  `PASS server WAL recovery judges a segment that continues a torn tail by generation  3425 us`
-  - and the case numbers run `[41/47]`..`[46/47]`, so the run can be seen to have executed the new plan;
+  `PASS server WAL recovery judges a segment that continues a torn tail by generation  3425 us`;
 - **how that run is known to be the new sources, not a re-run of an old tree.**  The bootstrap prints its own
   `ver=`/`size=` and `GET failures: 0` whether or not the transfer carried new bytes, so freshness is read from the
   artifacts instead: the log's `Transfer successful: N bytes` lines carry **278831** for `code/kserver.h` and
-  **102251** for `tests/kserver_test.c` - the sizes of exactly the two files these batches changed - and the suite's
-  own plan number agrees (`47/47` against `TEST_PLAN(47)`);
+  **117714** for `tests/kserver_test.c` - the sizes of exactly the two files these batches changed - and the suite's
+  own plan number agrees (`51/51` against `TEST_PLAN(51)`);
 - the earlier guest run's `41/41` counts (and the A1 case's, above) were **superseded** by this one: see the two
   void runs recorded below.  Every case the fourth review round added before this batch passes verbatim on the
   guest:
@@ -348,7 +353,9 @@ the walk falls through to the pre-fix `break` makes the case fail (`rc==0` / `it
 were measured on the way and are worth keeping: opening a store loads its **persisted** configuration over
 whatever the caller set before `k_server_open` (a pre-open `cfg.snapshot_segments` read back as the default 10),
 and on the mem backend `vfs_open` CREATES an unlinked path, so an existence probe resurrects the very prefix it
-is checking.  This case has not been run on the guest yet; it is in the plan the next guest run will fetch.  A second case covers **A5** with a forged payload rather than a snapshot: `forge_last_record_base` rewrites the
+is checking.  All four of these ran on the guest in the run above, numbered `[48/51]`..`[51/51]` (the last of those is the
+  older mem case).  The snapshot cases are the slow ones there - ~0.45 s each against ~23 ms here - and the
+  in-flight one 2.5 ms, which is what a 2003-era compiler looks like next to this machine.  A second case covers **A5** with a forged payload rather than a snapshot: `forge_last_record_base` rewrites the
   last complete record of a segment so it claims a base whose snapshot file was never written, recomputing the
   payload CRC it stores back, and `server WAL recovery refuses a rollback to base 0 (it never certified a state)`
   requires the load to refuse instead of rolling back to base 0 and replaying from an empty tree.  Red proof:

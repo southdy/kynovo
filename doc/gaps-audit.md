@@ -1365,6 +1365,21 @@ five unit suites, so those numbers were right all along.
   服务端拒绝的命令必须让脚本失败、CAS 冲突退出码 2、被截断的 PIPE 不是通过）只有本机门与 CI 覆盖；客人机的
   `piped.bat` 只走管道 CLI 的正常路径（`piped_rc=0`、`ok`、`v1`）。
 
+- **XP 客人机复跑（2026-09-22，第四次 `go.bat`）：第四轮新增的四条用例在客人机逐字通过，客人机已无欠账。**
+  刷新前先自证通道：把仓库源码写进**被取件的那两份**（`staging/code/`、`staging/tests/`），再用**与客人机相同的带前缀路径**取回
+  （`GET code/kserver.h` ⇒ 278831、`GET tests/kserver_test.c` ⇒ **117714**），***仓库 / 暂存 / 取回*** 三方 md5 逐字节一致、
+  清单 28 条亦逐条与仓库一致；引导脚本未被改动（`kynovo_step.bat` 4672、`xp_tests.bat` 5996 = 客人机上报的那两个 `ver=`）。
+  客人机结果：`build_exit=0 / run_exit=0 / tests_exit=0`、`error C`=0、`LNK`=0、`C4761`=**17**（与历次同数 ⇒ 新用例没有引入该类告警），
+  取件日志出现 `Transfer successful: 117714 bytes`（`tests/kserver_test.c`，旧的 102251 消失）与 `278831`（`code/kserver.h`）；
+  五套 `5/5 · 19/19 · 221/221 · `**`51/51`**` · 5/5`，四条新用例逐字：
+  `PASS  membership: a refusal by Raft leaves the clock of the change that is in flight  2518 us`（`[42/51]`）、
+  `PASS  server WAL recovery keeps a snapshot base behind a released prefix past the scan ceiling  459398 us`（`[48/51]`）、
+  `PASS  server WAL recovery refuses a rollback to base 0 (it never certified a state)  2752 us`（`[49/51]`）、
+  `PASS  server WAL recovery decodes the first record that carried the base, not the newest  450095 us`（`[50/51]`）；
+  第 `[51/51]` 条是既有的 mem 用例。客人机日志里还留着在飞载具自己的那句
+  `membership: waiting for node 2 to catch up before the change commits (client request; voters=1, link=no-connection)`
+  ⇒ 那条用例在客人机上**确实处于"有变更在飞"的状态**，不是空跑。
+
 ## U. Round-4 review: findings and their terminal state
 
 The fourth full review (7 read-only audits, `doc/code-review-2026-09d.md`) runs with one extra instruction the
