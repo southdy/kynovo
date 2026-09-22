@@ -699,7 +699,7 @@ Every item in this round is closed one way or the other - fixed, or refuted with
 | C7 | **refuted** - freeing a failed FCALL already re-opens the gate, and leadership loss drains the queue by design |
 | C8 | fixed - SHUTDOWN stops regardless of its ack; a refused change's leftover pending entry is marked and reported (red case: `pending_source[0]==-1`) |
 | A4 | fixed - a segment continuing a torn tail must still be newer (exactly `+1` after a payload tear, `>` after a header tear), and term/vote merge by term so a term cannot regress (red case: the stale continuation is accepted with the rule reverted) |
-| A7 | fixed - the forced-high base decodes the record that first carried it; the verify helper no longer creates the file it verifies (unred-proofed, see the section); `skipped_prefix` was already gone |
+| A7 | fixed - the forced-high base decodes the record that first carried it (**red-proven**: using the newest record again fails this case and A1's, 48/50); the verify helper no longer creates the file it verifies (its failure mode is filesystem-only and stays unred-proofed, see the section); `skipped_prefix` was already gone |
 
 Evidence for the round as a whole: `REGRESS|full|pass=14 fail=0 duration=267s`, CI green on every push, and the XP
 guest run recorded in `doc/testing.md` section 7 (`cemon 5/5`, `kclient 19/19`, `raft 221/221`, `kserver 41/41`,

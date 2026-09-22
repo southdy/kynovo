@@ -1103,6 +1103,41 @@ compile), 4.2 (the mem backend's inode table is an unlocked process-global), 6.1
 green on nothing: `scan()` re-scoping to the whole library, the naive LF step still in the primary CI job, and
 the `//`-comment rule blinded by apostrophes in comments).
 
+**Per-item status, re-read in the code on 2026-09-22 (the paragraph above is the state as of that review and
+must not be read as a current list).**  One of these is still open and one cannot be verified here; both are named as
+such rather than left in a list that reads as fresh:
+- **3.1 - fixed** (`5ef6174`), with its regression case: `client prints the MEMBER response body (visibility)`
+  asserts the note reaches the operator instead of a bare `ok` (`tests/kclient_test.c`).  It sat in this list as
+  open long after it was fixed.
+- **3.3 - fixed** (C8, fourth round): a refused change's leftover pending entry is marked `source=-1` and reported
+  in TOPOLOGY rather than silently kept or silently dropped; red case on `pending_source[0]==-1`.
+- **3.4 - fixed**: the synchronous refusal counts into `auto_replace_fail_streak` ("a refusal is a failure:
+  without this the retry stormed", `code/kserver.h`), and the backoff applies from the second consecutive failure.
+- **3.5 - fixed** (`c6a8026`): the note and its source live on the `k_request` that submitted the change, not on
+  the server.
+- **2.4 - fixed**: snapshot cleanup now keeps the PREVIOUS base's segment onward, "which the rollback target still
+  needs" (`code/kserver.h`, the `k_server_schedule_cleanup` call).
+- **2.2/2.3 - partly covered**: `test_wal_recovery_refuses_missing_newest_segment` and the round's released-prefix
+  cases pin several of those shapes; an empty `.wal.meta` is not separately pinned.
+- **2.1 - accepted residual, not a gap to fix**: telling "never written" from "damaged with a released prefix"
+  needs a read-only existence probe the vfs deliberately does not have.  Fourth-round A1 fixed the reachable half
+  (metadata PRESENT, prefix released past the ceiling) and left this one documented.
+- **4.2 - fixed**: the mem inode table is serialised by `vfs_mem_lock`, with the close-then-delete discipline
+  documented at the top of `code/vfs.h`.
+- **6.1 - fixed**: `git_out` records non-zero exits (rule 20) and an empty `ls-files` result is reported instead of
+  looking like an empty tree.
+- **6.2 - fixed**: no naive CRLF grep remains in the CI workflow; `check-principles.py`'s `--eol` check owns it.
+- **6.3 - fixed** (E4): the comment rule strips literals with a lexer that understands escapes and char literals.
+- **4.1 - still open, and unverifiable on this machine**: a C89 violation in a POSIX/macOS-only branch that no
+  gate here compiles (the macOS job is deliberately absent).  It stays recorded until someone can compile it.
+- **1.1 - fixed**: `k_conn_closed` no longer frees the connection it was called from ("Do NOT free here: cemon
+  calls this inline from close(), which is reached from inside frame handlers ... Queue it and let
+  `k_server_reap_closed` free it"), which is the use-after-free the item described.  The `close_pending` flag is
+  what the reader checks before touching the connection again.
+- **1.2 - fixed**: the reader returns early when `conn->close_pending` is set ("k_conn_closed already accounted
+  for this conn"), so the close path's subtraction and the reader's delta can no longer both land on the same
+  bytes and wrap the counter.
+
 ## N. 恢复（第三轮审视 2.1/2.2/2.3）—— 已修，并记录一条保留的残留
 
 - **2.1 元数据不可用 + 快照已释放前缀 ⇒ 静默空库启动（已修）**。原扫描在**第一个空段**就 `break`，于是被快照
