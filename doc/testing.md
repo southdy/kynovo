@@ -48,7 +48,7 @@ and their `run-*` versions, `selftest`, `kdbsvr`, `kdbctl`, `bench*`, `cemon-ben
 | L1a | raft unit | `./build/raft_test.exe` | `SUMMARY: 221/221 passed` | ~1s |
 | L1b | server unit (with stress mode) | `./build/kserver_test.exe` | `SUMMARY: 51/51 passed` | ~45s |
 | L1c | client unit | `./build/kclient_test.exe` | `SUMMARY: 19/19 passed` | ~0.1s |
-| L1d | cemon event-loop unit | `./build/cemon_test.exe` | `SUMMARY: 5/5 passed` | ~2s (includes a 2s long wait) |
+| L1d | cemon event-loop unit | `./build/cemon_test.exe` | `SUMMARY: 11/11 passed` | ~2s (includes a 2s long wait; three of the cases are the UDP receive path, C12) |
 | L1e | end-to-end self-test (single process, with membership change/bootstrap/election) | `./build/selftest.exe` | `selftest: PASS` | ~1–3s |
 | L1f | harness cleanliness: the self-test's store artifacts are gone | (gate layer `selftest_cleanup`) | `selftest-cleanup: 0 leftover file(s)` | ~0s |
 | L1g | vfs fault injection (the storage seam, exercised not assumed, plus two threads on one mem hash bucket) | `./build/vfs_fault_test.exe` | `SUMMARY: 5/5 passed` | ~1s |

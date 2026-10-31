@@ -680,18 +680,154 @@ static void test_destroy_silent_peer_no_leak(void){
 }
 
 
+/* ---- UDP delivery (issue #10 / audit C12) --------------------------------
+   Two defects shared one site in the Windows UDP receive completion and neither
+   had a regression case: (1) the emit fell through to the TCP-style `recv->buf`
+   whenever WSARecvFrom reported no usable source address, so the application was
+   handed a "complete datagram" made of uninitialised bytes; (2) a soft receive
+   error was absorbed and re-armed without a trace.
+
+   Reachability, read from the code rather than assumed: cemon_udp_bind REFUSES the
+   socket when cemon_win_udp_no_reset cannot switch reset reporting off (a refused
+   ioctl dies the socket in cemon_udp_bind), and the datagram buffer (65536) is larger
+   than the largest UDP payload (65507) - so neither WSAECONNRESET nor WSAEMSGSIZE can
+   arrive from the OS on this platform.  The completion is therefore injected directly.
+   What these cases pin is the handler's own behaviour (which buffer it emits, that the
+   counter moves, that the socket stays usable and re-armed), not an OS-delivered error. */
+static int g_udp_events;
+static int g_udp_len;
+static void *g_udp_src;
+static char g_udp_copy[128];
+
+static void udp_capture(cemon_socket *sock,const cemon_event *event){
+  if(!sock||!event) return;
+  if(event->type!=CEMON_DATA) return;
+  g_udp_events++;
+  g_udp_len=event->size;
+  g_udp_src=event->data;
+  if(event->data&&event->size>0&&event->size<=(int)sizeof(g_udp_copy))
+    memcpy(g_udp_copy,event->data,(size_t)event->size);
+}
+
+/* The end-to-end half: whatever branch the receive takes, the application must get
+   the datagram's own bytes and its exact length (the header's own words for UDP
+   CEMON_DATA).  Portable, so it runs on both platforms. */
+static void test_udp_loopback_datagram(void){
+  cemon *loop;
+  cemon_socket *rx,*tx;
+  cemon_addr to;
+  struct sockaddr_in bound;
+  cemon_socklen blen;
+  char payload[64];
+  int i;
+  TEST_BEGIN("udp: a loopback datagram arrives whole, with its own bytes");
+  loop=cemon_create();
+  TEST_ASSERT(loop!=0,"loop created");
+  rx=cemon_udp_bind(loop,"127.0.0.1",0,udp_capture,0);
+  TEST_ASSERT(rx!=0,"receiving socket bound");
+  memset(&bound,0,sizeof(bound));
+  blen=(cemon_socklen)sizeof(bound);
+  TEST_ASSERT(getsockname((probe_fd)rx->fd,(struct sockaddr *)&bound,&blen)==0,"getsockname");
+  TEST_ASSERT_I64_EQ(cemon_resolve(&to,"127.0.0.1",(unsigned short)ntohs(bound.sin_port),1),0,
+                     "resolve the destination address");
+  tx=cemon_udp_bind(loop,"127.0.0.1",0,0,0);
+  TEST_ASSERT(tx!=0,"sending socket bound");
+  TEST_ASSERT_I64_EQ(cemon_recvfrom(rx),0,"receive armed");
+  for(i=0;i<(int)sizeof(payload);i++) payload[i]=(char)(i+1);
+  g_udp_events=0; g_udp_len=-1; g_udp_src=0;
+  TEST_ASSERT_I64_EQ(cemon_sendto(tx,payload,(int)sizeof(payload),&to),0,"send accepted");
+  for(i=0;i<500&&g_udp_events==0;i++) cemon_poll(loop,5);
+  TEST_ASSERT_I64_EQ(g_udp_events,1,"exactly one datagram delivered");
+  TEST_ASSERT_I64_EQ(g_udp_len,(int)sizeof(payload),"the whole payload, not a prefix");
+  TEST_ASSERT_MEM_EQ(g_udp_copy,(int)sizeof(payload),payload,(int)sizeof(payload),"bytes intact");
+  cemon_destroy(loop);
+  TEST_END();
+}
+
+#if defined(_WIN32)
+/* The unusable-source-address case: WSARecvFrom left addr_len at 0, which used to
+   send the emit down the shared `else if(bytes>0)` branch and out of recv->buf. */
+static void test_udp_datagram_buffer_when_address_unusable(void){
+  cemon *loop;
+  cemon_socket *sock;
+  int i;
+  TEST_BEGIN("udp: a datagram with no usable source address is read from its own buffer");
+  loop=cemon_create();
+  TEST_ASSERT(loop!=0,"loop created");
+  sock=cemon_udp_bind(loop,"127.0.0.1",0,udp_capture,0);
+  TEST_ASSERT(sock!=0,"udp socket bound");
+  /* Arming is what posts the receive, and the completion carries the socket it was
+     posted for - injecting one without arming first is a no-op that would read as
+     "the handler emitted nothing". */
+  TEST_ASSERT_I64_EQ(cemon_recvfrom(sock),0,"receive armed");
+  TEST_ASSERT_PTR_EQ(sock->recv->op.sock,(void *)sock,"the receive was really posted");
+  for(i=0;i<32;i++){
+    sock->udp_recv->buf[i]=(char)('A'+i);
+    sock->recv->buf[i]=(char)0xEE;          /* TCP-style buffer: a UDP receive never fills it */
+  }
+  sock->udp_recv->addr_len=0;               /* no source address was reported */
+  g_udp_events=0; g_udp_len=-1; g_udp_src=0;
+  memset(g_udp_copy,0,sizeof(g_udp_copy));
+  cemon_win_recv_done(sock->recv,32,0);
+  TEST_ASSERT_I64_EQ(g_udp_events,1,"one CEMON_DATA emitted");
+  TEST_ASSERT_I64_EQ(g_udp_len,32,"the datagram keeps its length");
+  TEST_ASSERT_PTR_EQ(g_udp_src,(const void *)sock->udp_recv->buf,
+                     "delivered from the datagram buffer, not recv->buf");
+  TEST_ASSERT_MEM_EQ(g_udp_copy,32,sock->udp_recv->buf,32,"the datagram's own bytes");
+  cemon_destroy(loop);
+  TEST_END();
+}
+
+/* The soft-error case: an ICMP port-unreachable from an earlier send is not a
+   failure, but it used to leave no trace at all. */
+static void test_udp_soft_error_counted(void){
+  cemon *loop;
+  cemon_socket *sock;
+  cemon_stats st;
+  TEST_BEGIN("udp: a soft receive error is counted and the socket survives");
+  loop=cemon_create();
+  TEST_ASSERT(loop!=0,"loop created");
+  sock=cemon_udp_bind(loop,"127.0.0.1",0,udp_capture,0);
+  TEST_ASSERT(sock!=0,"udp socket bound");
+  TEST_ASSERT_I64_EQ(cemon_recvfrom(sock),0,"receive armed");
+  TEST_ASSERT_PTR_EQ(sock->recv->op.sock,(void *)sock,"the receive was really posted");
+  memset(&st,0,sizeof(st));
+  TEST_ASSERT_I64_EQ(cemon_inspect(loop,0,&st),0,"inspect");
+  TEST_ASSERT_I64_EQ((int)st.loop_udp_soft_errors,0,"counter starts at zero");
+  g_udp_events=0;
+  cemon_win_recv_done(sock->recv,0,WSAECONNRESET);
+  memset(&st,0,sizeof(st));
+  TEST_ASSERT_I64_EQ(cemon_inspect(loop,0,&st),0,"inspect after the soft error");
+  TEST_ASSERT_I64_EQ((int)st.loop_udp_soft_errors,1,"the absorbed error is now counted");
+  TEST_ASSERT_I64_EQ(cemon_socket_is_dead(sock),0,"the socket is still usable");
+  TEST_ASSERT_I64_EQ(sock->recv_armed,1,"the receive was re-armed");
+  TEST_ASSERT_I64_EQ(g_udp_events,0,"no datagram was invented for an error completion");
+  cemon_destroy(loop);
+  TEST_END();
+}
+#endif
+
 int main(void){
 #if defined(_WIN32)
   WSADATA wsa;
   WSAStartup(MAKEWORD(2,2),&wsa);
 #endif
-  TEST_PLAN(8);
+#if defined(_WIN32)
+  TEST_PLAN(11);
+#else
+  TEST_PLAN(9);
+#endif
   test_shutdown_write_open();
   test_shutdown_write_closed();
   test_destroy_bounded_drain();
   test_control_frame_priority();
   test_poll_fatal_reports_cause();
   test_owner_binding();
+  test_udp_loopback_datagram();
+#if defined(_WIN32)
+  test_udp_datagram_buffer_when_address_unusable();
+  test_udp_soft_error_counted();
+#endif
   test_ingress_close_bounded();
   test_destroy_silent_peer_no_leak();
   TEST_SUMMARY();

@@ -107,7 +107,8 @@ The checked and **gap-free** parts and the **settled trade-offs** are at the end
 | C9 | `[verified]` | On the `UNIX` branch one arming can deliver `CEMON_DATA` several times (contrary to the header contract); the callback is re-entered synchronously when `callback_depth==0` | `2452-2461`, `3432-3435` |
 | C10 | `[verified]` | The Unix recv/accept/flush loops consume no dispatch budget ⇒ a single active peer can monopolize the owner thread | `2455,2395,2342` |
 | **C11** | `[verified]` → **FIXED (this change)** | Both teardown waits are bounded and say so: `cemon_ingress_close` gives up after 5 s and prints the residual count, `cemon_destroy` then ABANDONS the teardown (returns -1) instead of freeing the loop under the stuck producer, and the Windows drain settles `sock_total` after its 2000 ms cap and names the residual completions. Two new `cemon_test` cases | `cemon.h:1108-1157` (`cemon_ingress_close`), `2969-3005` (`cemon_destroy`) |
-| C12 | `[verified]` | UDP soft errors are swallowed silently (no counter); the UDP fallback branch uses the wrong buffer (`recv->buf` instead of `udp_recv->buf`) | `2189-2194, 2207-2213` |
+| C12 | **FIXED (73bb429)**, regression-pinned (2026-10-31) | UDP soft errors are skipped in silence (no counter); the UDP fallback branch reads the wrong buffer (`recv->buf` instead of `udp_recv->buf`). Both halves are repaired at the completion handler and each is now pinned by its own unit case, which fails if either is reverted - see the C12 close-out below | `cemon.h:2269-2301`, `tests/cemon_test.c` |
+| C12b | `[verified]` | The **POSIX** UDP receive path still skips a soft error with no counter and no log: the Windows half got the counter, this one never did, so a Linux deployment has no way to see that datagrams are being absorbed | `cemon.h:2590` (`if(cemon_wouldblock(err)||cemon_unix_udp_recv_soft_error(err)) return;`) |
 | C13 | `[verified]` -> **FIXED (`e89a2ce`)** | A loop-level fatal error was only `-1`, with no interface to retrieve the cause | was `3170,3269-3275`; now `cemon.h:267-277` (the public read) and `:3347-3358` (the epoll note); regression `tests/cemon_test.c` case 5 |
 | C14 | `[verified]` | `2147483647ULL` does not go through the repo's own `VFS_U64_C` convention (`-pedantic-errors` reports a C99 long long constant) | `cemon.h:655` vs `vfs.h:64-66` |
 | C15 | `[verified]` | Depends on `mswsock.h`'s `LPFN_ACCEPTEX/WSAID_CONNECTEX/SO_UPDATE_CONNECT_CONTEXT` with no fallback declaration; measured compile failure on the old toolchain (`/d/MinGW` 9.2.0) | `cemon.h:606-608,1675-1677,2159`; `build.sh:47-58` already records this in a comment |
@@ -252,7 +253,7 @@ The checked and **gap-free** parts and the **settled trade-offs** are at the end
 | **C13** | **FIXED (`e89a2ce`)** - a loop-level fatal error is only `-1` (`cemon_poll`), with no interface to retrieve the cause | An application cannot tell "normal shutdown convergence" from "backend error", nor record the errno | Add a read-only accessor such as `cemon_loop_last_error(loop)` - done as `cemon_fatal_what`/`cemon_fatal_code`, public, with the epoll branch now recording too |
 | **B4** | Connection cap ⇒ immediate close with no log (`kserver.h:3330`); rx over limit ⇒ immediate close and the connection's in-flight requests get no reply (`3346`); the request-level limit reuses the `"out of memory"` text (around `3355` + 1998) | A client cannot tell "capacity protection" from "peer OOM"; connection-level refusals are unobservable | Print one line when a limit triggers (with the limit name and current value); use separate text for the request-level limit |
 | **C2** | Re-arming `recv_paused` requires all four counters to be **simultaneously** below their caps (`kserver.h:4258`) | One leaked enum silences every paused connection forever (especially dangerous combined with the fixed A1/gate issue) | Record "why paused" (a reason bit) and wait only for that reason's counter to fall |
-| **C12** | UDP soft errors are swallowed silently with no counter (the `cemon_win_udp_recv_soft_error` branch in `cemon.h`); the UDP fallback branch misuses `recv->buf` (the `else if(bytes>0)` branch in `cemon.h`) | UDP drops are invisible; the fallback branch is currently hard to trigger (`WSARecvFrom` always writes back addr_len) | Add a UDP drop counter + fix the fallback branch |
+| **C12** | UDP soft errors are swallowed silently with no counter (the `cemon_win_udp_recv_soft_error` branch in `cemon.h`); the UDP fallback branch misuses `recv->buf` (the `else if(bytes>0)` branch in `cemon.h`) | UDP drops are invisible; the fallback branch is currently hard to trigger (`WSARecvFrom` always writes back addr_len) | **FIXED (73bb429), pinned 2026-10-31** by three cases in `tests/cemon_test.c` - see the C12 close-out in "Observations"; the POSIX half is still open as **C12b** |
 
 ### Cross-platform: VERIFIED (this section used to say "platform-unverifiable")
 
@@ -476,6 +477,44 @@ send/arm ordering) or a real zero-byte delivery — the probe was not instrument
 them before the change was closed. Recorded rather than explained away. If it recurs: print `bytes` at the
 completion handler, the sockets' `recv_armed`/`busy` flags at send time, and the `WSARecvFrom` return
 code, all in one build.
+
+**C12 close-out - both halves have a case now; what each can and cannot prove (2026-10-31).**
+`73bb429` fixed the two defects at `cemon_win_recv_done` and exposed `cemon_stats.loop_udp_soft_errors`,
+but neither half had a regression case: the commit's own evidence was a probe, and it said plainly that the
+wrong-buffer branch was never triggered. `tests/cemon_test.c` now carries three cases:
+
+1. *udp: a loopback datagram arrives whole, with its own bytes* - end to end on one loop (bind, arm,
+   `cemon_sendto`, poll): exactly one `CEMON_DATA`, the full 64-byte length, and the bytes. Portable, so it
+   also exercises the POSIX receive path.
+2. *udp: a datagram with no usable source address is read from its own buffer* - the branch the old code got
+   wrong: armed first (`cemon_recvfrom`, asserted to have really posted, because a completion injected on an
+   unposted receive is a no-op), then `addr_len=0`, the datagram buffer filled with 'A'.., the TCP-style
+   `recv->buf` poisoned, and the completion injected. Asserts the emitted pointer IS `udp_recv->buf` and the
+   bytes match.
+3. *udp: a soft receive error is counted and the socket survives* - a `WSAECONNRESET` completion injected:
+   `loop_udp_soft_errors` moves 0 -> 1 through `cemon_inspect`, the socket stays alive, the receive is
+   re-armed, and no datagram is invented for an error completion.
+
+RED-verified one at a time, everything else unchanged: restoring the pre-fix condition in the buffer branch
+gives one red case only (*delivered from the datagram buffer, not recv->buf*: expected pointer != emitted
+pointer), and deleting the counter increment gives one red case only (*the absorbed error is now counted*:
+expected 1, actual 0). Both restored, with `code/cemon.h` md5-identical to HEAD.
+Gate: `REGRESS|quick|pass=12 fail=0` (pinned toolchain), `GATE|cemon_test|ok` with every case green.
+
+Reachability, so an injection is not mistaken for an OS reproduction: on Windows the OS can produce neither
+completion. `cemon_udp_bind` REFUSES the socket when `cemon_win_udp_no_reset` cannot switch reset reporting
+off (`cemon.h:3518`), so WSAECONNRESET never arrives; the receive buffer is 65536 against a maximum UDP
+payload of 65507, so WSAEMSGSIZE cannot either; ERROR_MORE_DATA is message-mode only. Cases 2 and 3
+therefore pin the handler's own contract (which buffer, the counter, the re-arm) through the same function
+the IOCP path calls - forcing the condition, not a peer/OS-driven reproduction.
+
+Two things recorded rather than closed: (a) the POSIX receive path has the same silent skip
+(`cemon.h:2590`) and no counter, opened as **C12b**; it IS reachable there (an ICMP port-unreachable on a
+bound UDP socket surfaces as ECONNREFUSED/ECONNRESET), but nothing was changed or measured this round
+because the Linux guest was unreachable and unverified platform code is not landed; (b) **O3 above is not
+reproduced** by case 1 - a plain two-socket loopback datagram delivers 64 bytes with its exact length on
+every gate run - which makes a probe-usage error the likely explanation, while the sighting itself stays
+unexplained.
 
 **O4 — the CentOS 7.9 guest's `regress quick` reports two FAIL layers that the tree did not cause
 (2026-10-31).**  Recorded while verifying C13 (`e89a2ce`), whose diff touches only `code/cemon.h` and
