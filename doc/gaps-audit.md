@@ -98,7 +98,7 @@ The checked and **gap-free** parts and the **settled trade-offs** are at the end
 |---|---|---|---|
 | C1 | `[verified]` | A lookup that finds no registry entry in `kserver.h` is silently dropped (no log, while adjacent branches do warn) | `3533-3534` vs `3536` |
 | C2 | `[verified]` | Waking `recv_paused` requires all four counters to be **simultaneously** below their caps ⇒ one leaked enum silences it forever | `4236-4240` |
-| **C3** | Generation continuity of the first record in a WAL segment is not checked ⇒ **FIXED (377dc4f)**: enforced across segments, detected, reported with both generations, and fail-stopped; demonstrated on a real 3-segment store |
+| **C3** | Generation continuity of the first record in a WAL segment is not checked ⇒ **FIXED (377dc4f)**: enforced across segments, detected, reported with both generations, and fail-stopped; demonstrated on a real 3-segment store.  The operational half is closed too: `tools/harness/wal_inspect.py` decodes a stopped store and names the damaged or foreign side, self-tested in both directions - see "C3's operational half" below |
 | C4 | `[verified]` | Startup failure causes are invisible (cfg/WAL meta/allocation/thread failures all print only `failed to start server N`) | `kserver.h:4594-4600,4602,4642,4682`; `kdbsvr.c:300` |
 | C5 | `[verified]` | Header comment disagrees with the implementation: it claims a v1 data directory is "refused and re-initialized", but only refusal happens | `kserver.h:23-26` |
 | C6 | `[verified]` → **FIXED (52c002e)** | Layer boundary: the application layer reads `raft->config_new/config_joint/config_learners` directly to decide policy (raft now reports these facts on the ready bundle; the ratchet is at 0) | `kserver.h:4411-4413` |
@@ -1539,6 +1539,35 @@ the address book but is not a voter and the capture transport delivers nothing t
 deferred while the cluster stays healthy, and a second change is refused by Raft (§4.1).  Red proof: with the clear
 unconditional again the still-running wait's clock reads 100 ms instead of 1100.  The election timeout is raised
 first, because with the default 250 ms the leader loses quorum contact with node 2 and steps down - and a step-down
+### C3's operational half: naming the damaged side offline (`tools/harness/wal_inspect.py`)
+
+The continuity rule (377dc4f, strengthened for A4) makes recovery *refuse*, and the refusal line names the
+segment, the offset and both generations.  What no instrument answered was the question an operator asks next:
+is segment 1 corrupt, or is it stale, or is segment 0 the damaged one, and does the metadata slot still point
+where the log says?  `tools/harness/wal_inspect.py` answers exactly that from a stopped store, read-only, with
+the same rules and the server's own wording (the table of verdicts is in `doc/crash-contract.md`).
+
+Verified, not argued:
+
+- **Parity.**  A real store was produced by the server (`kdbsvr init ... --wal-seg-size 4096`, then 120 pipelined
+  SETs: 2 segments, 17 records).  The inspector's numbers are the server's own: 17 records, newest generation 17,
+  write position seg1@2958 against `STATS` `wal_records=17`, `persist_generation=17`, `wal_next_offset=2958`,
+  and the last record at seg1@2634 with a 300-byte payload.  Every CRC read `ok` on records the server wrote,
+  which is what certifies `zlib.crc32` against `k_crc32` on real bytes rather than on output of the same code.
+- **A forgery the server agrees with.**  Bumping the newest segment's first generation by 2 (the header carries
+  no CRC, so only the structural rule can see it) makes the server refuse with
+  `wal: segment 1 starts at generation 13 but segment 0 ended at 10 (it ended at a record boundary, so
+  generations must continue): refusing to recover`, and the tool prints that line character for character.
+- **The self-test can fail, in both directions.**  `wal_inspect_selftest.py` forges six copies of that store
+  (baseline / generation gap / flipped payload byte / torn tail / deleted newest segment / empty directory) and
+  asserts exit code and line for each: `7 check(s), 0 failure(s)`.  With the cross-segment rule disabled inside
+  the tool, exactly the generation-gap check fails; with the torn tail made fatal, exactly the torn-tail check
+  fails; restored (md5 back to the original) it is green again.  A run without a usable store exits 2, so
+  "nothing to inspect" cannot read as "clean".
+
+Two limits are stated in the doc rather than implied: it inspects a static store, and `mem://` has nothing on
+disk to inspect.
+
 refuses at the app layer, which is again before the clock is read.
 
 One further defect was found **while** fixing C5 and is recorded here because no audit found it: the `STATS` format

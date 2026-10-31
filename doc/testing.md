@@ -262,6 +262,8 @@ invoked from anywhere; under `set -u` they all carry sensible defaults and can b
 | `rate_profile.sh` | per-round timing profile of the server's own counters | `bash tools/harness/rate_profile.sh` | its own `PHASE`/`STATS` lines | ports free |
 | `wake_probe.c` | C helper used by the wake-latency investigations (`wake_us_*` in STATS) | build it by hand (`gcc … tools/harness/wake_probe.c`) | its own report | toolchain on PATH |
 
+| `wal_inspect.py` | read-only WAL forensics: per-segment record count and generation range, per-record offset/generation/CRC/term/vote, cross-segment continuity, and the metadata slot compared against what the segments hold | `python tools/harness/wal_inspect.py <store-base> [--records]` | `verdict: consistent` (exit 0) / `verdict: NOT RECOVERABLE` + the server's own refusal line (exit 1) / exit 2 = nothing inspected | a stopped `disk://` store |
+| `wal_inspect_selftest.py` | proves the inspector can fail: forges a generation gap, a corrupted byte, a torn tail, a missing segment and an empty directory out of a real store and asserts each exit code and line | `python tools/harness/wal_inspect_selftest.py <store-base>` | `wal_inspect_selftest: PASS` (`7 check(s), 0 failure(s)`) | a store the server wrote, with at least two WAL segments |
 **Delivery criteria**: L0 0 error/0 warning; L1 all green; L2 PASS; L3 `done`; L4
 `rounds_without_full_success=0` and `final liveness: 1`; no leftovers in the working directory (e.g.
 `kdb-selftest-*` — enforced by the `selftest_cleanup` layer, not by eye); no leftover processes (`ps -W | grep -icE 'kdbsvr|kdbctl'` is 0).

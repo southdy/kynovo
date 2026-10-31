@@ -57,6 +57,58 @@ decision, not an omission - so the contract has to say what the consequence is:
   has to guess** - but a crash can cost the *newest* snapshot or segment file, which self-heals by being
   rebuilt from the WAL on the next save.
 
+## When recovery refuses: collecting the evidence
+
+Recovery's refusal line is deliberately specific (each site is in `k_server_open`'s scan, `code/kserver.h`):
+
+```
+wal: segment 1 starts at generation 13 but segment 0 ended at 10 (it ended at a record boundary,
+     so generations must continue): refusing to recover
+```
+
+It names the segment, the generation it starts at, the previous existing segment, the generation that segment
+ended at, and which relation was required.  What it cannot say is *which side is wrong*: whether the bytes are
+damaged, whether the segment is stale or foreign, or whether the write position the metadata slot recorded
+still matches what the segments hold.  That is what `tools/harness/wal_inspect.py` answers, read-only:
+
+```
+python tools/harness/wal_inspect.py <store-base> [--records]
+```
+
+It walks the same records with the same rules (magic/version, `payload_size`, `generation`, CRC over the
+payload only, `+1` inside a segment, `+1` or `>` across segments depending on where the previous segment was
+torn) and prints, per segment, the byte count, the record count, the generation range and one of: clean end,
+torn header, torn payload, or damage with its offset.  `--records` adds one line per record with offset,
+generation, payload size, CRC status, term and vote - the two fields that decide what a recovered node would
+believe.  Refusal lines use the server's wording verbatim, so a tool run can be diffed against the server's
+log; on a deliberately forged store the two lines are identical:
+
+| verdict | meaning | next step |
+|---|---|---|
+| `verdict: consistent` (exit 0) | every record verified, generations continuous | the refusal, if any, is elsewhere (config, snapshot, metadata) |
+| `starts at generation N` / `jumps from generation A to B` (exit 1) | a segment does not continue the previous one, or a record is missing inside one | compare the two generations against the metadata slot line: the segment whose first generation is *not* `previous + 1` is the foreign or restored one |
+| `fails its CRC check` (exit 1) | bytes are damaged, not merely mis-ordered | a single flipped byte is enough; the record's payload is unrecoverable, so the store must be restored from a peer or a snapshot |
+| `holds neither a record header nor a torn tail` (exit 1) | mid-history damage (the crash-tolerated case is only the *final* record) | same as above |
+| `records the slot counted are missing from the segments` (exit 1) | the metadata slot names a newer generation than the log holds | the WAL lost an acknowledged record; treat as data loss, not as a clean restart |
+| `a torn tail ... tolerated` | the last record was never completed, so it was never acked | nothing to do; recovery accepts it |
+
+Two limits, stated rather than implied.  It reads a **static** store: run it after the server has stopped, or
+accept that a live store's tail may be one append ahead of the walk.  And it is for a `disk://` store - `mem://`
+backing lives in the process, so there is nothing on disk to read.
+
+**Certification.**  `python tools/harness/wal_inspect_selftest.py <store-base>` takes a store the *server*
+wrote (real bytes, real CRC, real slots - not synthesised by the code under test), copies it six times, and
+damages one thing in each copy: a generation bump on the newest segment (the header carries no CRC, so only the
+structural rule can find it), a flipped payload byte, a torn tail, a deleted newest segment, an empty
+directory, and the untouched baseline.  It asserts the exit code *and* the line for each, and a run without a
+usable store exits 2 instead of passing.  Verified here against a 2-segment / 17-record store that
+`kdbsvr init --wal-seg-size 4096` + 120 pipelined SETs produced: the tool reported 17 records, newest
+generation 17 and a write position of seg1@2958, which are the server's own `wal_records=17`,
+`persist_generation=17` and `wal_next_offset=2958` from `STATS`; every CRC read `ok`, which is what proves
+`zlib.crc32` and `k_crc32` agree on real records.  Both directions of the self-test were exercised: with the
+cross-segment rule disabled in the tool, exactly the generation-gap check fails; with the torn tail made fatal,
+exactly the torn-tail check fails; restored, `7 check(s), 0 failure(s)`.
+
 ## Leaked assumptions: audited, none found
 
 * The application layer is platform-neutral by construction: **`code/kserver.h` contains zero `_WIN32` /
