@@ -99,7 +99,7 @@ The checked and **gap-free** parts and the **settled trade-offs** are at the end
 | C1 | `[verified]` | A lookup that finds no registry entry in `kserver.h` is silently dropped (no log, while adjacent branches do warn) | `3533-3534` vs `3536` |
 | C2 | `[verified]` | Waking `recv_paused` requires all four counters to be **simultaneously** below their caps ⇒ one leaked enum silences it forever | `4236-4240` |
 | **C3** | Generation continuity of the first record in a WAL segment is not checked ⇒ **FIXED (377dc4f)**: enforced across segments, detected, reported with both generations, and fail-stopped; demonstrated on a real 3-segment store.  The operational half is closed too: `tools/harness/wal_inspect.py` decodes a stopped store and names the damaged or foreign side, self-tested in both directions - see "C3's operational half" below |
-| C4 | `[verified]` | Startup failure causes are invisible (cfg/WAL meta/allocation/thread failures all print only `failed to start server N`) | `kserver.h:4594-4600,4602,4642,4682`; `kdbsvr.c:300` |
+| **C4** | **FIXED** (`9962d09`; residual silent returns closed 2026-10-31) | Startup failure causes were invisible: every step of the open path returned -1 and the caller printed only `failed to start server N`.  Now each step prints `fatal: cannot start server: <step> failed (<reason>) [at <base>]`, and the application names its own argument, threshold, init-write and event-loop failures.  The last silent returns (raft-context allocation, snapshot-cache allocation, `cemon_create`, a bad `--auto-replace-threshold`, and the lumped `init` condition) were closed in the 2026-10-31 round, which also added the gate layer that can fail (section W) | `kserver.h` `k_open_fail` (7 call sites); `kdbsvr.c` argument/loop/init sites; `tests/startup_fail.sh`; demonstration in section W |
 | C5 | `[verified]` | Header comment disagrees with the implementation: it claims a v1 data directory is "refused and re-initialized", but only refusal happens | `kserver.h:23-26` |
 | C6 | `[verified]` → **FIXED (52c002e)** | Layer boundary: the application layer reads `raft->config_new/config_joint/config_learners` directly to decide policy (raft now reports these facts on the ready bundle; the ratchet is at 0) | `kserver.h:4411-4413` |
 | C7 | `[verified]` | INFO/STATS text is written with unbounded `sprintf` into `char text[2048]` (adding a field overflows) | `kserver.h:3254,3258,3260,3262` |
@@ -247,7 +247,7 @@ The checked and **gap-free** parts and the **settled trade-offs** are at the end
 
 | Item | Symptom and evidence | Impact | Fix outline |
 |---|---|---|---|
-| **C4** | A `k_server_open` failure (cfg/WAL meta/allocation/thread) only returns -1, and the caller prints only `failed to start server N` (`kdbsvr.c:300,308`) | No reason for a startup failure ⇒ violates the ops standard that "fatal must print a reason" | Print the concrete reason at each `k_server_open` failure point (following the existing `[cfg]`/`wal:` prefix style) |
+| ~~**C4**~~ | **FIXED (`9962d09`; residuals closed 2026-10-31, gate layer `startup_fail`)** — every `k_server_open` step, and the application's own argument/init/loop steps, print a `fatal:` line naming the step and the reason.  Demonstrated by a case that fails without the message: silencing `k_open_fail` makes `tests/startup_fail.sh` report exactly the historical symptom (`failed to start server 1 (see the fatal line above)` with no fatal line above it).  Two allocation-only paths (raft context, snapshot cache) were closed too; they are reachable only under OOM, so they are inspection-verified through the same helper, not demonstrated. | Was: no reason for a startup failure ⇒ violated the ops standard that "fatal must print a reason"; it cost a real nightly diagnosis (2026-09-19) | Closed - do not schedule again |
 | **C5** | The header comment says a v1 data directory is "refused and re-initialized directly" (`kserver.h:25`), but the implementation only refuses | Comment and behavior disagree, misleading users | Change the comment to "refuses to start (fail-stop)" |
 | **C13** | **FIXED (`e89a2ce`)** - a loop-level fatal error is only `-1` (`cemon_poll`), with no interface to retrieve the cause | An application cannot tell "normal shutdown convergence" from "backend error", nor record the errno | Add a read-only accessor such as `cemon_loop_last_error(loop)` - done as `cemon_fatal_what`/`cemon_fatal_code`, public, with the epoll branch now recording too |
 | **B4** | Connection cap ⇒ immediate close with no log (`kserver.h:3330`); rx over limit ⇒ immediate close and the connection's in-flight requests get no reply (`3346`); the request-level limit reuses the `"out of memory"` text (around `3355` + 1998) | A client cannot tell "capacity protection" from "peer OOM"; connection-level refusals are unobservable | Print one line when a limit triggers (with the limit name and current value); use separate text for the request-level limit |
@@ -1696,3 +1696,48 @@ history, not a distribution.  No history recorded from a real cluster is replaye
 **Left explicitly open.**  `AGENTS.md` still says "`quick` is 11 layers, `full` 15" and quotes
 `REGRESS|fuzz|pass=14`; the counts are now 12/16 and 15.  That file is protected for agent writes, so the
 stale number is recorded here instead of being edited - it is documentation drift, not a gate defect.
+
+
+## W. C4 closed: a refused start names the step and the reason (2026-10-31)
+
+**Mechanism.**  The card was opened after nightly run #1 (2026-09-19) died at startup with only the
+application's tie-line `failed to start server 1` in the log; the real cause was a harness writing this
+machine's data path, and finding it needed no help from the program.  The first fix (`9962d09`) routed
+every step of `k_server_open` through `k_open_fail(step,why,base)`, which prints
+`fatal: cannot start server: <step> failed (<why>) at <base>`.  This round closed what that left silent:
+`raft_create` returning 0, `k_snapshot_cache_set` returning non-zero and `cemon_create` returning 0 all
+returned -1 with nothing printed - so the caller's "see the fatal line above" pointed at a line that did
+not exist - and the application-level refusals were silent or lumped: a bad `--auto-replace-threshold`
+(bare `return -1`), and the `init` condition that combined "no base uri", the config write and the
+WAL-metadata write into one message naming only the base path (plus the `k_cfg_store` failure after it,
+which was silent in the same way).
+
+**Calls.**  `k_open_fail("raft context allocation", ...)` and `k_open_fail("snapshot metadata allocation",
+...)`, beside the existing `config open` / `state restore` / `WAL metadata` / `tree allocation` /
+`WAL worker thread` / `snapshot worker thread` steps; `kdbsvr.c` now prints `... cannot create the event
+loop (out of memory)` for a failed `cemon_create` instead of falling through to the tie-line, names a bad
+threshold together with the value given, and prints one message per `init` step (config write, then WAL
+metadata).
+
+**Evidence line 1 (a case that can fail).**  `tests/startup_fail.sh` makes seven starts that must fail -
+unknown argument, cluster/argv mismatch, an unwritable store path (a regular file where the directory must
+be), `init` on that same path, an out-of-range `--auto-replace-threshold`, and two starts against ports a
+*verified live* server really holds (the script requires that server's `STATS` reply before it will judge
+those two, and aborts the layer otherwise instead of reporting a passing "port in use" case).  Every case
+demands a step-specific reason, so the tie-line alone can never pass it.  Measured here:
+`startup_fail: PASS (8 checks)`, e.g. `fatal: cannot start server: peer listen on 127.0.0.1:9282 failed
+(last fatal: bind/listen; socket code 10048)`.
+**RED proof:** with `k_open_fail`'s body silenced (the `printf` replaced by `(void)` casts of its three
+arguments) and the server rebuilt, the config-open case reports `rc=1 but no 'fatal:' line at all; output:
+failed to start server 1 (see the fatal line above)` and the layer fails 1 of 8; reversing that patch
+(byte-identical to the tree copy, verified with `diff`) and rebuilding returns `startup_fail: PASS (8
+checks)`, with zero `RED-VERIFY` residue in the header.
+
+**Gate.**  `startup_fail` is a layer of `regress quick`, so "a fatal must print its reason" is enforced
+rather than remembered.
+
+**What this does not prove.**  The two allocation-only paths (raft context, snapshot cache) and the worker
+-thread failures cannot be provoked from outside the process - no product-side failpoint was added, by the
+project's rule - so their message is verified by inspection plus the shared helper that the demonstrated
+case exercises, not by a failing run.  The WAL-metadata failure of `init` has no case either: reaching it
+needs the config write to succeed and the metadata write to fail in the same directory.

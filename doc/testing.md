@@ -55,6 +55,7 @@ and their `run-*` versions, `selftest`, `kdbsvr`, `kdbctl`, `bench*`, `cemon-ben
 | L1h | the gate's own detector, tested by the gate: a silent layer, a crashing layer and a hanging layer must all FAIL | `bash tools/harness/regress_selftest.sh` | `SELFTEST\|PASS\|... (4/4)` | ~10s |
 | L1i | linearizability checker family: the Python reference's own self-tests, then a three-way parity pass over the C checker (`tests/lincheck.h`, BOTH of its engines), the reference and an exhaustive permutation search, on four history families (one of them non-linearizable by construction) | `./build.sh lincheck` | `self-test: PASS` **and** `lincheck parity: <N> histories accept=<a> reject=<r> ... py_mismatch=0 exhaustive_mismatch=0 oracle_mismatch=0` with N>0, a>0, r>0 | ~20s |
 | L2 | CLI semantics smoke (real process + real socket) | `bash tests/cli_smoke.sh` | `cli_smoke: PASS` (31 checks: exit statuses, script mode incl. an unreachable host, CAS conflict=2, PIPE percentiles) | ~10s |
+| L2b | startup refusals name their reason (bad argument, cluster/argv mismatch, unwritable store, occupied peer port, occupied client port) - each start MUST fail and MUST print the step-specific `fatal:` line, never the tie-line alone | `bash tests/startup_fail.sh` | `startup_fail: PASS (<n> checks)` | ~15s |
 | L3a | single-node randomised fuzzing (API/OOM rollback) | `./build/raft_fuzz.exe <seed> <n>` | `done: <n> iterations` / `FAIL: …` | n=2000 ~10s |
 | L3b | **multi-node cluster fuzzing** (real pull-mode wire messages: drop/reorder/duplicate/partition/crash-restart/membership change/OOM injection) | `./build/raft_cluster_fuzz.exe <seed> <n> [persist_delay]` | `done: <n> iterations` / `FAIL: …` | n=2000 ~30s |
 | L3c | server cluster fuzzing (with the in-harness linearizability checker `tests/lincheck.h`) | `./build/kserver_cluster_fuzz.exe <seed> <n>` | `done: 1/1 clusters consistent` **and** `linearizability: <N> histories / <M> ops decided by the checker` with N>0 | ~10s |
@@ -195,7 +196,7 @@ The **single stable entry point** for automation (agents, cron and CI all use it
 command lists):
 
 ```bash
-./build.sh regress quick     # default: principles + build (0-warning assertion) + 5 unit suites + selftest + cleanliness + CLI smoke   ~2.5 min
+./build.sh regress quick     # default: principles + build (0-warning assertion) + 5 unit suites + selftest + cleanliness + CLI smoke + startup refusals   ~2.5 min
 ./build.sh regress fuzz      # adds raft_fuzz 2000 / raft_cluster_fuzz 200 / kserver_cluster_fuzz 1                       ~5 min (**this is what CI runs on every push/PR**)
 ./build.sh regress full      # fuzz with release-sized parameters (20k/2000/10) plus a 24-round release soak              ~20 min (nightly)
 ```
