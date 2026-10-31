@@ -25,6 +25,9 @@ checks=0
 say(){ printf '%s\n' "$*"; }
 
 [ -x "$BIN/kdbsvr.exe" ] || { say "startup_fail: FAIL (no $BIN/kdbsvr.exe - build first)"; exit 1; }
+# The readiness probe below uses kdbctl; without it the port-in-use cases would report "the occupier never
+# answered" instead of "this binary was never built", which is a diagnosis pointing at the wrong thing.
+[ -x "$BIN/kdbctl.exe" ] || { say "startup_fail: FAIL (no $BIN/kdbctl.exe - build it: ./build.sh kdbctl)"; exit 1; }
 rm -rf "$BASE"; mkdir -p "$BASE"
 # A regular FILE where the store wants a directory: neither backend will create a file beneath it, so the
 # config write is the step that must refuse - and the one that must say so.

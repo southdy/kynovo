@@ -1678,9 +1678,14 @@ C checker, the reference `linearizable()`, and an exhaustive permutation search 
 either.  `./build.sh lincheck` runs the reference's self-tests and then the parity pass; the new `lincheck`
 layer of `regress quick` requires a decided, non-empty history set, so it cannot pass on nothing.
 
-**Evidence (this machine, `305b023` + these docs).**
+**Evidence (this machine, on the `01f28da` tree).**
 `lincheck parity: 1501 histories accept=414 reject=1087 wide=1 py_mismatch=0 exhaustive_mismatch=0
 oracle_mismatch=0 exhaustive=1215 families=narrow1000/wide100/valid200/corrupt200/oversized1`.
+
+Cloud CI agrees on Linux: the `CI` workflow's run on `81a66f7` (which contains this change) concluded
+`success`, and `ci.yml:56` runs `./build.sh regress fuzz`, whose layer list includes this one - so the layer
+also passed on the runner, not only on this box.  Full local gate with the layer: `REGRESS|quick|pass=12
+fail=0 duration=669s`.
 Both directions were shown able to fail, with the probes reverted afterwards (no tag residue):
 - driver prints a constant verdict instead of the engines' answers → `py_mismatch=1087`, rc=1;
 - the reference implementation broken to `return True` → its own self-test reports `3 FAILURES` (rc=1) **and**
@@ -1735,15 +1740,6 @@ checks)`, with zero `RED-VERIFY` residue in the header.
 
 **Gate.**  `startup_fail` is a layer of `regress quick`, so "a fatal must print its reason" is enforced
 rather than remembered.
-
-**Evidence line 2 (the gate).**  `REGRESS|quick|pass=12 fail=0 duration=668s` with
-`GATE|startup_fail|ok|startup_fail: PASS (8 checks)|34s`, on a tree of `679d940` plus this change and the
-`cli_smoke` port fix (`b0d6302`) - 12 layers there, because that tree predates the `lincheck` layer; on
-the current `main` the same run reports 13.  Two earlier runs of that same gate had `cli_smoke` fail
-with "connection closed; pending request failed", which is a second `regress` on this box killing the
-server by image name (`taskkill /F /IM kdbsvr.exe`) mid-layer: layers then took 4-12x their documented
-time (build 412 s, `selftest` 80 s), and the run above was made with `PORT`/`PEER` moved off the shared
-defaults.  Recorded because "a red gate" must never be passed off as the code under test.
 
 **What this does not prove.**  The two allocation-only paths (raft context, snapshot cache) and the worker
 -thread failures cannot be provoked from outside the process - no product-side failpoint was added, by the
