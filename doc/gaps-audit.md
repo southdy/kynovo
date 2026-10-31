@@ -133,7 +133,7 @@ The checked and **gap-free** parts and the **settled trade-offs** are at the end
 | R5 | `[unverified]` | `step_down` cancels a pending snapshot install while the caller may still be committing that install ⇒ `last_applied` can pass the log tail (unreachable under the current kdbsvr driving style) | `1300-1306` vs `4326` |
 | R6 | `[unverified]` | Leadership transfer reports COMMITTED as soon as "TimeoutNow is sent" (the dissertation requires the target to be elected and the old leader to step down) | `3120-3126` vs `dissertation.md:1495-1507` |
 | R7 | `[unverified]` | Bootstrap does not write the initial configuration as the first log entry (it uses the caller's static configuration instead) | `2845-2853` vs `dissertation.md:2119-2125` |
-| R8 | `[unverified]` | A rejected AE propagates a **not yet durable** new term outward (the vote/AE success paths both have a durability gate; this one does not) | `1277-1278` → `3660-3671` |
+| R8 | **FIXED** (`688bd23`, re-verified 2026-10-31 with a case that can fail) | A rejected AE propagates a **not yet durable** new term outward (the vote/AE success paths both have a durability gate; this one does not) | `raft.h` `deferred_reject_*` (release site beside `deferred_append_response`; deferral at the `reply_fail` label) — mechanism, gate width and evidence in section V |
 
 ---
 
@@ -205,6 +205,7 @@ The checked and **gap-free** parts and the **settled trade-offs** are at the end
 | B10 All-INFINITE waits in runtime | Bounded waits (30s) + visible warning; `pthread_condattr_setclock` return value checked; `FILE_SHARE_DELETE` removed from the vfs open | suite ✓ |
 | R1 Follower commit cap | Changed to `prev_log_index+entry_count` (Figure 2/§5.4.2) | raft 221/221 ✓ |
 | R2 Learner election | `raft_become_candidate` rejects learners | raft 221/221 ✓ |
+| R8 Rejected AE advertised an unpersisted term | The rejection waits for the caller's persist through its own latch (`deferred_reject_*`, a separate one so a pending ACK is never overwritten), releases once with the conflict hints captured at rejection time, and replies immediately when nothing is pending | raft 222/222 ✓ — the new case is the one that fails when the gate is disabled; `raft_cluster_fuzz` 2000/2000 both persist modes ✓ (section V) |
 
 ## Deliberately not changed after evaluation (with reasons)
 
@@ -236,7 +237,7 @@ The checked and **gap-free** parts and the **settled trade-offs** are at the end
 | Item | Symptom and evidence | Impact | Why not fixed | Fix outline |
 |---|---|---|---|---|
 | **C18** | `vfs_read` returns -1 for both EOF and a real I/O error (`vfs.h:137/140`); the recovery scan therefore takes a "read failure" for a **normal end of segment** (`kserver.h:1466-1472`) | A media error ⇒ the WAL is treated as ending early ⇒ **a truncated state is silently recovered** (the item most worth fixing) | Needs a vfs API extension (`vfs_size`/`eof` out-params) | Add `vfs_size(file,&size)`; in the scan `off<size` ⇒ print the reason + fail-stop; cost ~20 lines |
-| **R8** | The response to a rejected AE is emitted **within the same call** after `step_down` (which only sets `persist_needed`) and carries the new term; a successful ACK, by contrast, has the `deferred_append_gen` durability gate (`raft.h` `deferred_append_response` block) | If the node crashes before the gate ⇒ a term it announced externally has no durable backing (§3.8); the safety impact is weak (two leaders in the same term still require a majority intersection) | Requires reusing the deferral mechanism for "rejection responses" (a medium change, and must not slow down leader retries) | Reuse `deferred_append_gen/deferred_append_response` so the rejection is also emitted after `persist_gen` completes |
+| ~~**R8**~~ | **FIXED (`688bd23`; re-verified 2026-10-31 with a case that can fail)** — the rejection now waits for the caller's persist through its own latch and keeps its conflict hints; mechanism, gate-width evidence and the RED proof in section V.  The row stays as the record of that round. | If the node crashed before the term was durable, a term it had announced externally had no durable backing (§3.8); the safety impact was weak (two leaders in the same term still require a majority intersection) | Closed by the deferral noted here — do not schedule again |
 | **B9** | Recovery base-fallback branch: after `n_base=prev_base; base_of_use=n_base; pick_base=1` (`kserver.h:1531`) decoding still uses the newest record, so the base check must fail ⇒ recovery refused | Disagrees with the intent the comment states about itself (the comment says "fall back to a higher base"); the **direction is fail-stop**, no wrong data is produced | This branch triggers only in the rare sub-case "the n_base snapshot is usable but the newest record carries the old base"; a thorough fix requires reordering the base/record-selection logic | Settle `base_of_use` first (the usable higher base), then pick the **newest record whose base matches it** |
 | **C11** | `cemon_ingress_close` spins without bound (`SwitchToThread` polling); after its 2000ms drain cap `cemon_destroy` can leave a held socket struct behind | A producer contract violation ⇒ the process cannot shut down; in the extreme it leaks the socket struct (the port is already closed, so no completion can reach it) | Needs a constructible reachable sequence for a "lost completion event"; none constructed so far | Add a timeout + a print to the spin; after the destroy timeout print the residual count |
 
@@ -1522,3 +1523,71 @@ One further defect was found **while** fixing C5 and is recorded here because no
 string printed `membership_targets_gompleted`.  Any external scraper reading that field by name would have missed
 it, and the misspelling survived the earlier rounds because nothing parses that line - the counters harness greps
 other fields.  Fixed with the C5 rename; `doc/`, `tools/` and `tests/` carry no other reference to either name.
+
+## V. R8 closed: a rejected AE waits for the term it advertises (2026-10-31)
+
+**What this section corrects.**  The code fix landed on 2026-09-19 (`688bd23`, whose message carries the
+reasoning and the first measurements), but the ledger was never retired: section D still said
+`[unverified]` and the "still unhandled" table still carried R8 as open, with a "why not fixed" cell and
+a fix outline.  Anyone reading this file - including the card that asked for R8 - was therefore pointed at
+work the tree had already done, for six weeks.  Both rows are struck now.  What this pass adds is not the
+fix; it is the two things the earlier close lacked: a unit case that can actually fail, and the
+retirement itself.
+
+**Mechanism.**  A rejection (`reply_fail` in `raft_recv_append`) carries `current_term`, and a leader that
+receives a higher term steps down.  When a persist is outstanding (`persist_needed`, or `persist_gen <
+term_dirty_gen`) the rejection is no longer emitted in that call: it is latched into `deferred_reject_*`
+(the generation to wait for, the conflict hint, the log tip, the target leader, and
+`conflict_term`/`conflict_first_index`/`read_context` captured **at rejection time**) and released when
+`persist_gen` reaches that generation, at the release site beside `deferred_append_response`.  It has its
+own latch on purpose: sharing `deferred_append_response` lets a rejection overwrite a pending ACK, which
+drops the match progress the leader needs and stalls its read barrier - that is what
+`raft_cluster_fuzz` seed 869 reported while the shared-latch version was being tried.  Where nothing is
+pending the immediate reply is unchanged, so a leader's retry loop is not slowed.
+
+**Semantic basis, named as the project requires** - `doc/dissertation.md` Sec. 3.8, "Persisted state and
+server restarts" (`:1386-1395`): "each server persists its current term and vote; this is necessary to
+prevent the server from voting twice in the same term or replacing log entries from a newer leader with
+those from a deposed leader", and (Sec. "broadcast time", `:1459-1461`) "Raft's RPCs typically require the
+recipient to persist information to stable storage".  The vote path and the successful-AE ACK already
+gated their replies this way; the rejection path was the one that did not.
+
+**Gate width is an evidence-based choice, not a preference.**  Narrowing it to the term's own generation
+(`persist_gen >= term_dirty_gen`) passes the whole unit suite and **breaks liveness**: `raft_cluster_fuzz`
+seed 869 reported `READ LINEARIZABILITY: node 1 barrier READY at last_applied 4 below submission commit 6`.
+The wider gate - any persist outstanding - holds on both lines and is the one kept.
+
+**Evidence line 1 (unit), and the honest part.**  `raft_test` is **222/222** with the case this pass adds:
+`3.8 persist: rejected AE waits for the term it advertises (issue #13)`
+(`tests/raft_test.c`, `test_reject_waits_for_term_durable`).  The five conflict-resolution tests that
+`688bd23` adapted to the new contract could not carry this evidence on their own: they only assert that a
+rejection **eventually** appears, which the ungated code satisfied as well - it simply emitted it one round
+earlier - so none of them can fail on a regression here.  The new case asserts the discriminator instead:
+a higher-term AE with a bad `prev_log_index`, then (1) `persist_needed` is set and **no** `APPEND_RESULT`
+leaves, (2) after `raft_persist_complete` exactly one rejection is released, addressed to the AE's sender,
+carrying term 5, `success=0` and a non-zero `rejected` hint, and (3) a later advance does not re-report it.
+**RED proof:** with the gate forced off (`if(0 && (...))`) and the driver rebuilt, the suite reports
+**221/222** and the single failure is exactly this case at `raft_test.c:3694`, assertion `!early`
+("no AE reply (the rejection) leaves before the term is durable") - while all five adapted conflict tests
+stay green, which is the measurement behind the sentence above.  The gate was then restored by reversing
+the patch (`git diff code/raft.h` empty) and the suite is 222/222 again.
+
+**Evidence line 2 (cluster fuzz).**  `raft_cluster_fuzz 1 2000 0` -> `done: 2000 iterations` (rc=0), and
+`raft_cluster_fuzz 1 2000` with the driver's default persist delay -> `done: 2000 iterations` (rc=0).
+Seeds 1..2000 contain the liveness regression named above, so a gate that stopped releasing the rejection
+would fail here.
+
+**Gate.**  `./build.sh regress quick` on a worktree holding HEAD plus exactly these two files:
+`GATE|build|ok`, every layer `ok`, `REGRESS|quick|pass=11 fail=0 duration=917s`, with `raft_test` 222/222
+inside it.  The run used `PORT=9411 PEER=9412`: the first attempt failed `cli_smoke` because a concurrent
+session on this machine held the gate's default ports 9271/9272 - this tree's server died at startup with
+`last fatal: bind/listen; socket code 10048` while the earlier single-command checks had been answered by
+the OTHER tree's server, and `netstat` named the foreign PID holding both ports.  Re-run with a private
+port pair, the same layer is `cli_smoke: PASS` (0 failures), which is what attributes the failure to the
+port collision rather than to the code.
+
+**What this does not prove.**  No test crashes a node inside the deferral window: the RED proof
+establishes the *ordering* (nothing leaves before the caller reports the persist), not a reopened log after
+a power loss, which needs a store-level crash point between the AE and the caller's fsync.  The claim is
+therefore exactly Sec. 3.8's: the reply can no longer advertise a term the caller has not persisted, and
+that is pinned by a case which fails when the gate is removed.

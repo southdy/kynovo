@@ -3658,6 +3658,68 @@ static void test_append_ack_waits_for_durable_index(void){
   TEST_END();
 }
 
+/* Sec. 3.8 (issue #13, R8): a rejection carries our CURRENT TERM, and the leader that receives it steps
+   down on a higher one, so it may not leave before that term is durable.  This is the case the five
+   conflict-resolution tests cannot make: they only assert that the rejection EVENTUALLY appears, which
+   the ungated code satisfied as well (it simply emitted it one round earlier).  The discriminator is
+   the ABSENCE before the persist, plus the facts the release must preserve - the leader's conflict-skip
+   optimisation reads rejected/conflict_* from exactly this message. */
+static void test_reject_waits_for_term_durable(void){
+  raft_ctx *follower;
+  raft_ready ready;
+  raft_peer_message msg,rej;
+  raft_append_entries ae;
+  int ri,early,released;
+  TEST_BEGIN("3.8 persist: rejected AE waits for the term it advertises (issue #13)");
+  NEW_3NODE(follower,2);
+  raft_advance(follower,0,&ready); /* READY -> RUNNING so persist_complete is accepted */
+  raft_ready_consumed(follower);
+  memset(&ae,0,sizeof(ae));
+  ae.term=5;              /* higher term => step_down sets persist_needed + term_dirty_gen */
+  ae.leader_id=1;
+  ae.prev_log_index=10;   /* beyond our empty log => the reply_fail path */
+  ae.prev_log_term=3;
+  ae.leader_commit=0;
+  memset(&msg,0,sizeof(msg));
+  msg.type=RAFT_MSG_APPEND;
+  msg.append_entries=ae;
+  msg.from=1;
+  TEST_ASSERT(raft_recvfrom_peer(follower,&msg)==0,"higher-term AE accepted for processing");
+  raft_advance(follower,10,&ready);
+  /* Part 1 - the discriminator: nothing leaves while term 5 is in memory only. */
+  TEST_ASSERT(ready.persist_needed,"term 5 must be persisted before a reply advertises it");
+  early=0;
+  for(ri=0;ri<ready.message_count;ri++)
+    if(ready.messages[ri].type==RAFT_MSG_APPEND_RESULT) early=1;
+  TEST_ASSERT(!early,"no AE reply (the rejection) leaves before the term is durable");
+  raft_ready_consumed(follower);
+  /* Part 2 - the caller's persist releases it ONCE, with the facts captured at rejection time. */
+  raft_persist_complete(follower,0);
+  raft_advance(follower,10,&ready);
+  released=0;
+  memset(&rej,0,sizeof(rej));
+  for(ri=0;ri<ready.message_count;ri++)
+    if(ready.messages[ri].type==RAFT_MSG_APPEND_RESULT){
+      released++;
+      rej=ready.messages[ri];
+    }
+  TEST_ASSERT(released==1,"exactly one rejection released by the persist");
+  TEST_ASSERT(rej.to==1,"rejection is addressed to the leader that sent the AE");
+  TEST_ASSERT(rej.term==5,"rejection carries our current term 5");
+  TEST_ASSERT(rej.append_entries_result.success==0,"the released reply is a rejection");
+  TEST_ASSERT(rej.append_entries_result.rejected>0,"the deferral keeps the conflict hint (nextIndex)");
+  raft_ready_consumed(follower);
+  /* Part 3 - sent once: a pending latch that re-reported on every advance would flood the leader. */
+  raft_advance(follower,10,&ready);
+  early=0;
+  for(ri=0;ri<ready.message_count;ri++)
+    if(ready.messages[ri].type==RAFT_MSG_APPEND_RESULT) early=1;
+  TEST_ASSERT(!early,"the deferred rejection is not re-reported");
+  raft_ready_consumed(follower);
+  raft_destroy(follower);
+  TEST_END();
+}
+
 static void test_persist_commit_index_reset(void){
   raft_ctx *r;
   raft_ready ready;
@@ -9536,7 +9598,7 @@ static void test_single_node_self_commit_no_durability(void){
    =================================================================== */
 
 int main(void){
-  TEST_PLAN(221);
+  TEST_PLAN(222);
 
   /* 3 Basic Raft algorithm */
   test_states_follower_startup();
@@ -9624,6 +9686,7 @@ int main(void){
 
   test_persist_roundtrip();
   test_append_ack_waits_for_durable_index();
+  test_reject_waits_for_term_durable();
   test_persist_commit_index_reset();
   test_persist_state_machine_recovery();
   test_persist_voted_for_prevents_double_vote();
