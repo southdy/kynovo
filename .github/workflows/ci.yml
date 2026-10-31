@@ -140,9 +140,12 @@ jobs:
   # Unverified-platform coverage (review C4).  Everything above only ever compiled the Windows/MSYS2
   # path, so the POSIX branches of runtime.h / cemon.h / vfs.h were never built by CI at all - and a
   # branch nobody compiles is a branch nobody can trust.  GitHub's standard hosted runners are free for
-  # public repositories, so this costs nothing.  No log publisher and no issue reporter here on purpose:
-  # the Windows gate owns those, and two reporters would fight over one issue title.  A Linux failure
-  # shows up as a red check on the run and in the artifact below.
+  # public repositories, so this costs nothing.  No ISSUE reporter here on purpose: the Windows gate
+  # owns that, and two reporters would fight over one issue title.  The log publisher below writes its
+  # OWN branch (`ci-logs-linux`) for the same reason - two jobs force-pushing one branch race - and it
+  # exists because an artifact is not evidence: downloading one needs authentication even on a public
+  # repository, so a red Linux check that leaves only an artifact is a failure nobody can diagnose.
+  # Observed 2026-10-31: CI run 148's Linux gate went red at d5a7483 and no log was readable anywhere.
   linux-gate:
     name: build + quick gate (ubuntu, system gcc)
     runs-on: ubuntu-latest
@@ -181,3 +184,33 @@ jobs:
           name: regress-logs-linux
           path: build/regress/*.log
           if-no-files-found: ignore
+
+      # The diagnostics channel that actually works for a reader without a token: a public branch,
+      # fetched with plain git.  Same shape as the Windows job's publisher, separate branch.
+      - name: Publish gate logs on failure
+        if: failure()
+        run: |
+          set -e
+          rm -rf ci-logs-linux
+          mkdir -p ci-logs-linux
+          cp -f build/regress/*.log ci-logs-linux/ 2>/dev/null || true
+          cp -f regress*.log ci-logs-linux/ 2>/dev/null || true
+          {
+            echo "run:    $GITHUB_RUN_ID"
+            echo "sha:    $GITHUB_SHA"
+            echo "ref:    $GITHUB_REF"
+            echo "date:   $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            echo "runner gcc: $(gcc --version 2>/dev/null | head -1)"
+            echo
+            echo "--- gate verdict lines ---"
+            grep -h 'GATE|' ci-logs-linux/*.log 2>/dev/null || true
+            echo
+            echo "--- last line of the gate ---"
+            tail -1 regress.log 2>/dev/null || true
+          } > ci-logs-linux/SUMMARY.txt
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -B ci-logs-linux
+          git add -f ci-logs-linux
+          git commit -m "CI failure logs (linux) for ${GITHUB_SHA}" || exit 0
+          git push -f origin ci-logs-linux
