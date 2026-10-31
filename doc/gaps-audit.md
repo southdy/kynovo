@@ -108,7 +108,7 @@ The checked and **gap-free** parts and the **settled trade-offs** are at the end
 | C10 | `[verified]` | The Unix recv/accept/flush loops consume no dispatch budget ⇒ a single active peer can monopolize the owner thread | `2455,2395,2342` |
 | C11 | `[verified]` | `cemon_ingress_close` spins without bound; after its 2000ms drain cap `cemon_destroy` can leak a held socket | `1047-1066`, `2900-2910` |
 | C12 | `[verified]` | UDP soft errors are swallowed silently (no counter); the UDP fallback branch uses the wrong buffer (`recv->buf` instead of `udp_recv->buf`) | `2189-2194, 2207-2213` |
-| C13 | `[verified]` | A loop-level fatal error is only `-1`, with no interface to retrieve the cause | `3170,3269-3275` |
+| C13 | `[verified]` -> **FIXED (`e89a2ce`)** | A loop-level fatal error was only `-1`, with no interface to retrieve the cause | was `3170,3269-3275`; now `cemon.h:267-277` (the public read) and `:3347-3358` (the epoll note); regression `tests/cemon_test.c` case 5 |
 | C14 | `[verified]` | `2147483647ULL` does not go through the repo's own `VFS_U64_C` convention (`-pedantic-errors` reports a C99 long long constant) | `cemon.h:655` vs `vfs.h:64-66` |
 | C15 | `[verified]` | Depends on `mswsock.h`'s `LPFN_ACCEPTEX/WSAID_CONNECTEX/SO_UPDATE_CONNECT_CONTEXT` with no fallback declaration; measured compile failure on the old toolchain (`/d/MinGW` 9.2.0) | `cemon.h:606-608,1675-1677,2159`; `build.sh:47-58` already records this in a comment |
 | C16 | `[verified]` | The Windows completion path uses POSIX `ENOMEM(12)` as a Winsock error code ⇒ `EV.status` is meaningless | `2242,2109` |
@@ -226,7 +226,10 @@ The checked and **gap-free** parts and the **settled trade-offs** are at the end
 > are fixed in the tree, so they must not be scheduled again: **C11** (bounded ingress close with a
 > printed reason - `cemon.h:1112-1137`, described in this file's own O2 section), **C12** (`udp_recv->buf`
 > - `cemon.h:2269/2291`, issue #10) and **C13** (`cemon_last_error`/`cemon_fatal_note` -
-> `cemon.h:602/794/823`, issue #11).  The rows stay as the record of that round.  Every other line
+> `cemon.h:602/794/823`, issue #11; the note and the accessors landed then, but the epoll poller still
+> returned a bare -1 without one, so on Linux the interface reported nothing - that half is
+> **`e89a2ce`**, which also made the accessors public).  The rows stay as the record of that round.
+> Every other line
 > reference in this file is a snapshot from the day it was written and has drifted since (finding F10 of
 > the review): open the file, do not trust the number.
 
@@ -243,7 +246,7 @@ The checked and **gap-free** parts and the **settled trade-offs** are at the end
 |---|---|---|---|
 | **C4** | A `k_server_open` failure (cfg/WAL meta/allocation/thread) only returns -1, and the caller prints only `failed to start server N` (`kdbsvr.c:300,308`) | No reason for a startup failure ⇒ violates the ops standard that "fatal must print a reason" | Print the concrete reason at each `k_server_open` failure point (following the existing `[cfg]`/`wal:` prefix style) |
 | **C5** | The header comment says a v1 data directory is "refused and re-initialized directly" (`kserver.h:25`), but the implementation only refuses | Comment and behavior disagree, misleading users | Change the comment to "refuses to start (fail-stop)" |
-| **C13** | A loop-level fatal error is only `-1` (`cemon_poll`), with no interface to retrieve the cause | An application cannot tell "normal shutdown convergence" from "backend error", nor record the errno | Add a read-only accessor such as `cemon_loop_last_error(loop)` |
+| **C13** | **FIXED (`e89a2ce`)** - a loop-level fatal error is only `-1` (`cemon_poll`), with no interface to retrieve the cause | An application cannot tell "normal shutdown convergence" from "backend error", nor record the errno | Add a read-only accessor such as `cemon_loop_last_error(loop)` - done as `cemon_fatal_what`/`cemon_fatal_code`, public, with the epoll branch now recording too |
 | **B4** | Connection cap ⇒ immediate close with no log (`kserver.h:3330`); rx over limit ⇒ immediate close and the connection's in-flight requests get no reply (`3346`); the request-level limit reuses the `"out of memory"` text (around `3355` + 1998) | A client cannot tell "capacity protection" from "peer OOM"; connection-level refusals are unobservable | Print one line when a limit triggers (with the limit name and current value); use separate text for the request-level limit |
 | **C2** | Re-arming `recv_paused` requires all four counters to be **simultaneously** below their caps (`kserver.h:4258`) | One leaked enum silences every paused connection forever (especially dangerous combined with the fixed A1/gate issue) | Record "why paused" (a reason bit) and wait only for that reason's counter to fall |
 | **C12** | UDP soft errors are swallowed silently with no counter (the `cemon_win_udp_recv_soft_error` branch in `cemon.h`); the UDP fallback branch misuses `recv->buf` (the `else if(bytes>0)` branch in `cemon.h`) | UDP drops are invisible; the fallback branch is currently hard to trigger (`WSARecvFrom` always writes back addr_len) | Add a UDP drop counter + fix the fallback branch |
@@ -450,6 +453,21 @@ send/arm ordering) or a real zero-byte delivery — the probe was not instrument
 them before the change was closed. Recorded rather than explained away. If it recurs: print `bytes` at the
 completion handler, the sockets' `recv_armed`/`busy` flags at send time, and the `WSARecvFrom` return
 code, all in one build.
+
+**O4 — the CentOS 7.9 guest's `regress quick` reports two FAIL layers that the tree did not cause
+(2026-10-31).**  Recorded while verifying C13 (`e89a2ce`), whose diff touches only `code/cemon.h` and
+`tests/cemon_test.c`; every test layer on that run was green, including `cemon_test 6/6`.
+`GATE|build|FAIL|rc=1 diagnostics=75 errors=3 binaries=yes [foreign toolchain, warnings reported not
+enforced]` — the one error is `collect2: ld returned 1 exit status` on `tools/harness/wake_probe.c`,
+`undefined reference to pthread_join / pthread_create / pthread_condattr_setclock`: build.sh links that
+tool with `-lws2_32` on Windows and with **no `-pthread` on POSIX**, and the file is untouched by this
+commit.  `GATE|principles|FAIL|verdict=<no verdict line>` — `PRINCIPLES|FAIL|rules=21 fail=1`, the rule
+"every file list the rules read came from a git that exited 0", because `git ls-files --eol` is unknown
+to the guest's git 1.8.5 (`rc=129`).  Both are open, both are outside this card, and neither was fixed
+here because `build.sh` and the checker were being edited by a concurrent worker in the same directory.
+The fix for the first is a `-pthread` on the POSIX link line of that tool; the second needs a git that
+knows `--eol` (>= 2.14) or a different EOL probe.  Do not read either as a regression of the change under
+test.
 
 ## G. Open items exposed by compiler differences (raised by CI's gcc 16.2.0, **unclassified**)
 
@@ -817,6 +835,7 @@ check):
 | `0a23ae0` | D1 (x6), C1, C2, D15 | all six teardown sites stash-clear-close instead of close-then-clear (the callback frees the conn inline); `thread_create` returns 0 from the pointer path on POSIX; the completion key is initialised; `%63s` into the 64-byte prefix |
 | `cdbeaaf` | F3, F5-F11 | the docs that claimed things the tree or the tool does not do: principles' numbers, testing's broken layer table + stale scope + duplicate section, README's missing gate entry point, the old review's self-contradiction (banner), the plan's private/public conflict, the ledger's stale C11/C12/C13 rows and its drifted line references |
 | `ef557ee` | D2, D3, D4, D5 | `release` frees requests before the connections they dereference; the FCALL gate fields are cleared; `maybe_finish_stop` has a latch; a failing `drive` prints a reason and marks the server fatal instead of stopping silently |
+| `e89a2ce` | C13 | a refused loop reports its cause on every platform: `cemon_fatal_what`/`cemon_fatal_code` are now the public read (and the note is printed at the site that records it), the `kevent` branch stopped naming itself `epoll_wait`, and the epoll branch - the one that returned a bare `-1` with no note, so on Linux the interface reported nothing - records it. That closes review 09b's C7 as far as the fatal path goes; its other half (the UDP soft-error counter being Windows-only) is still open. RED-verified on the Linux guest by building the same new case against the pre-fix header: `SUMMARY: 5/6 passed`, rc=1, no `cemon: fatal` line; with the fix `6/6 passed` and `cemon: fatal: epoll_wait failed (code 9)`. Gates: Windows `REGRESS\|quick\|pass=11 fail=0` (exit 0); the guest gave `REGRESS\|quick\|pass=9 fail=2`, where both FAIL layers are the guest's own pre-existing problems - see O4 |
 
 Still open, each needing a decision rather than an edit: **D8/D9** (snapshot failure visibility: the
 `fatal: snapshot failed` branch is dead code and a follower's chunk-write failure is a silent disconnect

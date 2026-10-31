@@ -264,6 +264,17 @@ CEMON_DEF int cemon_destroy(cemon *loop);
   Returns 0 to continue, non-zero to stop.  The caller should call
   cemon_destroy after a non-zero return. */
 CEMON_DEF int cemon_poll(cemon *loop,int timeout_ms);
+/* When cemon_poll returns non-zero because the BACKEND refused - the poller or the
+  completion port failed, as opposed to a stop that converged - the cause is recorded
+  rather than left as a bare -1: cemon_fatal_what names the step that failed
+  ("epoll_wait" / "kevent" / "completion port poll" / "bind/listen" / ...) and
+  cemon_fatal_code carries the platform code (Winsock's on Windows, errno elsewhere).
+  The same note is printed to stderr at the moment it is recorded, so a fatal is
+  visible in a log even if the caller never reads these. A converged stop leaves both
+  untouched, which is how a caller tells "shutdown finished" from "backend failed".
+  Read them after a non-zero return and before cemon_destroy. */
+CEMON_DEF const char *cemon_fatal_what(const cemon *loop);
+CEMON_DEF int cemon_fatal_code(const cemon *loop);
 /* cemon_stop is a fast stop request: it stops admitting new work and converges
   by closing live sockets; it does not promise to flush queued network sends,
   and it suppresses late DATA/SENT/CONNECT/ACCEPT delivery. */
@@ -956,10 +967,10 @@ static void cemon_fatal_note(cemon *loop,const char *what,int code){
      strerror table is invented for it. */
   fprintf(stderr,"cemon: fatal: %s failed (code %d)\n",what?what:"loop",code);
 }
-static int cemon_fatal_code(const cemon *loop){
+CEMON_DEF int cemon_fatal_code(const cemon *loop){
   return loop?loop->fatal_code:0;
 }
-static const char *cemon_fatal_what(const cemon *loop){
+CEMON_DEF const char *cemon_fatal_what(const cemon *loop){
   return (loop&&loop->fatal_what[0])?loop->fatal_what:"";
 }
 static void cemon_bind_owner_locked(cemon *loop){
@@ -3300,7 +3311,7 @@ static int cemon_poll_once(cemon *loop,int timeout_ms){
   n=kevent(loop->fd,0,0,evs,CEMON_UNIX_POLL_BATCH,pts);
   if(n<0){
     if(errno==EINTR) return 0;
-    cemon_fatal_note(loop,"epoll_wait",cemon_last_error());
+    cemon_fatal_note(loop,"kevent",cemon_last_error());
     return -1;
   }
   for(i=0;i<n;i++){
@@ -3334,7 +3345,15 @@ static int cemon_poll_once(cemon *loop,int timeout_ms){
   timeout=cemon_timeout(loop);
   if(timeout_ms>=0&&(timeout<0||timeout_ms<timeout)) timeout=timeout_ms;
   n=epoll_wait(loop->fd,evs,CEMON_UNIX_POLL_BATCH,timeout);
-  if(n<0) return (errno==EINTR)?0:-1;
+  if(n<0){
+    if(errno==EINTR) return 0;
+    /* This was the one poller that dropped its cause (issue #11, review 09b C7): the Windows
+       completion port and the kqueue branch recorded a note, so on Linux cemon_poll's non-zero
+       return carried no code at all and cemon_fatal_what stayed empty - the caller could not
+       even tell a backend failure from a converged stop.  Record before returning. */
+    cemon_fatal_note(loop,"epoll_wait",cemon_last_error());
+    return -1;
+  }
   for(i=0;i<n;i++){
     keys[i]=evs[i].data.u64;
     if(keys[i]){

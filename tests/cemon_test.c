@@ -345,6 +345,45 @@ static void test_control_frame_priority(void){
   TEST_END();
 }
 
+/* A refused loop must say why (issue #11).  The Windows completion port and the kqueue
+   poller recorded a cause; the epoll branch returned a bare -1 with no note at all, so on
+   Linux cemon_fatal_what stayed empty and the caller had nothing to log - it could not
+   even tell a backend failure from a converged stop.  Make the wait itself fail
+   (invalidate the poller handle), then read the recorded note back. */
+static void test_poll_fatal_reports_cause(void){
+  cemon *loop;
+  const char *expect_what;
+  int expect_code;
+  int rc;
+  TEST_BEGIN("cemon_poll: a backend failure records its cause (failing step + code)");
+  loop=cemon_create();
+  TEST_ASSERT(loop!=0,"loop created");
+#if defined(_WIN32)
+  /* An invalid completion port makes GetQueuedCompletionStatus fail with a real code. */
+  CloseHandle(loop->port);
+  loop->port=0;
+  expect_what="completion port poll";
+  expect_code=ERROR_INVALID_HANDLE;
+#elif defined(CEMON_USE_KQUEUE)
+  close(loop->fd);
+  loop->fd=CEMON_BAD_FD;   /* also keeps cemon_destroy from closing a reused descriptor */
+  expect_what="kevent";
+  expect_code=EBADF;
+#else
+  close(loop->fd);
+  loop->fd=CEMON_BAD_FD;
+  expect_what="epoll_wait";
+  expect_code=EBADF;
+#endif
+  rc=cemon_poll(loop,0);
+  TEST_ASSERT_I64_EQ(rc,-1,"cemon_poll reports the backend failure");
+  TEST_ASSERT_I64_EQ(cemon_fatal_code(loop),expect_code,
+                     "the platform code is recorded (Winsock code on Windows, errno elsewhere)");
+  TEST_ASSERT(strcmp(cemon_fatal_what(loop),expect_what)==0,"the failing step is named");
+  cemon_destroy(loop);
+  TEST_END();
+}
+
 /* The owner thread is the only one allowed to poll/inspect/destroy the loop; other
    threads may post and send while it is open.  The owner used to be bound only
    implicitly (by whichever thread admitted first), so a helper thread could capture
@@ -409,11 +448,12 @@ int main(void){
   WSADATA wsa;
   WSAStartup(MAKEWORD(2,2),&wsa);
 #endif
-  TEST_PLAN(5);
+  TEST_PLAN(6);
   test_shutdown_write_open();
   test_shutdown_write_closed();
   test_destroy_bounded_drain();
   test_control_frame_priority();
+  test_poll_fatal_reports_cause();
   test_owner_binding();
   TEST_SUMMARY();
   return TEST_EXIT_CODE();
