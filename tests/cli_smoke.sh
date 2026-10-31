@@ -11,7 +11,12 @@ cd "$(dirname "$0")/.." || exit 1
 ROOT="$(pwd -W 2>/dev/null || pwd)"
 BIN=./build
 PORT=${PORT:-9271}
-PEER=${PEER:-9272}
+# The peer port FOLLOWS PORT unless it is set explicitly.  Two independent defaults (9271/9272) made
+# the script unusable next to another run on the same machine: overriding PORT alone left PEER on 9272,
+# where the server died with `peer listen on 127.0.0.1:9272 failed (socket code 10048)` and 23 checks
+# then failed on "connection closed" - a red gate that says nothing about the code under test.  Observed
+# on this box with two concurrent `regress quick` runs.
+PEER=${PEER:-$((PORT + 1))}
 DIR=$BIN/cli-smoke
 fails=0
 say(){ printf '%s\n' "$*"; }
