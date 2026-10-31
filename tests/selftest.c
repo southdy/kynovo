@@ -691,6 +691,8 @@ static int k_selftest_strtou64(void){
    be read as removed (dropping the config_joint gate would misread it). */
 static int k_selftest_silent_standby(void){
   k_server server;
+  raft_ready ready;
+  k_ready_bundle *bundle;
   memset(&server,0,sizeof(server));
   server.id=1;
   server.voter_count=1;
@@ -710,6 +712,20 @@ static int k_selftest_silent_standby(void){
   /* normal member: present in the voters */
   server.self_is_learner=0; server.self_is_voter=1;
   if(k_server_silent_standby(&server)!=0){ printf("selftest: silent-standby member misread\n"); return -1; }
+  /* The four cases above drive the CACHE, so they cannot see a plumbing regression: the facts have to
+     ARRIVE from raft_ready, and a version that reads them straight out of raft_ctx (or never caches them)
+     would still pass.  This case drives the copy the server performs on every advance (issue #14, C6). */
+  server.cfg_joint=0; server.self_is_voter=0; server.self_is_learner=0;
+  memset(&ready,0,sizeof(ready));
+  ready.config_joint=1;
+  ready.self_is_voter=0;
+  ready.self_is_learner=0;
+  bundle=k_ready_bundle_copy(&server,&ready);
+  if(!bundle){ printf("selftest: silent-standby ready copy failed\n"); return -1; }
+  k_ready_bundle_free(bundle);
+  if(k_server_silent_standby(&server)!=1){
+    printf("selftest: silent-standby fact did not arrive from raft_ready\n"); return -1;
+  }
   return 0;
 }
 /* Sec 4.4 "any server can be added": a brand-new node with an id LOWER than every
