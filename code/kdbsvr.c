@@ -412,7 +412,11 @@ static int k_run_server_args(int argc,char **argv){
     server.auto_replace_new_client_port=replacement.nodes[0].client_port;
     server.auto_replace_new_peer_port=replacement.nodes[0].peer_port;
     if(argc==11&&strcmp(argv[9],"--auto-replace-threshold")==0){
-      if(k_parse_uint(argv[10],1000000,&threshold)!=0||threshold<1) return -1;
+      if(k_parse_uint(argv[10],1000000,&threshold)!=0||threshold<1){
+        /* A bare return -1 here made a bad threshold look like a server that failed to start. */
+        printf("kdbsvr: fatal: --auto-replace-threshold '%s' must be 1..1000000\n",argv[10]);
+        return -1;
+      }
     }else if(argc!=9){ printf("kdbsvr: fatal: --auto-replace-threshold needs a value\n"); return -1; }
     server.auto_replace_threshold=(unsigned int)threshold;
   }else if(argc!=7&&!(argc==9&&strcmp(argv[7],"--latency-budget-ms")==0)){
@@ -426,11 +430,18 @@ static int k_run_server_args(int argc,char **argv){
      the node. */
   if(k_server_open(&server)!=0){ k_server_release(&server);printf("failed to start server %d (see the fatal line above)\n",id);return -1; }
   loop=cemon_create();
+  if(!loop){
+    /* This case used to fall through to the shared line below, which points at a "fatal line above" that
+       did not exist for an allocation failure - the refusal named nothing at all. */
+    k_server_release(&server);
+    printf("failed to start server %d: cannot create the event loop (out of memory)\n",id);
+    return -1;
+  }
   /* bind ownership explicitly: this thread drives (polls) and tears down the loop,
      so a helper thread can never capture ownership and lock it out */
-  if(loop) cemon_bind_owner(loop);
-  if(!loop||k_server_serve(&server,loop)!=0){
-    if(loop) cemon_destroy(loop);
+  cemon_bind_owner(loop);
+  if(k_server_serve(&server,loop)!=0){
+    cemon_destroy(loop);
     k_server_release(&server);
     printf("failed to start server %d (see the fatal line above)\n",id);
     return -1;
@@ -454,9 +465,18 @@ static int k_run_init_args(int argc,char **argv){
   k_cfg cfg;
   int value;   /* k_parse_uint writes an int; using unsigned int here tripped -Wpointer-sign */
   int i;
-  if(argc<3||k_cfg_reset(argv[2])!=0||k_wal_meta_init(argv[2])!=0){
-    printf("kdbsvr: fatal: cannot create/initialise the store at '%s'%s\n",argc>2?argv[2]:"(no base uri given)",
-           argc<3?" (usage: kdbsvr init <base-uri> [options])":"");
+  if(argc<3){
+    printf("kdbsvr: fatal: no base uri given (usage: kdbsvr init <base-uri> [options])\n");
+    return -1;
+  }
+  /* One statement per step.  A lumped condition named the base path but never WHICH of the two writes
+     failed, which is the same "fatal must print its reason" gap this ledger entry is about. */
+  if(k_cfg_reset(argv[2])!=0){
+    printf("kdbsvr: fatal: cannot write the configuration for '%s' (is the path writable?)\n",argv[2]);
+    return -1;
+  }
+  if(k_wal_meta_init(argv[2])!=0){
+    printf("kdbsvr: fatal: cannot initialise the WAL metadata at '%s' (is the path writable?)\n",argv[2]);
     return -1;
   }
   if(argc==3){
@@ -500,7 +520,10 @@ static int k_run_init_args(int argc,char **argv){
     printf("kdbsvr: fatal: configuration rejected by validation\n");
     return -1;
   }
-  if(k_cfg_store(argv[2],&cfg)!=0) return -1;
+  if(k_cfg_store(argv[2],&cfg)!=0){
+    printf("kdbsvr: fatal: cannot write the configuration for '%s' (is the path writable?)\n",argv[2]);
+    return -1;
+  }
   printf("initialized configuration for %s (flush_items=%u flush_window_ms=%u flush_bytes=%u)\n",
          argv[2],(unsigned)cfg.flush_item_limit,(unsigned)cfg.flush_timeout_ms,(unsigned)cfg.flush_bytes_limit);
   return 0;

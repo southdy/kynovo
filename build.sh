@@ -468,6 +468,10 @@ do_regress(){
     # guest's root until someone noticed by hand.  Cleanup defects become a red layer instead.
     reg_gate selftest_cleanup 'selftest-cleanup: 0 leftover' bash -c 'n=$(ls -1 kdb-selftest-* kstest-* 2>/dev/null | wc -l); printf "selftest-cleanup: %s leftover file(s) %s\n" "$n" "$(ls kdb-selftest-* kstest-* 2>/dev/null | head -3 | tr "\n" " ")"; [ "$n" = 0 ]'
     reg_gate cli_smoke      'cli_smoke: PASS'               bash tests/cli_smoke.sh
+    # Every refused start must NAME its reason (nightly run #1 was undiagnosable from "failed to start
+    # server 1" alone).  The layer starts the server in ways that must fail - bad arguments, an unwritable
+    # store path and a genuinely occupied port - and requires the step-specific reason, never the tie-line.
+    reg_gate startup_fail   'startup_fail: PASS'              bash tests/startup_fail.sh
     # The linearizability checker family.  The checker the fuzz harness embeds (tests/lincheck.h) only runs in
     # `fuzz` mode, and tests/lincheck.py - the reference implementation it calls itself a port of - ran in NO
     # gate at all, so "the C checker agrees with the reference" was prose.  This layer runs the reference's

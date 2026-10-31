@@ -5590,7 +5590,10 @@ static int k_server_open(k_server *server){
   config.restore=restore_rc>0?&restore.persist:0;
   server->raft=raft_create(&config);
   if(!server->raft){
+    /* The one allocation failure in the open path that used to return silently: the caller then printed
+       only "failed to start server N" and the operator had nothing to go on (issue #7 / ledger C4). */
     if(restore_rc>0) k_restore_free(&restore);
+    k_open_fail("raft context allocation","out of memory creating the raft context",0);
     return -1;
   }
   /* membership snapshot: full address book by default (the peer topology must
@@ -5608,6 +5611,9 @@ static int k_server_open(k_server *server){
   if(restore_rc>0){
     server->persist_generation=restore.generation;
     if(k_snapshot_cache_set(&server->snapshot,restore.persist.last_included_index,restore.persist.last_included_term,restore.persist.snapshot_size,restore.persist.snapshot_cfg_old,restore.persist.snapshot_cfg_new,restore.persist.snapshot_cfg_learners)!=0){
+      /* Was a bare return -1: the snapshot metadata read back from the store could not be re-seated in
+         memory (an allocation failure), and the operator saw only "failed to start server N". */
+      k_open_fail("snapshot metadata allocation","out of memory restoring the snapshot cache",server->base);
       k_restore_free(&restore);
       return -1;
     }
