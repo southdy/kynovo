@@ -98,11 +98,3 @@ Two very different causes, neither established yet:
 **Acceptance**: define and enforce cross-segment generation continuity (or argue in the documentation why it is unnecessary), and state how a corrupt segment is detected and reported.
 
 <sub>labels: `backlog`, `storage` &middot; backlog card `t_39285829` (Hermes kanban)</sub>
-
-## `lincheck` is in no build target (the linearizability check never runs)
-
-**Evidence**: `tests/lincheck.py` and `tests/lincheck.h` exist, but no `build.sh` target references them, so the linearizability check has never run as part of a regression.
-
-**Acceptance**: add a build/run target and wire it into the appropriate gate in `doc/testing.md` (or record why it is deliberately excluded), and produce one real verdict line from it.
-
-<sub>labels: `backlog`, `tests` &middot; backlog card `t_9f03e69c` (Hermes kanban)</sub>

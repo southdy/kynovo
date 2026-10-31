@@ -1591,3 +1591,57 @@ establishes the *ordering* (nothing leaves before the caller reports the persist
 a power loss, which needs a store-level crash point between the AE and the caller's fsync.  The claim is
 therefore exactly Sec. 3.8's: the reply can no longer advertise a term the caller has not persisted, and
 that is pinned by a case which fails when the gate is removed.
+
+---
+
+## The linearizability checker was in no build target (card `t_9f03e69c`) - half REFUTED, the rest closed
+
+**The card's premise is half wrong, and the half that is wrong has been wrong since L3c existed.**  "The
+linearizability check has never run as part of a regression" is false for `tests/lincheck.h`: the fuzz
+harness `tests/kserver_cluster_fuzz.c` includes it (`:67`), runs its own self-tests before use (`:909`,
+`lincheck_selftest`), and decides the histories of every fuzz round (`lincheck_phase` `:461`, gate layer
+`kserver_cluster_fuzz` in `build.sh`), whose pattern demands `linearizability: [1-9][0-9]* histories` - so
+"never ran" and "decided nothing" both already wore a red layer.  Written into the record rather than
+quietly repaired, per this ledger's rule about claims that turn out wrong.
+
+**What was actually open, and is real:**
+
+1. `regress quick` - the gate a human runs before every push - never compiled `lincheck.h` at all, and the
+   layer that does run it (`kserver_cluster_fuzz`) is only in `fuzz`/`full`.  A checker that only ever runs
+   in the mode CI runs is a checker a developer's own loop never consults.
+2. `tests/lincheck.py`, the reference implementation whose behaviour `lincheck.h` claims to reproduce
+   (`lincheck.h:2` "in-harness port of tests/lincheck.py", and `:244` "oracle, lincheck.py and an exhaustive
+   permutation search all agree"), ran in **no** gate: it has a self-test under `python3 lincheck.py` and
+   nothing invoked it.  A claim that two implementations agree, resting on prose, is exactly the class this
+   project treats as unverified.
+
+**Fix.**  `tests/lincheck_check.c` is a CLI over BOTH engines in the header (memoized checker and plain
+oracle), which is what makes the header reachable from a target of its own; it runs `lincheck_selftest()`
+before judging, refuses a history that announces more ops than it carries (a truncated history must not be
+silently evaluated), and leaves a history longer than the 64-bit op mask as `LIN_INCONCLUSIVE` instead of
+shortening it.  `tests/lincheck_parity.py` generates 1501 histories from a fixed seed in four families -
+narrow random, wide random, concurrent-but-valid (linearizable by construction, so the accept side is not
+an accident), and serial-with-one-read-corrupted (non-linearizable **by construction**, so the reject side
+is not an accident either) plus one history longer than the op mask - and decides every one three ways: the
+C checker, the reference `linearizable()`, and an exhaustive permutation search that shares no code with
+either.  `./build.sh lincheck` runs the reference's self-tests and then the parity pass; the new `lincheck`
+layer of `regress quick` requires a decided, non-empty history set, so it cannot pass on nothing.
+
+**Evidence (this machine, `305b023` + these docs).**
+`lincheck parity: 1501 histories accept=414 reject=1087 wide=1 py_mismatch=0 exhaustive_mismatch=0
+oracle_mismatch=0 exhaustive=1215 families=narrow1000/wide100/valid200/corrupt200/oversized1`.
+Both directions were shown able to fail, with the probes reverted afterwards (no tag residue):
+- driver prints a constant verdict instead of the engines' answers → `py_mismatch=1087`, rc=1;
+- the reference implementation broken to `return True` → its own self-test reports `3 FAILURES` (rc=1) **and**
+  the parity pass independently reports `exhaustive_mismatch=845` (rc=1), i.e. the third opinion is not
+  seeded from either implementation under test.
+
+**What this does not prove.**  The reference comparison covers n<=9 and the exhaustive third opinion n<=6
+(the reference search is exponential and has no memo); the C checker's own memo-vs-oracle cross-check inside
+`lincheck.h` covers 2000 random histories at n<=7 independently of this.  The oversized family is one
+history, not a distribution.  No history recorded from a real cluster is replayed through the reference -
+`lincheck.py` has no notion of `INCONCLUSIVE` and no loader for the harness's own history format.
+
+**Left explicitly open.**  `AGENTS.md` still says "`quick` is 11 layers, `full` 15" and quotes
+`REGRESS|fuzz|pass=14`; the counts are now 12/16 and 15.  That file is protected for agent writes, so the
+stale number is recorded here instead of being edited - it is documentation drift, not a gate defect.

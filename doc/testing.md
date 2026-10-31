@@ -5,7 +5,7 @@ commands, the verdict lines, the durations, the architectural seams used for fau
 facilities, and the **regression discipline** and known pitfalls this project has accumulated over many
 rounds of investigation. Wherever an older script comment disagrees with this document, this document wins.
 
-- Scope: `code/` (10 headers + 2 applications), `tests/` (15 files), `tools/harness/` (15 scripts +
+- Scope: `code/` (10 headers + 2 applications), `tests/` (18 files), `tools/harness/` (15 scripts +
   `wake_probe.c`), `tools/archive/` (16 one-off investigation scripts), `tools/` top level (benchmarks,
   probes, `check-principles.py`, `cov_report.py`), `build.sh`.  Nothing hand-written lives in `build/`.
 - Target platform: **Windows XP and later** (`_WIN32_WINNT=0x0501`), **MSVC 6.0 compatible C89**, single-header library.
@@ -34,7 +34,7 @@ export MSYS2_ARG_CONV_EXCL='*'               # required: otherwise MSYS rewrites
   > Discipline: **confirm the build succeeded before interpreting any run result**. This project has three
   > times believed a fix was ineffective when it was in fact running the stale binary a failed compile left behind.
 
-Target quick reference (`./build.sh <target>`): `test fuzz cfuzz kclient kserver kclusterfuzz cemon-test`
+Target quick reference (`./build.sh <target>`): `test fuzz cfuzz kclient kserver kclusterfuzz lincheck cemon-test`
 and their `run-*` versions, `selftest`, `kdbsvr`, `kdbctl`, `bench*`, `cemon-bench`, `cemon-stress`,
 **`coverage`** (gcov line/branch aggregation), **`sanitize` / `run-sanitize`** (UBSan trap mode, UB → SIGILL), `clean`.
 
@@ -53,6 +53,7 @@ and their `run-*` versions, `selftest`, `kdbsvr`, `kdbctl`, `bench*`, `cemon-ben
 | L1f | harness cleanliness: the self-test's store artifacts are gone | (gate layer `selftest_cleanup`) | `selftest-cleanup: 0 leftover file(s)` | ~0s |
 | L1g | vfs fault injection (the storage seam, exercised not assumed, plus two threads on one mem hash bucket) | `./build/vfs_fault_test.exe` | `SUMMARY: 5/5 passed` | ~1s |
 | L1h | the gate's own detector, tested by the gate: a silent layer, a crashing layer and a hanging layer must all FAIL | `bash tools/harness/regress_selftest.sh` | `SELFTEST\|PASS\|... (4/4)` | ~10s |
+| L1i | linearizability checker family: the Python reference's own self-tests, then a three-way parity pass over the C checker (`tests/lincheck.h`, BOTH of its engines), the reference and an exhaustive permutation search, on four history families (one of them non-linearizable by construction) | `./build.sh lincheck` | `self-test: PASS` **and** `lincheck parity: <N> histories accept=<a> reject=<r> ... py_mismatch=0 exhaustive_mismatch=0 oracle_mismatch=0` with N>0, a>0, r>0 | ~20s |
 | L2 | CLI semantics smoke (real process + real socket) | `bash tests/cli_smoke.sh` | `cli_smoke: PASS` (31 checks: exit statuses, script mode incl. an unreachable host, CAS conflict=2, PIPE percentiles) | ~10s |
 | L3a | single-node randomised fuzzing (API/OOM rollback) | `./build/raft_fuzz.exe <seed> <n>` | `done: <n> iterations` / `FAIL: …` | n=2000 ~10s |
 | L3b | **multi-node cluster fuzzing** (real pull-mode wire messages: drop/reorder/duplicate/partition/crash-restart/membership change/OOM injection) | `./build/raft_cluster_fuzz.exe <seed> <n> [persist_delay]` | `done: <n> iterations` / `FAIL: …` | n=2000 ~30s |
@@ -206,7 +207,7 @@ command lists):
 - Every layer prints one line `GATE|<layer>|pass|FAIL|<verdict line>|<seconds>`; **the verdict line must
   appear** — a silent run (exit 0 but no verdict line) is judged **FAIL**; this is where "0 failures does
   not mean 0 data" is made concrete;
-- **the last line is machine-readable**: `REGRESS|quick|pass=11 fail=0 duration=307s` (the `principles` layer
+- **the last line is machine-readable**: `REGRESS|quick|pass=12 fail=0 duration=307s` (the `principles` layer
   `python tools/check-principles.py`, and the `regress_selftest` layer that tests the detector itself) (an agent
   can decide by reading this line alone);
 - on failure it prints that layer's log path and the last 12 lines; logs live in `build/regress/<layer>.log`;
