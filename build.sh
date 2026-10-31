@@ -33,6 +33,7 @@
 #   ./build.sh kclient               # kclient_test driver only
 #   ./build.sh kserver               # kserver_test driver only
 #   ./build.sh kclusterfuzz          # kserver_cluster_fuzz driver only
+#   ./build.sh lincheck              # linearizability checker: reference self-test + C/reference parity
 #   ./build.sh run-test              # build raft_test + run it (221 cases)
 #   ./build.sh run-fuzz [seed [n]]   # build raft_fuzz + run n iterations from seed
 #   ./build.sh run-cfuzz [seed [n]]  # build raft_cluster_fuzz + run n iterations
@@ -205,6 +206,23 @@ build_vfs_fault_test() {
 build_kclusterfuzz() {
     $CC -std=c89 -pthread -O2 -Wall -Wextra -Wdeclaration-after-statement -Wno-unused-function tests/kserver_cluster_fuzz.c -o "$BUILD_DIR/kserver_cluster_fuzz.exe"
 }
+# The linearizability checker reaches a target of its own.  tests/lincheck.h is a header, so it needs a
+# driver (the CLI wrapper around both of its engines); the checker that the gate runs - inside
+# kserver_cluster_fuzz - only runs in `regress fuzz`, and the Python reference implementation ran nowhere
+# at all.  `./build.sh lincheck` runs the reference's self-tests and then a parity pass that compares the C
+# checker, the reference and an exhaustive permutation search over the same histories.
+build_lincheck() {
+    $CC -std=c89 -O2 -Wall -Wextra -Wdeclaration-after-statement -Wno-unused-function tests/lincheck_check.c -o "$BUILD_DIR/lincheck_check.exe"
+}
+run_lincheck() {
+    if [ -z "$PYTHON" ]; then
+        echo "lincheck: no working python interpreter found (the reference implementation and the parity" >&2
+        echo "lincheck: driver are Python; see the PYTHON probe at the top of this script)" >&2
+        return 1
+    fi
+    "$PYTHON" tests/lincheck.py || return 1
+    "$PYTHON" tests/lincheck_parity.py "$BUILD_DIR/lincheck_check.exe" "$BUILD_DIR/lincheck" || return 1
+}
 # Undefined-behaviour sanitizer. MinGW-w64 ships no libasan/libubsan runtime, so
 # the runtime-linked ASan+UBSan is unavailable here (that needs Linux/clang, per
 # the fuzz file headers). UBSan TRAP mode needs no runtime: it emits inline traps
@@ -298,6 +316,7 @@ build_all() {
     build_kclient   || RC=1
     build_kserver   || RC=1
     build_kclusterfuzz || RC=1
+    build_lincheck   || RC=1
     build_cemon_test || RC=1
     build_vfs_fault_test || RC=1
     # Benchmarks are compiled here too (not just via their own targets): they must
@@ -328,7 +347,7 @@ do_clean() {
 # it usable by agents and CI:
 #   * every layer must produce a VERDICT LINE; a gate that produces no verdict is
 #     a FAILURE, not a pass ("0 failures" must never mean "0 data"),
-#   * the last line is machine-readable:  REGRESS|quick|pass=10 fail=0 duration=166s
+#   * the last line is machine-readable:  REGRESS|quick|pass=12 fail=0 duration=166s
 # Modes: quick (default, ~3 min: build + unit + selftest + CLI smoke),
 # fuzz (quick + the fast fuzzers - this is what CI runs on every pull request)
 # and full (fuzz with release-sized parameters + the 24-round soak; used by the
@@ -449,6 +468,12 @@ do_regress(){
     # guest's root until someone noticed by hand.  Cleanup defects become a red layer instead.
     reg_gate selftest_cleanup 'selftest-cleanup: 0 leftover' bash -c 'n=$(ls -1 kdb-selftest-* kstest-* 2>/dev/null | wc -l); printf "selftest-cleanup: %s leftover file(s) %s\n" "$n" "$(ls kdb-selftest-* kstest-* 2>/dev/null | head -3 | tr "\n" " ")"; [ "$n" = 0 ]'
     reg_gate cli_smoke      'cli_smoke: PASS'               bash tests/cli_smoke.sh
+    # The linearizability checker family.  The checker the fuzz harness embeds (tests/lincheck.h) only runs in
+    # `fuzz` mode, and tests/lincheck.py - the reference implementation it calls itself a port of - ran in NO
+    # gate at all, so "the C checker agrees with the reference" was prose.  This layer runs the reference's
+    # self-tests and a parity pass over the same histories, three ways, on every quick gate.  It needs the
+    # same interpreter the principles layer needs, and the pattern demands a decided, non-empty history set.
+    reg_gate lincheck '^lincheck parity: [1-9][0-9]* histories .*py_mismatch=0 .*exhaustive_mismatch=0' ./build.sh lincheck
     if [ "$mode" != quick ]; then
         reg_gate raft_fuzz            'done: [1-9][0-9]* iterations' "$BUILD_DIR/raft_fuzz.exe" 1 "${2:-$fz}"
         reg_gate raft_cluster_fuzz    'done: [1-9][0-9]* iterations' "$BUILD_DIR/raft_cluster_fuzz.exe" 1 "${3:-$cf}" 0
@@ -489,6 +514,7 @@ case "${1:-all}" in
     kclient)      build_kclient || RC=1 ;;
     kserver)      build_kserver || RC=1 ;;
     kclusterfuzz) build_kclusterfuzz || RC=1 ;;
+    lincheck)     build_lincheck && run_lincheck || RC=1 ;;
     cemon-test)   build_cemon_test || RC=1 ;;
     run-cemon-test) build_cemon_test && "$BUILD_DIR/cemon_test.exe" || RC=1 ;;
     vfs-fault-test) build_vfs_fault_test || RC=1 ;;
