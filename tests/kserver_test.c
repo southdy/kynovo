@@ -37,7 +37,10 @@ static struct{
   int send_count;
   k_u32 last_magic;
   k_u8 last_type;
-  k_u8 last_payload[2048];
+  /* 8192, not 2048: k_response_decode is handed gcap.last_size while this array holds only the copied
+     prefix, so a reply larger than the array would be decoded from bytes that were never copied.  The
+     INFO/STATS body alone can reach 4095, so the capture must cover the largest reply a test asserts on. */
+  k_u8 last_payload[8192];
   k_u32 last_size;
   int fail_send;
   int recv_calls;
@@ -2088,6 +2091,96 @@ static void test_shutdown_stops_even_when_the_ack_cannot_be_sent(void){
   TEST_END();
 }
 
+/* C7 (INFO/STATS was written with unbounded sprintf into a fixed char[]): the reply is assembled by
+   k_text_append, so the property that makes "one more field" safe is the primitive's.  Tested directly
+   against a canary-fenced buffer - the only way a PASSING run can say that memory past the capacity was
+   never written. */
+static void test_text_append_is_bounded(void){
+  char buf[40+8];
+  int len,over,i,sentinel_ok;
+  TEST_BEGIN("C7 k_text_append clamps at the capacity, keeps the terminator and reports truncation");
+  /* 1. a field larger than the buffer: clamped, marked, terminated - and the canary has the last word. */
+  memset(buf,'#',sizeof(buf));
+  len=0; over=0;
+  k_text_append(buf,40,&len,&over,"id=%d tail=%" K_U64_FMT " padding tail",7,(k_u64)~(k_u64)0);
+  TEST_ASSERT(over==1,"an append that does not fit reports truncation through the out-parameter");
+  TEST_ASSERT(len==(int)strlen(buf),"the reported length is what the buffer actually holds");
+  TEST_ASSERT(len<=39,"never more than cap-1 usable bytes");
+  TEST_ASSERT(buf[39]=='\0',"the text stays NUL-terminated inside the capacity");
+  sentinel_ok=1;
+  for(i=40;i<(int)sizeof(buf);i++) if(buf[i]!='#') sentinel_ok=0;
+  TEST_ASSERT(sentinel_ok,"nothing past the capacity was written (canary intact)");
+  /* 2. after saturation further appends are refused and the flag stays set, so the caller still marks and
+        counts the line instead of shipping a silently shortened record. */
+  k_text_append(buf,40,&len,&over," more=%d",1);
+  TEST_ASSERT(over==1,"the truncation flag survives later appends");
+  TEST_ASSERT(len==(int)strlen(buf),"and the length still describes the buffer");
+  sentinel_ok=1;
+  for(i=40;i<(int)sizeof(buf);i++) if(buf[i]!='#') sentinel_ok=0;
+  TEST_ASSERT(sentinel_ok,"the canary is still intact after the refused append");
+  /* 3. an exact fit is NOT truncation: a false marker would make every healthy reply read as a defect. */
+  memset(buf,'#',sizeof(buf));
+  len=0; over=0;
+  k_text_append(buf,8,&len,&over,"%s","1234567");
+  TEST_ASSERT(over==0,"a field filling exactly cap-1 bytes is not truncation");
+  TEST_ASSERT_I64_EQ(len,7,"and it is fully reported");
+  TEST_ASSERT_STR_EQ(buf,"1234567","with the content intact");
+  TEST_ASSERT(buf[8]=='#',"the canary next to the capacity is intact");
+  /* 4. the degenerate capacity: still a terminated string, still not one byte past it. */
+  memset(buf,'#',sizeof(buf));
+  len=0; over=0;
+  k_text_append(buf,1,&len,&over,"x");
+  TEST_ASSERT(over==1,"a one-byte buffer reports that nothing fitted");
+  TEST_ASSERT(buf[0]=='\0',"and still holds a terminated (empty) string");
+  TEST_ASSERT(buf[1]=='#',"with nothing written past it");
+  TEST_END();
+}
+
+/* C7: the bounded append stops the overflow, but a line that outgrows 4096 would then be MARKED and CUT -
+   a degraded reply rather than a corrupt one, which is why the field set must also be shown to fit.  Two
+   properties are asserted: the current reply carries the whole field set (no marker, counter still 0), and
+   the WORST CASE still fits - every numeric value is at most 20 bytes wide (a u64 maximum, or an i64
+   minimum with its sign), and the field count is read out of the reply itself, so adding fields raises the
+   bound here without touching this test.  That is the guard the bounded append cannot provide on its own:
+   it fires BEFORE the field set can grow past the buffer, instead of after the first cut reply. */
+static void test_info_stats_reply_is_bounded(void){
+  k_server s;
+  k_u8 frame[K_FRAME_HEADER+16];
+  k_u32 total,reply_len,fields,worst;
+  k_response_data resp;
+  const char *p;
+  int i;
+  TEST_BEGIN("C7 INFO/STATS reply fits its 4096-byte buffer, complete and at worst-case field widths");
+  setup(&s,1,"mem://kstest-c7-stats");
+  TEST_ASSERT(k_server_open(&s)==0,"open");
+  TEST_ASSERT(elect(&s)==0,"leader");
+  /* INFO and STATS share this one handler, so one request covers both. */
+  k_server_client_accepted(&s,(void*)(size_t)1);
+  gcap.send_count=0;
+  total=make_client_frame(frame,sizeof(frame),K_REQ_STATS,77u,0,0,0,0);
+  TEST_ASSERT(total>0,"STATS frame");
+  k_server_client_received(s.connections,frame,total);
+  for(i=0;i<200&&gcap.send_count==0;i++) turn(&s,20u);
+  TEST_ASSERT(gcap.send_count>=1,"answered");
+  TEST_ASSERT(k_response_decode(&resp,gcap.last_payload,gcap.last_size)==0,"the answer decodes");
+  TEST_ASSERT_I64_EQ(resp.request_id,77,"the answer belongs to this request");
+  TEST_ASSERT_I64_EQ(resp.status,K_STATUS_OK,"STATS answered OK");
+  reply_len=resp.body_size;
+  TEST_ASSERT(reply_len>0&&reply_len<4096,"the reply is inside the handler's 4096-byte text[]");
+  TEST_ASSERT(strncmp((const char*)resp.body,"id=",3)==0,"it starts with the per-node fields");
+  TEST_ASSERT(strstr((const char*)resp.body," stats_truncated=")!=0,"and carries the truncation counter as its tail field");
+  TEST_ASSERT(strstr((const char*)resp.body,"[TRUNCATED]")==0,"the whole field set fit, so nothing was marked");
+  TEST_ASSERT_U64_EQ(s.stats_truncated,0,"and the server counted no truncated reply");
+  fields=0;
+  for(p=(const char*)resp.body;*p;p++) if(*p=='=') fields++;   /* one '=' per name=value field */
+  TEST_ASSERT(fields>=60,"the reply carries the whole field set, so the count measured something");
+  worst=reply_len+19u*fields;
+  TEST_ASSERT(worst<=4095u,"with every value at its maximum width the line still fits 4096 bytes");
+  k_response_data_free(&resp);
+  k_server_release(&s);
+  TEST_END();
+}
+
 /* ---- fourth-round review A4 ----
    A7's snapshot-verify fix (the helper no longer leaves behind the `.snap.<index>` that vfs_open creates) has no
    case here on purpose: without a vfs existence probe, "absent" and "present and empty" are indistinguishable
@@ -2410,7 +2503,7 @@ static void test_wal_recovery_keeps_a_snapshot_base_past_the_ceiling(void){
 
 int main(int argc,char **argv){
   if(argc>=3&&strcmp(argv[1],"--apply-stress")==0) return apply_stress(test_strtoull(argv[2]),argc>=4?test_strtoull(argv[3]):TEST_U64_C(4096),argc>=5&&strcmp(argv[4],"thread")==0,argc>=6&&strcmp(argv[5],"nosnap")==0);
-  TEST_PLAN(51);
+  TEST_PLAN(53);
   g_run_tag=0;
   if(k_monotonic_us(&g_run_tag)!=0) g_run_tag=(k_u64)time(0);
   test_fcall_gate_reopens_when_its_request_dies();
@@ -2459,6 +2552,8 @@ int main(int argc,char **argv){
   test_topology_names_a_refused_changes_leftover();
   test_topology_is_answered_locally();
   test_shutdown_stops_even_when_the_ack_cannot_be_sent();
+  test_text_append_is_bounded();
+  test_info_stats_reply_is_bounded();
   test_wal_recovery_continues_a_torn_tail_by_generation();
   test_wal_recovery_keeps_a_snapshot_base_past_the_ceiling();
   test_wal_recovery_refuses_a_rollback_to_base_zero();

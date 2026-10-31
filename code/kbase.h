@@ -383,6 +383,10 @@ static void k_text_append(char *dst,size_t cap,int *len,int *over,const char *fm
   int need;
   size_t left;
   if(!dst||cap==0||!len) return;
+  /* Terminate on entry, not only after a write: the early return below is the only path taken when
+     cap==1 or the buffer is already full, and the contract is that dst is ALWAYS a terminated string -
+     otherwise a caller that measures it (strlen, or a send) reads past the capacity it was given. */
+  dst[cap-1u]='\0';
   if((size_t)*len>=cap-1u){ if(over) *over=1; return; }
   left=cap-1u-(size_t)*len;
   va_start(ap,fmt);
