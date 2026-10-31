@@ -499,7 +499,8 @@ RED-verified one at a time, everything else unchanged: restoring the pre-fix con
 gives one red case only (*delivered from the datagram buffer, not recv->buf*: expected pointer != emitted
 pointer), and deleting the counter increment gives one red case only (*the absorbed error is now counted*:
 expected 1, actual 0). Both restored, with `code/cemon.h` md5-identical to HEAD.
-Gate: `REGRESS|quick|pass=12 fail=0` (pinned toolchain), `GATE|cemon_test|ok` with every case green.
+Gate: `REGRESS|quick|pass=13 fail=0` (`GATE|cemon_test|ok|SUMMARY: 11/11 passed`) on the tree that
+carries these cases; the immediately preceding revision of the same case file ran `pass=12 fail=0`.
 
 Reachability, so an injection is not mistaken for an OS reproduction: on Windows the OS can produce neither
 completion. `cemon_udp_bind` REFUSES the socket when `cemon_win_udp_no_reset` cannot switch reset reporting
