@@ -208,7 +208,7 @@ command lists):
 - Every layer prints one line `GATE|<layer>|pass|FAIL|<verdict line>|<seconds>`; **the verdict line must
   appear** — a silent run (exit 0 but no verdict line) is judged **FAIL**; this is where "0 failures does
   not mean 0 data" is made concrete;
-- **the last line is machine-readable**: `REGRESS|quick|pass=12 fail=0 duration=307s` (the `principles` layer
+- **the last line is machine-readable**: `REGRESS|quick|pass=13 fail=0 duration=307s` (the `principles` layer
   `python tools/check-principles.py`, and the `regress_selftest` layer that tests the detector itself) (an agent
   can decide by reading this line alone);
 - on failure it prints that layer's log path and the last 12 lines; logs live in `build/regress/<layer>.log`;

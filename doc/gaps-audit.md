@@ -1736,6 +1736,15 @@ checks)`, with zero `RED-VERIFY` residue in the header.
 **Gate.**  `startup_fail` is a layer of `regress quick`, so "a fatal must print its reason" is enforced
 rather than remembered.
 
+**Evidence line 2 (the gate).**  `REGRESS|quick|pass=12 fail=0 duration=668s` with
+`GATE|startup_fail|ok|startup_fail: PASS (8 checks)|34s`, on a tree of `679d940` plus this change and the
+`cli_smoke` port fix (`b0d6302`) - 12 layers there, because that tree predates the `lincheck` layer; on
+the current `main` the same run reports 13.  Two earlier runs of that same gate had `cli_smoke` fail
+with "connection closed; pending request failed", which is a second `regress` on this box killing the
+server by image name (`taskkill /F /IM kdbsvr.exe`) mid-layer: layers then took 4-12x their documented
+time (build 412 s, `selftest` 80 s), and the run above was made with `PORT`/`PEER` moved off the shared
+defaults.  Recorded because "a red gate" must never be passed off as the code under test.
+
 **What this does not prove.**  The two allocation-only paths (raft context, snapshot cache) and the worker
 -thread failures cannot be provoked from outside the process - no product-side failpoint was added, by the
 project's rule - so their message is verified by inspection plus the shared helper that the demonstrated
