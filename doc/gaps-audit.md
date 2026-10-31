@@ -106,7 +106,7 @@ The checked and **gap-free** parts and the **settled trade-offs** are at the end
 | C8 | `[verified]` | When the snapshot worker's post fails it frees(task) itself while the main thread still holds the pointer ⇒ `snapshot_inflight` stays 1 forever | `3957` vs `3992,4351` |
 | C9 | `[verified]` | On the `UNIX` branch one arming can deliver `CEMON_DATA` several times (contrary to the header contract); the callback is re-entered synchronously when `callback_depth==0` | `2452-2461`, `3432-3435` |
 | C10 | `[verified]` | The Unix recv/accept/flush loops consume no dispatch budget ⇒ a single active peer can monopolize the owner thread | `2455,2395,2342` |
-| C11 | `[verified]` | `cemon_ingress_close` spins without bound; after its 2000ms drain cap `cemon_destroy` can leak a held socket | `1047-1066`, `2900-2910` |
+| **C11** | `[verified]` → **FIXED (this change)** | Both teardown waits are bounded and say so: `cemon_ingress_close` gives up after 5 s and prints the residual count, `cemon_destroy` then ABANDONS the teardown (returns -1) instead of freeing the loop under the stuck producer, and the Windows drain settles `sock_total` after its 2000 ms cap and names the residual completions. Two new `cemon_test` cases | `cemon.h:1108-1157` (`cemon_ingress_close`), `2969-3005` (`cemon_destroy`) |
 | C12 | `[verified]` | UDP soft errors are swallowed silently (no counter); the UDP fallback branch uses the wrong buffer (`recv->buf` instead of `udp_recv->buf`) | `2189-2194, 2207-2213` |
 | C13 | `[verified]` -> **FIXED (`e89a2ce`)** | A loop-level fatal error was only `-1`, with no interface to retrieve the cause | was `3170,3269-3275`; now `cemon.h:267-277` (the public read) and `:3347-3358` (the epoll note); regression `tests/cemon_test.c` case 5 |
 | C14 | `[verified]` | `2147483647ULL` does not go through the repo's own `VFS_U64_C` convention (`-pedantic-errors` reports a C99 long long constant) | `cemon.h:655` vs `vfs.h:64-66` |
@@ -223,9 +223,11 @@ The checked and **gap-free** parts and the **settled trade-offs** are at the end
 
 ### Safety/durability related (priority)
 
-> **Status (2026-09-20, from the 2026-09b review).**  Three rows below are still listed as unhandled but
-> are fixed in the tree, so they must not be scheduled again: **C11** (bounded ingress close with a
-> printed reason - `cemon.h:1112-1137`, described in this file's own O2 section), **C12** (`udp_recv->buf`
+> **Status (2026-09-20, from the 2026-09b review; C11 re-verified and extended 2026-10-31).**  Three rows
+> below are still listed as unhandled but are fixed in the tree, so they must not be scheduled again:
+> **C11** (bounded ingress close with a printed reason, plus the abandoned teardown that stops destroy
+> freeing the loop under a stuck producer - `cemon.h:1108-1157`/`2969-3005`, demonstration in this file's
+> own O2 section), **C12** (`udp_recv->buf`
 > - `cemon.h:2269/2291`, issue #10) and **C13** (`cemon_last_error`/`cemon_fatal_note` -
 > `cemon.h:602/794/823`, issue #11; the note and the accessors landed then, but the epoll poller still
 > returned a bare -1 without one, so on Linux the interface reported nothing - that half is
@@ -239,7 +241,7 @@ The checked and **gap-free** parts and the **settled trade-offs** are at the end
 | **C18** | `vfs_read` returns -1 for both EOF and a real I/O error (`vfs.h:137/140`); the recovery scan therefore takes a "read failure" for a **normal end of segment** (`kserver.h:1466-1472`) | A media error ⇒ the WAL is treated as ending early ⇒ **a truncated state is silently recovered** (the item most worth fixing) | Needs a vfs API extension (`vfs_size`/`eof` out-params) | Add `vfs_size(file,&size)`; in the scan `off<size` ⇒ print the reason + fail-stop; cost ~20 lines |
 | ~~**R8**~~ | **FIXED (`688bd23`; re-verified 2026-10-31 with a case that can fail)** — the rejection now waits for the caller's persist through its own latch and keeps its conflict hints; mechanism, gate-width evidence and the RED proof in section V.  The row stays as the record of that round. | If the node crashed before the term was durable, a term it had announced externally had no durable backing (§3.8); the safety impact was weak (two leaders in the same term still require a majority intersection) | Closed by the deferral noted here — do not schedule again |
 | **B9** | Recovery base-fallback branch: after `n_base=prev_base; base_of_use=n_base; pick_base=1` (`kserver.h:1531`) decoding still uses the newest record, so the base check must fail ⇒ recovery refused | Disagrees with the intent the comment states about itself (the comment says "fall back to a higher base"); the **direction is fail-stop**, no wrong data is produced | This branch triggers only in the rare sub-case "the n_base snapshot is usable but the newest record carries the old base"; a thorough fix requires reordering the base/record-selection logic | Settle `base_of_use` first (the usable higher base), then pick the **newest record whose base matches it** |
-| **C11** | `cemon_ingress_close` spins without bound (`SwitchToThread` polling); after its 2000ms drain cap `cemon_destroy` can leave a held socket struct behind | A producer contract violation ⇒ the process cannot shut down; in the extreme it leaks the socket struct (the port is already closed, so no completion can reach it) | Needs a constructible reachable sequence for a "lost completion event"; none constructed so far | Add a timeout + a print to the spin; after the destroy timeout print the residual count |
+| **C11** | `cemon_ingress_close` spins without bound (`SwitchToThread` polling); after its 2000ms drain cap `cemon_destroy` can leave a held socket struct behind | A producer contract violation ⇒ the process cannot shut down; in the extreme it leaks the socket struct (the port is already closed, so no completion can reach it) | **FIXED and demonstrated** (see the C table and this file's O2 section): the old "no constructible reachable sequence" claim is superseded — a producer that stops inside the section is constructible through `cemon_ingress_enter`, and the socket half is peer-driven with a silent peer | Done: the spin and the drain both have a timeout + a print, destroy abandons instead of freeing the loop under a stuck producer, and the destroy timeout prints the residual count |
 
 ### Visibility (does not change behavior, but affects debugging)
 
@@ -438,13 +440,33 @@ immediately afterwards were `pass=8 fail=0` (76-79 s), and the Windows side has 
 Nothing is concluded from it: it is recorded so that a recurrence is met with the full output rather
 than re-discovered. First thing to capture next time: the `GATE|...|FAIL` line and `build/regress/`.
 
-**O2 — the C11 demonstration forces the internal counters, and a slow peer cannot reproduce the hang.**
-The `cemon_ingress_close` fix (issue #9) was demonstrated by setting `ingress_count` directly, not by
-driving a slow peer. That is not a shortcut around a hard repro: the ingress section covers a post/send
-call on the **owner** side, so a peer that sends slowly never holds it — only a thread that never leaves
-the section can, which is exactly the hang the bound removes. The demonstration therefore proves the exit
-condition and the warning, and is labelled as forcing the condition rather than as a peer-driven
-reproduction.
+**O2 — how the C11 teardown bounds are demonstrated, and what a slow peer can and cannot reproduce (corrected 2026-10-31).**
+The original note here said the fix was demonstrated by *setting `ingress_count` directly*, with a slow
+peer unable to reproduce the hang.  Both halves are now settled by regressions in `tests/cemon_test.c`:
+- **Unbounded spin (ingress).** A peer still cannot hold that section: it covers a post/send call made by a
+  PRODUCER thread, so nothing a peer does enters it.  The condition the warning names is a producer thread
+  that stops making progress, and the case now builds it through the runtime's own entry function
+  (`cemon_ingress_enter`, the one `cemon_post` calls) instead of poking the counter — a stuck producer, not a
+  doctored field.  The assertion set is: `destroy` returns inside a 12 s bound (5 s wait + slack), stderr
+  carries the give-up line **with the residual count**, `destroy` returns **-1**, and the released producer
+  can leave the section and a second `destroy` then completes.
+- **Held socket after the drain cap (peer-facing).** This half IS peer-driven and reproducible: a live
+  connection with a read armed and a peer that stays silent writes nothing and closes nothing, so the only
+  thing that can end that connection is the server's teardown.  The case asserts the loop really holds the
+  socket, that `destroy` returns in far less than the 2000 ms cap (the completion was settled, not waited
+  out), and that the peer's connection ends (EOF, or a reset — Windows resets when a close aborts an
+  overlapped read; a leaked owner instead leaves the peer with a silent, still-open socket).
+- **The retraction this round forces.** The earlier fix returned from the ingress wait and then went on to
+  free the loop.  `cemon_destroy` therefore had a **use-after-free** whenever a producer was still inside
+  it: that thread's next step is another lock/post on the freed loop (and on a destroyed critical section).
+  `cemon_destroy` now ABANDONS the teardown in that case, leaves the loop allocated and CLOSING, prints the
+  reason and returns -1.  The old claim "the loop stays CLOSING and late ingress is rejected" held only for
+  posts; it said nothing about the object being freed underneath them.
+- **RED evidence** (each mutation built and run, then reverted): bound removed ⇒ the case hangs and the
+  driver is killed at 40 s (`124`); abandon removed ⇒ the case fails on `rc == -1` (`0`), and with the
+  producer released before that assertion the same build **segfaults** in `cemon_ingress_leave` on the
+  poisoned freed block; socket teardown skipped ⇒ the peer-facing case fails and the log shows the 2000 ms
+  cap warning with one abandoned completion — the card's original "held socket" symptom, reproduced.
 
 **O3 — a UDP datagram was delivered with `len=0` in a probe (2026-09-19).** While producing triggerable
 evidence for issue #10, a probe on one loop bound a server socket on 127.0.0.1:18700 and a client socket,

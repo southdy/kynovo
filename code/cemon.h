@@ -251,8 +251,13 @@ CEMON_DEF int cemon_bind_owner(cemon *loop);
 /* 1 when the caller is the owner (or the loop is not bound yet), 0 when another
   thread owns it, -1 on a null loop. */
 CEMON_DEF int cemon_is_owner(cemon *loop);
-/* Returns 0 when the teardown was accepted, -1 when it was refused because the
-  caller is not the owner (a violation used to be a silent no-op on a void API).
+/* Returns 0 when the teardown completed, -1 when it was refused because the
+  caller is not the owner (a violation used to be a silent no-op on a void API),
+  and -1 when a producer thread was still inside the loop after the ingress wait
+  gave up: the loop is then deliberately left allocated (it stays CLOSING, so
+  late ingress is rejected) because freeing the post lock and the completion
+  port under a thread that is about to touch them would be a use-after-free.
+  The give-up prints the reason; call destroy again once no producer is left.
   Called from inside a callback it returns 0 and completes on a later turn. */
 CEMON_DEF int cemon_destroy(cemon *loop);
 /* cemon_poll executes one iteration of the event loop: fires due timers,
@@ -1118,12 +1123,13 @@ static void cemon_ingress_leave(cemon *loop){
 }
 /* How long ingress_close waits for in-flight ingress sections before giving up.  A real section is a
    post/send call measured in microseconds, so this bound is three orders of magnitude of headroom; hitting
-   it means a producer thread is stuck, and the function then says so instead of spinning forever (#9). */
+   it means a producer thread is stuck, and the function then says so instead of spinning forever (#9).
+   Returns 1 when the section closed cleanly and 0 when it gave up. */
 #define CEMON_INGRESS_CLOSE_WAIT_US ((cemon_u64)5000000)
-static void cemon_ingress_close(cemon *loop){
+static int cemon_ingress_close(cemon *loop){
   int remaining;
   cemon_u64 t0;
-  if(loop==0) return;
+  if(loop==0) return 1;
   t0=cemon_monotonic_us();
   for(;;){
 #if defined(_WIN32)
@@ -1138,13 +1144,13 @@ static void cemon_ingress_close(cemon *loop){
 #else
     pthread_mutex_unlock(&loop->post_lock);
 #endif
-    if(remaining==0) return;
+    if(remaining==0) return 1;
     /* BOUNDED, with a visible warning when it gives up: this loop used to spin with no exit condition at
        all, so one stuck ingress section hung cemon_destroy (and therefore shutdown) with no diagnostic
        (issue #9).  Returning leaves the loop marked CLOSING, so late ingress is rejected. */
     if(cemon_monotonic_us()-t0>CEMON_INGRESS_CLOSE_WAIT_US){
       fprintf(stderr,"cemon: warning: ingress close gave up after 5 s with %d ingress operation(s) still in flight; the loop stays CLOSING and late ingress is rejected (a producer thread is stuck)\n",remaining);
-      return;
+      return 0;
     }
 #if defined(_WIN32)
     SwitchToThread();
@@ -2986,7 +2992,14 @@ CEMON_DEF int cemon_destroy(cemon *loop){
     return 0;
   }
   cemon_stop(loop);
-  cemon_ingress_close(loop);
+  if(!cemon_ingress_close(loop)){
+    /* A producer thread is still inside the loop, and its next step after leaving the section is another
+       lock/post on this object.  Freeing the post lock, the completion port and the loop allocation under
+       it would be a use-after-free on a thread that is merely slow, so the teardown is ABANDONED instead:
+       nothing below runs, the loop stays allocated and CLOSING (late ingress is rejected), and the return
+       value says the teardown did not happen.  Calling destroy again once no producer is left completes it. */
+    return -1;
+  }
   sock=loop->sock_head;
   while(sock){
     next=sock->next;

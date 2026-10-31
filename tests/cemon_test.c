@@ -38,12 +38,14 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <errno.h>
 #if defined(_WIN32)
 #include <winsock2.h>
 #endif
 #if defined(_WIN32)
 #include <windows.h>
 #include <process.h>
+#include <io.h>          /* _dup/_dup2/_fileno/_close for the stderr capture below (MSVC 6 names) */
 #else
 #include <pthread.h>
 #endif
@@ -88,6 +90,28 @@ static int probe_set_nonblocking(probe_fd fd){
 #else
   int nb=1;
   return ioctl(fd,FIONBIO,&nb);
+#endif
+}
+/* Did a receive report the END of the connection?  A close ends a TCP connection with a FIN (recv returns
+   0) or, when a pending overlapped read is aborted underneath it, with a reset - both mean "this socket is
+   gone", which is exactly what a teardown has to prove.  A would-block is neither, so a socket a teardown
+   leaked stays silent through this predicate and fails the assertion. */
+static int probe_last_net_error(void){
+#if defined(_WIN32)
+  return WSAGetLastError();
+#else
+  return errno;
+#endif
+}
+static int probe_conn_ended(int got){
+  int err;
+  if(got==0) return 1;
+  if(got>0) return 0;
+  err=probe_last_net_error();
+#if defined(_WIN32)
+  return (err==WSAECONNRESET||err==WSAECONNABORTED)?1:0;
+#else
+  return (err==ECONNRESET||err==ECONNABORTED)?1:0;
 #endif
 }
 /* Reserve `total` bytes of read/write memory for one block + its trailing page. */
@@ -422,6 +446,34 @@ typedef pthread_t test_thread;
 static int test_thread_start(test_thread *th){ return pthread_create(th,0,owner_probe_thread,0); }
 static void test_thread_join(test_thread *th){ pthread_join(*th,0); }
 #endif
+/* A second body needs to run on its own thread (the teardown cases below wedge a PRODUCER inside the loop
+   while the owner keeps running), so the same two primitives are exposed for any body.  Keeping both
+   signatures means the existing owner probe stays exactly as it was. */
+typedef void (*test_thread_body)(void);
+#if defined(_WIN32)
+static test_thread_body g_test_thread_body;
+static unsigned __int32 __stdcall test_thread_tramp(void *arg){
+  (void)arg;
+  if(g_test_thread_body) g_test_thread_body();
+  return 0;
+}
+static int test_thread_start_fn(test_thread *th,test_thread_body fn){
+  g_test_thread_body=fn;
+  *th=(HANDLE)_beginthreadex(0,0,test_thread_tramp,0,0,0);
+  return *th!=0?0:-1;
+}
+#else
+static test_thread_body g_test_thread_body;
+static void *test_thread_tramp(void *arg){
+  (void)arg;
+  if(g_test_thread_body) g_test_thread_body();
+  return 0;
+}
+static int test_thread_start_fn(test_thread *th,test_thread_body fn){
+  g_test_thread_body=fn;
+  return pthread_create(th,0,test_thread_tramp,0);
+}
+#endif
 static void test_owner_binding(void){
   test_thread th;
   cemon *loop;
@@ -443,18 +495,205 @@ static void test_owner_binding(void){
   TEST_END();
 }
 
+/* ---- loop teardown: issue #9 / audit C11 -----------------------------------------------
+   Two waits inside cemon_destroy used to have no exit condition.  (1) cemon_ingress_close spun on
+   SwitchToThread forever while a producer thread held an ingress section, and (2) the Windows completion
+   drain waited with INFINITE for a completion that could never arrive.  Both are bounded and both SAY so;
+   these cases pin the exit condition, the visible warning, and that nothing is left owned afterwards.
+
+   A PEER cannot hold the ingress section: it covers a post/send call made by a PRODUCER thread, and
+   nothing a peer does enters it (doc/gaps-audit.md O2 says the same).  The reachable condition behind the
+   warning is a producer thread that stops making progress, so that is what the first case builds: the
+   thread enters through cemon_ingress_enter - the same entry function cemon_post uses - and then blocks.
+   The second case is the peer-facing half and IS driven by a real socket: a live connection with a read
+   armed whose peer stays silent, which must come out with no socket left behind. */
+
+/* Capture what goes to stderr while a teardown runs.  The contract is a VISIBLE warning, so the assertion
+   has to read the text an operator would see; tmpfile() keeps the capture out of the working tree. */
+typedef struct probe_capture{ FILE *file; int saved_fd; int active; } probe_capture;
+#if defined(_MSC_VER)
+#define probe_dup(fd)      _dup(fd)
+#define probe_dup2(fd,to)  _dup2((fd),(to))
+#define probe_fileno(f)    _fileno(f)
+#define probe_close_fd(fd) _close(fd)
+#else
+#define probe_dup(fd)      dup(fd)
+#define probe_dup2(fd,to)  dup2((fd),(to))
+#define probe_fileno(f)    fileno(f)
+#define probe_close_fd(fd) close(fd)
+#endif
+static int probe_capture_begin(probe_capture *c){
+  c->file=tmpfile();
+  c->active=0;
+  if(!c->file) return -1;
+  fflush(stderr);
+  c->saved_fd=probe_dup(2);
+  if(c->saved_fd<0){ fclose(c->file); c->file=0; return -1; }
+  if(probe_dup2(probe_fileno(c->file),2)<0){ probe_close_fd(c->saved_fd); fclose(c->file); c->file=0; return -1; }
+  c->active=1;
+  return 0;
+}
+static int probe_capture_end(probe_capture *c,char *buf,int cap){
+  int n=0,got;
+  if(cap>0) buf[0]='\0';
+  if(!c->active) return -1;
+  fflush(stderr);
+  probe_dup2(c->saved_fd,2);
+  probe_close_fd(c->saved_fd);
+  c->active=0;
+  rewind(c->file);
+  while(n<cap-1&&(got=(int)fread(buf+n,1,(size_t)(cap-1-n),c->file))>0) n+=got;
+  buf[n]='\0';
+  fclose(c->file);
+  c->file=0;
+  return n;
+}
+static int probe_capture_has(const char *text,const char *needle){
+  return (text&&needle&&strstr(text,needle)!=0)?1:0;
+}
+
+/* The bounded waits are 5 s and 2 s, so the assertion is "this call RETURNS" with slack on top; an
+   unbounded regression never returns at all and is reported by the gate's per-layer watchdog, not here. */
+#define CEMON_INGRESS_BOUND_US 12000000ul
+#define CEMON_PEER_DRAIN_BOUND_US 2000000ul
+
+static cemon *g_ing_loop;
+static int g_ing_enter_rc,g_ing_left;
+static volatile int g_ing_held,g_ing_release;
+static void ingress_producer_body(void){
+  g_ing_enter_rc=cemon_ingress_enter(g_ing_loop,CEMON_LOOP_ADMISSION_OWNER_CALLBACK);
+  g_ing_held=1;
+  while(!g_ing_release) probe_sleep_ms(1);
+  /* The next statement the runtime's own producer would run, on the loop object destroy was asked to free:
+     if destroy freed it anyway, the page-poisoning allocator turns this into a fault, not a silent pass. */
+  cemon_ingress_leave(g_ing_loop);
+  g_ing_left=1;
+}
+static void test_ingress_close_bounded(void){
+  cemon *loop;
+  test_thread th;
+  probe_capture cap;
+  char text[2048];
+  unsigned long t0,elapsed;
+  int rc;
+  TEST_BEGIN("cemon_destroy: a stuck producer is bounded, reported, and left with a live loop");
+  g_ing_loop=cemon_create();
+  loop=g_ing_loop;
+  TEST_ASSERT(loop!=0,"loop created");
+  TEST_ASSERT_I64_EQ(cemon_bind_owner(loop),0,"this thread owns the loop");
+  g_ing_enter_rc=99; g_ing_left=0; g_ing_held=0; g_ing_release=0;
+  TEST_ASSERT_I64_EQ(test_thread_start_fn(&th,ingress_producer_body),0,"producer thread started");
+  t0=_test_now_us();
+  while(!g_ing_held&&_test_now_us()-t0<5000000ul) probe_sleep_ms(1);
+  if(!g_ing_held||g_ing_enter_rc!=1){
+    g_ing_release=1;
+    test_thread_join(&th);
+    TEST_ASSERT(0,"the producer holds an ingress section (without this the rest of the case proves nothing)");
+  }
+  TEST_ASSERT_I64_EQ(probe_capture_begin(&cap),0,"stderr captured");
+  t0=_test_now_us();
+  rc=cemon_destroy(loop);
+  elapsed=_test_now_us()-t0;
+  probe_capture_end(&cap,text,sizeof(text));
+  TEST_ASSERT(elapsed<CEMON_INGRESS_BOUND_US,
+              "destroy returned inside the bound (the unbounded spin never returned at all)");
+  TEST_ASSERT(probe_capture_has(text,"ingress close gave up"),
+              "the give-up is visible: stderr names it instead of hanging silently");
+  TEST_ASSERT(probe_capture_has(text,"1 ingress operation"),
+              "the warning carries the residual count, not just a generic message");
+  TEST_ASSERT_I64_EQ(rc,-1,"destroy reports the abandonment instead of a completed teardown");
+  g_ing_release=1;
+  test_thread_join(&th);
+  TEST_ASSERT_I64_EQ(g_ing_left,1,"the released producer left the section on a loop that is still allocated");
+  TEST_ASSERT_I64_EQ(cemon_destroy(loop),0,"a second destroy, with no producer left, completes the teardown");
+  TEST_END();
+}
+
+/* The peer-facing half: a silent peer, a read armed on a live connection, and a teardown that has to settle
+   it.  Two positive signals are asserted before the teardown is read - the connection completed and the
+   loop really holds the socket - so a run where nothing happened cannot pass as "no leak". */
+static int g_peer_connected;
+static void peer_io(cemon_socket *sock,const cemon_event *event){
+  (void)sock;
+  if(event&&event->type==CEMON_CONNECT) g_peer_connected=1;
+}
+static void test_destroy_silent_peer_no_leak(void){
+  cemon *loop;
+  cemon_socket *sock;
+  cemon_stats st;
+  probe_fd listener,peer;
+  struct sockaddr_in addr;
+  cemon_socklen alen;
+  char byte;
+  unsigned long t0;
+  int i,rc,got;
+  TEST_BEGIN("cemon_destroy: a silent peer with a read armed leaves no socket behind");
+  listener=socket(AF_INET,SOCK_STREAM,0);
+  TEST_ASSERT(listener!=PROBE_FD_INVALID,"listener socket");
+  memset(&addr,0,sizeof(addr));
+  addr.sin_family=AF_INET;
+  addr.sin_port=0;
+  addr.sin_addr.s_addr=inet_addr("127.0.0.1");
+  TEST_ASSERT(bind(listener,(struct sockaddr *)&addr,(cemon_socklen)sizeof(addr))==0,"bind an ephemeral port");
+  alen=(cemon_socklen)sizeof(addr);
+  TEST_ASSERT(getsockname(listener,(struct sockaddr *)&addr,&alen)==0,"getsockname");
+  TEST_ASSERT(listen(listener,1)==0,"listen");
+  loop=cemon_create();
+  TEST_ASSERT(loop!=0,"loop created");
+  TEST_ASSERT_I64_EQ(cemon_bind_owner(loop),0,"this thread owns the loop");
+  g_peer_connected=0;
+  sock=cemon_tcp_connect(loop,"127.0.0.1",(unsigned short)ntohs(addr.sin_port),peer_io,0);
+  TEST_ASSERT(sock!=0,"connect started");
+  for(i=0;i<200&&!g_peer_connected;i++) cemon_poll(loop,5);
+  TEST_ASSERT(g_peer_connected,"the connection completed");
+  peer=accept(listener,0,0);
+  TEST_ASSERT(peer!=PROBE_FD_INVALID,"peer accepted (the peer now stays silent)");
+  TEST_ASSERT_I64_EQ(cemon_recv(sock),0,"a read is armed: the socket carries an outstanding operation");
+  memset(&st,0,sizeof(st));
+  TEST_ASSERT_I64_EQ(cemon_inspect(loop,0,&st),0,"inspect");
+  TEST_ASSERT(st.loop_sock_total>=1,"the loop really holds the socket (the drain has something to settle)");
+  t0=_test_now_us();
+  rc=cemon_destroy(loop);
+  TEST_ASSERT_I64_EQ(rc,0,"destroy completed");
+  TEST_ASSERT(_test_now_us()-t0<CEMON_PEER_DRAIN_BOUND_US,
+              "destroy settled the pending operation instead of waiting out the 2000 ms drain cap");
+  /* No socket may survive the teardown, and the peer's own connection is where that is visible: a closed
+     socket ends it (EOF, or a reset - Windows resets when an overlapped read is aborted by the close),
+     while a leaked owner keeps the handle open and leaves this peer with nothing at all.  The distinction
+     that matters is "ended" versus "still open and silent", so both end-of-connection forms are accepted
+     and a would-block is not. */
+  probe_set_nonblocking(peer);
+  got=-1;
+  t0=_test_now_us();
+  while(_test_now_us()-t0<CEMON_PEER_DRAIN_BOUND_US){
+    got=(int)recv(peer,&byte,1,0);
+    if(got>=0) break;
+    if(probe_conn_ended(got)) break;
+    probe_sleep_ms(5);
+  }
+  TEST_ASSERT(probe_conn_ended(got),
+              "the peer's connection was ended by the teardown: nothing kept the socket alive");
+  TEST_ASSERT_I64_EQ(got<=0?0:1,0,"and no data was fabricated for the silent peer");
+  probe_fd_close(peer);
+  probe_fd_close(listener);
+  TEST_END();
+}
+
+
 int main(void){
 #if defined(_WIN32)
   WSADATA wsa;
   WSAStartup(MAKEWORD(2,2),&wsa);
 #endif
-  TEST_PLAN(6);
+  TEST_PLAN(8);
   test_shutdown_write_open();
   test_shutdown_write_closed();
   test_destroy_bounded_drain();
   test_control_frame_priority();
   test_poll_fatal_reports_cause();
   test_owner_binding();
+  test_ingress_close_bounded();
+  test_destroy_silent_peer_no_leak();
   TEST_SUMMARY();
   return TEST_EXIT_CODE();
 }
