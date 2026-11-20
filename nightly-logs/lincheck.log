@@ -1,0 +1,13 @@
+warning: expected gcc 15.2.0 under /d/MinW64-15.2.0/bin, found 16.2.0; older mingw headers may lack LPFN_ACCEPTEX
+lincheck self-test:
+  [ok] seq write->read: got=True want=True
+  [ok] read absent: got=True want=True
+  [ok] concurrent read-old: got=True want=True
+  [ok] concurrent read-new: got=True want=True
+  [ok] two writers: got=True want=True
+  [ok] del->read: got=True want=True
+  [ok] stale read: got=False want=False
+  [ok] phantom value: got=False want=False
+  [ok] read after delete: got=False want=False
+self-test: PASS
+lincheck parity: 1501 histories accept=414 reject=1087 wide=1 py_mismatch=0 exhaustive_mismatch=0 oracle_mismatch=0 exhaustive=1215 families=narrow1000/wide100/valid200/corrupt200/oversized1 driver_ms=39

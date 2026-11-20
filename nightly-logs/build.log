@@ -1,0 +1,1 @@
+warning: expected gcc 15.2.0 under /d/MinW64-15.2.0/bin, found 16.2.0; older mingw headers may lack LPFN_ACCEPTEX

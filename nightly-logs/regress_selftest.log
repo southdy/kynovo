@@ -1,0 +1,5 @@
+  ok    silent-but-zero-exit: GATE|silent_but_zero_exit|FAIL|rc=0 verdict=<no verdict line>|2s
+  ok    good-verdict: GATE|good_verdict|ok|SUMMARY: 3/3 passed|1s
+  ok    crashing-no-verdict: GATE|crashing_no_verdict|FAIL|rc=7 verdict=<no verdict line>|2s
+  ok    hanging-layer: GATE|hanging_layer|FAIL|rc=124 [layer timeout 3s] verdict=<no verdict line>|7s
+SELFTEST|PASS|the detector FAILs a silent layer, a crashing layer and a hanging one and passes a verdict line (4/4)

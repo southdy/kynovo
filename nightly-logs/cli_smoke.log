@@ -1,0 +1,33 @@
+PASS SET exit
+PASS SET output
+PASS GET exit
+PASS GET value
+PASS STATS exit
+PASS STATS leader
+PASS MEMBERS exit
+PASS MEMBERS body
+PASS DEL exit
+PASS GET(missing) exit
+PASS GET(missing) body
+PASS dead host exit
+PASS unknown command exit
+PASS piped script exit
+PASS piped script ran the first command
+PASS piped script ran the second command
+PASS piped script, dead host exit
+PASS piped script, dead host says why
+PASS script setup SET exit
+PASS piped script with a failing command exit
+PASS piped script names the failure
+PASS CAS conflict exit
+PASS CAS conflict says so
+PASS bad RGET limit exit
+PASS bad RGET limit message
+PASS bad RGET limit did not blame the network
+PASS PIPE exit
+PASS PIPE ok count
+PASS PIPE mean carries its sample count
+PASS PIPE latency labels
+PASS PIPE p99.9 label
+PASS PIPE percentiles are ordered min<=p50<=p90<=p99<=max
+cli_smoke: PASS

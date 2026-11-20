@@ -1,0 +1,23 @@
+run:    44792084013
+sha:    6db1f3580708bfd749b1b4e315e60f440671aa04
+date:   2026-11-20T18:25:43Z
+runner gcc: gcc.exe (x86_64-posix-seh-rev1, Built by MinGW-Builds project) 15.2.0
+
+--- gate verdict lines ---
+GATE|build|ok|rc=0 diagnostics=0 binaries=yes [foreign toolchain, warnings reported not enforced]|51s
+GATE|principles|ok|PRINCIPLES|OK|rules=21 fail=0|2s
+GATE|regress_selftest|ok|SELFTEST|PASS|the detector FAILs a silent layer, a crashing layer and a hanging one and passes a verdict line (4/4)|12s
+GATE|raft_test|ok|SUMMARY: 222/222 passed  1329 us|1s
+GATE|kserver_test|ok|SUMMARY: 51/51 passed  54573 us|1s
+GATE|kclient_test|ok|SUMMARY: 19/19 passed  50 us|1s
+GATE|cemon_test|ok|SUMMARY: 11/11 passed  7040053 us|8s
+GATE|vfs_fault_test|ok|SUMMARY: 5/5 passed  59623 us|1s
+GATE|selftest|FAIL|rc=1 verdict=<no verdict line>|27s
+GATE|selftest_cleanup|ok|selftest-cleanup: 0 leftover file(s) |1s
+GATE|cli_smoke|ok|cli_smoke: PASS|32s
+GATE|startup_fail|ok|startup_fail: PASS (8 checks)|2s
+GATE|lincheck|ok|lincheck parity: 1501 histories accept=414 reject=1087 wide=1 py_mismatch=0 exhaustive_mismatch=0 oracle_mismatch=0 exhaustive=1215 families=narrow1000/wide100/valid200/corrupt200/oversized1 driver_ms=39|1s
+GATE|raft_fuzz|ok|done: 20000 iterations|1s
+GATE|raft_cluster_fuzz|ok|done: 2000 iterations|6s
+GATE|kserver_cluster_fuzz|ok|linearizability: 40 histories / 2509 ops decided by the checker, 0 inconclusive|1s
+GATE|soak_release|ok|SOAK|PASS|rounds_run=24 fails=0 liveness=1|5s
